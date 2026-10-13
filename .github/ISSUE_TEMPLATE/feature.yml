@@ -1,17 +1,18 @@
-name: Capability request
-description: A concrete workflow, extension, or harness capability
-labels: [enhancement]
+name: Feature request
+description: Propose a focused improvement.
+title: "feat: "
 body:
   - type: textarea
     id: problem
     attributes:
-      label: Workflow and problem
+      label: Problem
+      description: Describe the workflow and limitation.
     validations:
       required: true
   - type: textarea
-    id: contract
+    id: proposal
     attributes:
-      label: Expected semantics and acceptance criteria
-      description: For harness changes, link vendor documentation and identify conversion losses.
+      label: Proposed behavior
+      description: Include an example and alternatives considered.
     validations:
       required: true

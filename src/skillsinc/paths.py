@@ -1,93 +1,57 @@
-"""XDG roots and filesystem containment checks."""
+"""User environment: home directory, environment variables, and storage roots."""
 
 from __future__ import annotations
 
 import os
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-
-from skillsinc.exceptions import ConfigurationError
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
-class XdgPaths:
-    """Application-owned storage roots."""
+class Environment:
+    """The parts of the process environment SkillSinc depends on."""
 
-    config: Path
-    data: Path
-    state: Path
-    cache: Path
-
-    @classmethod
-    def discover(cls) -> XdgPaths:
-        """Honor absolute XDG overrides on every operating system."""
-        roots = []
-        variables = (
-            "XDG_CONFIG_HOME",
-            "XDG_DATA_HOME",
-            "XDG_STATE_HOME",
-            "XDG_CACHE_HOME",
-        )
-        defaults = (".config", ".local/share", ".local/state", ".cache")
-        for variable, default in zip(variables, defaults, strict=True):
-            raw = os.environ.get(variable)
-            root = Path(raw) if bool(raw) else Path.home() / default
-            if not root.is_absolute():
-                raise ConfigurationError(f"{variable} must be absolute")
-            roots.append(root / "skillsinc")
-        return cls(*roots)
-
-
-class SafePath:
-    """Configured path resolution and portable package names."""
-
-    FIRST_PRINTABLE = 32
-
-    @staticmethod
-    def configured(raw: str, base: Path) -> Path:
-        """Resolve tilde and configuration-relative paths."""
-        path = Path(raw).expanduser()
-        return (path if path.is_absolute() else base / path).absolute()
-
-    @staticmethod
-    def relative(raw: str) -> str:
-        """Reject traversal and Windows aliases."""
-        normalized = raw.replace("\\", "/")
-        path = PurePosixPath(normalized)
-        if (
-            not path.parts
-            or path.is_absolute()
-            or any(part in (".", "..", "") for part in normalized.split("/"))
-        ):
-            raise ConfigurationError(f"Unsafe package path: {raw}")
-        reserved = {
-            "con",
-            "prn",
-            "aux",
-            "nul",
-            *(f"com{i}" for i in range(1, 10)),
-            *(f"lpt{i}" for i in range(1, 10)),
-        }
-        if any(
-            ":" in part
-            or any(character in part for character in '<>"|?*')
-            or any(ord(character) < SafePath.FIRST_PRINTABLE for character in part)
-            or part.endswith((".", " "))
-            or part.split(".")[0].casefold() in reserved
-            for part in path.parts
-        ):
-            raise ConfigurationError(f"Non-portable package path: {raw}")
-        return path.as_posix()
+    home: Path
+    variables: Mapping[str, str]
+    platform: str
 
     @classmethod
-    def child(cls, root: Path, relative: str) -> Path:
-        """Resolve a contained path without writable symlink ancestors."""
-        result = root / cls.relative(relative)
-        if not result.resolve().is_relative_to(root.resolve()):
-            raise ConfigurationError(f"Path escapes root: {result}")
-        current = result
-        while current != root.parent:
-            if current.is_symlink() or current.is_junction():
-                raise ConfigurationError(f"Symlink destination: {current}")
-            current = current.parent
-        return result
+    def current(cls) -> Environment:
+        """Capture the running process's environment."""
+        return cls(home=Path.home(), variables=dict(os.environ), platform=sys.platform)
+
+    def directory(self, variable: str, fallback: Path) -> Path:
+        """Return the absolute path named by ``variable``, else ``fallback``."""
+        value = self.variables.get(variable, "")
+        if value and Path(value).is_absolute():
+            return Path(value)
+        return fallback
+
+    def expand(self, raw: str, base: Path) -> Path:
+        """Expand ``~`` against the home directory and resolve relative to ``base``."""
+        if raw == "~" or raw.startswith(("~/", "~\\")):
+            raw = str(self.home) + raw[1:]
+        path = Path(raw)
+        return path if path.is_absolute() else base / path
+
+    @property
+    def config_home(self) -> Path:
+        """Return the XDG configuration root (honoured on every platform)."""
+        return self.directory("XDG_CONFIG_HOME", self.home / ".config")
+
+    @property
+    def state_home(self) -> Path:
+        """Return the XDG state root (honoured on every platform)."""
+        return self.directory("XDG_STATE_HOME", self.home / ".local" / "state")
+
+    @property
+    def default_config_file(self) -> Path:
+        """Return the configuration file used when ``--config`` is not given."""
+        return self.config_home / "skillsinc" / "config.toml"
+
+    @property
+    def state_directory(self) -> Path:
+        """Return the directory holding ownership manifests and the run lock."""
+        return self.state_home / "skillsinc"

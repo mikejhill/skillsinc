@@ -1,9 +1,14 @@
 # Security policy
 
-During the alpha period, security fixes target `main` and the latest published release. Earlier releases receive no separate maintenance guarantee.
+This document explains how to report a vulnerability and what SkillSinc does and does not protect against.
 
-Report suspected traversal, unintended deletion, ownership violations, executable injection, credential exposure, or publishing compromise through [private vulnerability reporting](https://github.com/mikejhill/skillsinc/security/advisories/new). Include a minimal reproduction, affected version, operating system, and expected boundary. Do not include real credentials or post exploit details in public issues before coordination.
+## Reporting
 
-Plugins are trusted executable code. Source repositories cannot register plugins implicitly, and synchronization does not execute distributed hooks. Destination containment protects distribution boundaries; it does not sandbox user-configured plugins.
+Report vulnerabilities privately through [GitHub security advisories](https://github.com/mikejhill/skillsinc/security/advisories/new). Do not open a public issue.
 
-See [security and repository controls](docs/security.md) for controls and operational assumptions. Response timing is best effort; no unsupported service-level commitment is implied.
+## Scope
+
+- SkillSinc copies files you author into folders that AI harnesses load as instructions. Treat your library like code: anything in it can steer an agent.
+- It never executes library content, never contacts the network, and stores no credentials.
+- It refuses to write through symlinks or junctions inside a destination and never writes outside a configured destination directory.
+- Only the latest release receives fixes.

@@ -1,11 +1,11 @@
-## Change
+# Summary
 
-Describe the trigger and resulting behavior.
+Describe the change and why it is needed.
 
-## Validation
+Use a Conventional Commit PR title: `type(scope): description`.
 
-- [ ] `uv run poe check`
-- [ ] Relevant failure paths and independent contract fixtures
-- [ ] Documentation and fidelity changes recorded
+## Checklist
 
-List native/platform evidence separately from fixture results. Explain omissions or open release gates.
+- [ ] `uv run poe check` passes.
+- [ ] Documentation is updated.
+- [ ] `CHANGELOG.md` has an entry under `[Unreleased]`.

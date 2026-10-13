@@ -1,27 +1,27 @@
-"""Actionable errors for CLI and distribution reports."""
+"""Exception hierarchy for SkillSinc."""
 
 from __future__ import annotations
 
 
 class AppError(Exception):
-    """Base for expected application errors."""
+    """Base class for all expected SkillSinc errors."""
 
 
 class ConfigurationError(AppError):
-    """Configuration or customization input is invalid."""
+    """The configuration file is missing, malformed, or inconsistent."""
 
 
 class SourceError(AppError):
-    """An authoritative source snapshot is unavailable."""
+    """A source library could not be read completely."""
+
+
+class FrontmatterError(AppError):
+    """A document's frontmatter is not a YAML mapping of plain values."""
 
 
 class ConflictError(AppError):
-    """Proposed output conflicts with ownership."""
+    """A destination change would overwrite content SkillSinc does not own."""
 
 
-class ConversionError(AppError):
-    """Conversion cannot preserve requested semantics."""
-
-
-class TransactionError(AppError):
-    """Commit or recovery failed."""
+class LockError(AppError):
+    """Another SkillSinc run holds the state lock."""

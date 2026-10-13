@@ -1,95 +1,118 @@
-"""Argument parsing into immutable command settings."""
+"""Command-line parsing into typed command settings."""
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
+from typing import Final
 
-from skillsinc import __version__
+from skillsinc.paths import Environment
+from skillsinc.settings import InitSettings, PlanSettings, ProfilesSettings, Settings
 
-
-@dataclass(frozen=True, slots=True)
-class Command:
-    """Typed CLI boundary."""
-
-    name: str
-    config: Path | None
-    targets: tuple[str, ...]
-    json: bool
-    verbose: bool
-    action: str = ""
-    query: str = ""
-    once: bool = False
-    background_log: Path | None = None
+LOG_LEVELS: Final = ("DEBUG", "INFO", "WARNING", "ERROR")
 
 
 class CommandLine:
-    """Discoverable argparse interface for humans and schedulers."""
+    """Parser for the ``skillsinc`` command."""
 
-    def parse(self, argv: Sequence[str] | None = None) -> Command:
-        """Convert an argparse namespace immediately into typed values."""
+    def __init__(self, environment: Environment) -> None:
+        self._environment = environment
+        self._parser = self._build_parser()
+
+    def parse(self, argv: Sequence[str] | None = None) -> Settings:
+        """Parse ``argv`` into the settings for one command."""
+        args = self._parser.parse_args(argv)
+        log_level = str(args.log_level)
+        command = str(args.command)
+        if command == "profiles":
+            return ProfilesSettings(log_level=log_level)
+
+        config_path = Path(args.config) if args.config else None
+        config_path = config_path or self._environment.default_config_file
+        if command == "init":
+            source = Path(args.source) if args.source else None
+            if source is not None and not source.expanduser().is_dir():
+                self._parser.error(f"--source is not a directory: {source}")
+            return InitSettings(config_path, source, bool(args.force), log_level)
+        return PlanSettings(
+            config_path=config_path,
+            apply=command == "sync",
+            destinations=tuple(args.destination or ()),
+            adopt=bool(args.adopt),
+            json_output=bool(args.json),
+            verbose=bool(args.verbose),
+            log_level=log_level,
+        )
+
+    def _build_parser(self) -> argparse.ArgumentParser:
+        """Define the commands and their options."""
         parser = argparse.ArgumentParser(
             prog="skillsinc",
-            description="Distribute agent customizations from user-owned sources.",
+            description=(
+                "Sync one library of agent skills, instructions, agents, and prompts"
+                " into every AI harness you use."
+            ),
         )
         parser.add_argument(
-            "--version", action="version", version=f"SkillSinc {__version__}"
+            "--version", action="version", version=f"%(prog)s {version('skillsinc')}"
         )
         common = argparse.ArgumentParser(add_help=False)
         common.add_argument(
-            "--config-file",
-            type=Path,
-            help="Use explicit configuration; disable default bootstrap",
+            "--log-level",
+            default="WARNING",
+            choices=LOG_LEVELS,
+            help="diagnostic verbosity on stderr (default: %(default)s)",
         )
-        common.add_argument(
-            "--target",
-            action="append",
-            default=[],
-            help="Select a destination by name (repeatable)",
+        configured = argparse.ArgumentParser(add_help=False, parents=[common])
+        configured.add_argument(
+            "--config",
+            metavar="PATH",
+            help=f"config file (default: {self._environment.default_config_file})",
         )
-        common.add_argument(
-            "--json", action="store_true", help="Emit versioned JSON report"
+
+        commands = parser.add_subparsers(
+            dest="command", required=True, metavar="COMMAND"
         )
-        common.add_argument(
-            "-v", "--verbose", action="store_true", help="Enable diagnostic logging"
+        init = commands.add_parser(
+            "init", parents=[configured], help="write a starter configuration"
         )
-        subparsers = parser.add_subparsers(dest="command", required=True)
-        for name in ("init", "validate", "plan", "sync", "status", "adopt"):
-            subparsers.add_parser(name, parents=[common])
-        explain = subparsers.add_parser("explain", parents=[common])
-        explain.add_argument(
-            "query",
-            nargs="?",
-            default="",
-            help="Customization, path, or provenance fragment",
+        init.add_argument("--source", metavar="DIR", help="your customization library")
+        init.add_argument(
+            "--force", action="store_true", help="overwrite an existing file"
         )
-        watch = subparsers.add_parser("watch", parents=[common])
-        watch.add_argument(
-            "--once", action="store_true", help="Perform initial sync and exit"
+
+        for name, summary in (
+            ("plan", "show what a sync would change, without writing"),
+            ("sync", "apply the plan to every enabled destination"),
+        ):
+            command = commands.add_parser(name, parents=[configured], help=summary)
+            command.add_argument(
+                "-d",
+                "--destination",
+                action="append",
+                metavar="NAME",
+                help="limit to this destination (repeatable)",
+            )
+            command.add_argument(
+                "--adopt",
+                action="store_true",
+                help="take ownership of existing files listed as unmanaged",
+            )
+            command.add_argument(
+                "--json", action="store_true", help="print a JSON report"
+            )
+            command.add_argument(
+                "-v",
+                "--verbose",
+                action="store_true",
+                help="also list unsupported items",
+            )
+
+        commands.add_parser(
+            "profiles",
+            parents=[common],
+            help="list harness profiles and what they support",
         )
-        watch.add_argument(
-            "--background-log", type=Path, help="Log background diagnostics to a file"
-        )
-        service = subparsers.add_parser("service", parents=[common])
-        service.add_argument(
-            "action", choices=("install", "uninstall", "start", "stop", "status")
-        )
-        contracts = subparsers.add_parser("contracts", parents=[common])
-        contracts.add_argument("action", choices=("list", "show"))
-        contracts.add_argument("query", nargs="?", default="")
-        namespace = parser.parse_args(argv)
-        config = namespace.config_file
-        background_log = getattr(namespace, "background_log", None)
-        return Command(
-            str(namespace.command),
-            Path(config) if config is not None else None,
-            tuple(str(value) for value in namespace.target),
-            bool(namespace.json),
-            bool(namespace.verbose),
-            str(getattr(namespace, "action", "")),
-            str(getattr(namespace, "query", "")),
-            bool(getattr(namespace, "once", False)),
-            Path(background_log) if background_log else None,
-        )
+        return parser

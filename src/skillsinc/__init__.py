@@ -1,6 +1,3 @@
-"""Distribute user-owned agent customizations across harnesses."""
+"""SkillSinc: sync one library of agent customizations into every AI harness."""
 
 from __future__ import annotations
-
-__version__ = "0.1.0"
-EXTENSION_API_VERSION = 1

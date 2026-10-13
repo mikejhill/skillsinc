@@ -1,43 +1,36 @@
 [project]
 name = "skillsinc"
 version = "0.1.0"
-description = "Source-authoritative agent customization distribution"
+description = "Sync one library of agent skills, instructions, agents, and prompts into every AI coding harness you use."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["agents", "skills", "configuration", "synchronization", "cli"]
+authors = [{ name = "Mike Hill", email = "mike@mikejhill.com" }]
+requires-python = ">=3.12"
+keywords = ["agents", "skills", "claude-code", "codex", "copilot", "sync"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
+    "Intended Audience :: Developers",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
     "Typing :: Typed",
 ]
-authors = [
-    { name = "Mike Hill", email = "mike@mikejhill.com" }
-]
-requires-python = ">=3.12"
 dependencies = [
-    "filelock>=4.1.1",
-    "json5>=0.17.3",
-    "packaging>=26.3",
     "pyyaml>=6.0.3",
-    "tomlkit>=0.15.1",
-    "watchdog>=6.0.0",
 ]
-
-[project.scripts]
-skillsinc = "skillsinc.__main__:Application.main"
 
 [project.urls]
 Homepage = "https://github.com/mikejhill/skillsinc"
-Documentation = "https://github.com/mikejhill/skillsinc/tree/main/docs"
-Repository = "https://github.com/mikejhill/skillsinc"
 Issues = "https://github.com/mikejhill/skillsinc/issues"
 Changelog = "https://github.com/mikejhill/skillsinc/blob/main/CHANGELOG.md"
+
+[project.scripts]
+skillsinc = "skillsinc.__main__:Application.main"
 
 [build-system]
 requires = ["uv_build>=0.11.32,<0.12.0"]
@@ -45,13 +38,10 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.169.0",
-    "pip-audit>=2.10.1",
     "poethepoet>=0.48.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.0",
-    "twine>=7.0.0",
     "ty>=0.0.86",
     "types-pyyaml>=6.0.12.20260906",
 ]
@@ -62,11 +52,21 @@ line-length = 88
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["A", "ANN", "ARG", "B", "BLE", "C4", "C90", "D", "DTZ", "E", "ERA", "F", "FA", "FBT", "G", "I", "LOG", "N", "PERF", "PGH", "PIE", "PL", "PT", "PTH", "RET", "RSE", "RUF", "S", "SIM", "T20", "TID", "TRY", "UP", "W"]
-ignore = ["D107", "TRY003"]
+select = [
+    "A", "ANN", "ARG", "B", "BLE", "C4", "C90", "D", "DTZ", "E", "ERA", "F",
+    "FA", "FBT", "G", "I", "LOG", "N", "PERF", "PGH", "PIE", "PL", "PT", "PTH",
+    "RET", "RSE", "RUF", "S", "SIM", "T20", "TID", "TRY", "UP", "W",
+]
+ignore = [
+    "D107",    # __init__ docstring: the class docstring covers it
+    "TRY003",  # long messages in raise: context-rich messages are required here
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004"]
+"tests/**" = [
+    "S101",     # assert is how pytest works
+    "PLR2004",  # literal expected values are clearer in tests
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -87,7 +87,6 @@ all = "error"
 testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "-ra", "--import-mode=importlib"]
 xfail_strict = true
-markers = ["performance: dedicated-runner benchmarks", "native: opt-in native discovery"]
 
 [tool.coverage.run]
 source = ["skillsinc"]
@@ -96,26 +95,16 @@ branch = true
 [tool.coverage.report]
 fail_under = 90
 show_missing = true
+skip_covered = true
 exclude_also = ["if __name__ == .__main__.:"]
 
 [tool.poe.tasks]
-format = "python -m ruff format ."
-format-check = "python -m ruff format --check ."
-lint = "python -m ruff check ."
-lint-fix = "python -m ruff check . --fix"
-typecheck = "python -m ty check"
-test = "python -m pytest --cov -m 'not performance and not native'"
-fix = ["format", "lint-fix"]
-repository-check = "python -m tests.repository_checks"
-check = ["format-check", "lint", "typecheck", "test", "repository-check"]
-build = "uv build"
-package-check = "python -m twine check --strict dist/*.whl dist/*.tar.gz"
-workflow-check = "python -m tests.workflow_checks"
-
-[tool.actionlint]
-version = "1.7.12"
-self-hosted-runner = { labels = ["skillsinc-performance"] }
-
-[tool.uv.build-backend]
-module-name = "skillsinc"
-source-include = ["docs/**", "tests/**", ".github/**", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "uv.lock"]
+format = { cmd = "ruff format .", help = "Format code" }
+format-check = { cmd = "ruff format --check .", help = "Check formatting" }
+lint = { cmd = "ruff check .", help = "Lint code" }
+lint-fix = { cmd = "ruff check . --fix", help = "Lint and auto-fix" }
+typecheck = { cmd = "ty check", help = "Type check (strict)" }
+test = { cmd = "pytest --cov", help = "Run tests with coverage" }
+docs-lint = { cmd = "npx --yes markdownlint-cli2", help = "Lint Markdown documentation" }
+fix = { sequence = ["format", "lint-fix"], help = "Auto-fix formatting and lint" }
+check = { sequence = ["format-check", "lint", "typecheck", "test"], help = "Run every Python quality gate" }

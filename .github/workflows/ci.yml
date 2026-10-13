@@ -1,128 +1,126 @@
 name: CI
+
 on:
   push:
     branches: [main]
+    paths-ignore: ["*.md", "docs/**", "LICENSE"]
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   merge_group:
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      ref:
-        type: string
-        default: ''
+
 permissions:
   contents: read
+  checks: write
+  pull-requests: read
+
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
+  commit-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run poe format-check
+      - run: uv run poe lint
+      - run: uv run poe typecheck
+
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ['3.12', '3.13', '3.14']
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+        python: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
-          ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: '0.11.32'
-          python-version: '${{ matrix.python }}'
+          python-version: ${{ matrix.python }}
+          enable-cache: true
       - run: uv sync --locked
-      - name: Complete acceptance gate
-        run: uv run poe check
-        env:
-          PYTEST_ADDOPTS: --junitxml=reports/junit.xml --cov-report=xml:reports/coverage.xml --cov-report=html:reports/coverage --cov-report=term-missing
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - run: uv run pytest --cov --junitxml=junit.xml
+      - name: Publish test report
         if: always()
+        uses: mikepenz/action-junit-report@v6
         with:
-          name: tests-${{ matrix.os }}-${{ matrix.python }}
-          path: reports/
-          retention-days: 14
+          report_paths: junit.xml
+          check_name: Tests (${{ matrix.os }} / Python ${{ matrix.python }})
+          # Fork tokens cannot create checks; retain the job summary instead.
+          annotate_only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+          include_passed: true
+          detailed_summary: true
+          require_tests: true
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}-py${{ matrix.python }}
+          path: junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
-          ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: '0.11.32'
-          python-version: '3.12'
+          python-version: "3.12"
+          enable-cache: true
       - run: uv sync --locked
       - run: uv build
-      - run: uv run poe package-check
-      - run: uv run python -m tests.repository_checks --dist dist
-      - name: Validate workflow syntax
-        run: uv run poe workflow-check
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Smoke test the installed wheel
+        run: |
+          uv venv .smoke-venv
+          uv pip install --python .smoke-venv/bin/python dist/*.whl
+          .smoke-venv/bin/skillsinc --version
+          .smoke-venv/bin/skillsinc profiles
+      - uses: actions/upload-artifact@v7
         with:
-          name: distributions
+          name: ci-dist
           path: dist/*
-          retention-days: 14
-  installed:
-    name: Installed CLI (${{ matrix.os }})
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: '0.11.32'
-          python-version: '3.12'
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: distributions
-          path: dist
-      - run: uv sync --locked
-      - run: uv run python -m tests.installed_smoke --wheel dist --output reports/installed.json
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: installed-${{ matrix.os }}
-          path: reports/
-  mutation:
+          if-no-files-found: error
+          retention-days: 7
+
+  markdown:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: '0.11.32'
-          python-version: '3.12'
-      - run: uv sync --locked
-      - run: uv run python -m tests.quality_tools mutation --output reports/mutation.json
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: mutation
-          path: reports/mutation.json
-  gate:
+      - uses: actions/checkout@v7
+      - uses: DavidAnson/markdownlint-cli2-action@v24
+
+  ci-pass:
     name: CI
     if: always()
-    needs: [test, build, installed, mutation]
+    needs: [commit-lint, lint, test, build, markdown]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Require all jobs
+      - name: Verify all job results
         env:
-          JOB_RESULTS: ${{ toJSON(needs) }}
-        run: python -c 'import json,os; results=json.loads(os.environ["JOB_RESULTS"]); assert all(job["result"] == "success" for job in results.values()), results'
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
