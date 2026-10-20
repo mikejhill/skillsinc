@@ -27,8 +27,10 @@ class TestClaudeHooks:
             ],
         }, f"Expected renamed events with timeouts, got {result.events!r}"
         assert result.losses == [
-            "scripts get Claude's snake_case input, not Copilot's camelCase input,"
-            " for: sessionStart, agentStop"
+            (
+                "scripts get Claude's snake_case input, not Copilot's camelCase"
+                " input, for: sessionStart, agentStop"
+            )
         ], f"Expected payload loss only, got {result.losses!r}"
 
     def test_pascal_case_events_and_matchers_carry_exactly(self) -> None:
@@ -84,10 +86,14 @@ class TestClaudeHooks:
         }, f"Expected one converted hook, got {result.events!r}"
         assert result.losses == [
             "drops events Claude Code lacks: errorOccurred",
-            "scripts get Claude's snake_case input, not Copilot's camelCase input,"
-            " for: preToolUse, sessionEnd",
-            "matchers are tested against Claude tool names (Bash, Edit), not"
-            " Copilot's, for: preToolUse",
+            (
+                "scripts get Claude's snake_case input, not Copilot's camelCase"
+                " input, for: preToolUse, sessionEnd"
+            ),
+            (
+                "matchers are tested against Claude tool names (Bash, Edit), not"
+                " Copilot's, for: preToolUse"
+            ),
             "drops hook fields: cwd, env, powershell",
             "drops hooks with no bash, command, or exec command for: preToolUse",
         ], f"Expected every loss reported, got {result.losses!r}"
