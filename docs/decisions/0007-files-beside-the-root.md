@@ -11,11 +11,12 @@ This record defines how a profile writes MCP entries into a configuration file t
 
 ## Decision
 
-- **Declared, not computed.** A profile lists the exact files it may write beside its root in `Profile.outside`, each as `../<name>` (Claude Code: `../.claude.json`). Any other path with `..` is still refused, and only JSON entries (never whole files or blocks) use these paths today.
+- **Declared, not computed.** A profile lists the exact files it may write beside its root in `Profile.outside`, each as `../<name>` (Claude Code: `../.claude.json`; VS Code: `../mcp.json`, the `User` folder above `prompts`). Any other path with `..` is still refused, and only JSON entries (never whole files or blocks) use these paths today.
 - **Placement hook.** `Profile.locate(path, root, environment)` maps a rendered entry file to its destination-relative path. Claude Code returns `../.claude.json` only for the default root `~/.claude` with no `CLAUDE_CONFIG_DIR`; for any other root, including `$CLAUDE_CONFIG_DIR`, the file is `<root>/.claude.json`, matching where Claude Code reads it.
 - **Lexical sibling paths.** Only the leading `..` of a declared file is taken by name (the configured root's parent), never through links, so a linked `~/.claude` still puts servers in `~/.claude.json`. The rest of the root is never normalized, so a `..` inside a configured path keeps its operating-system meaning and the safety checks inspect exactly the location written.
 - **Same checks.** The file itself must not be a link, a junction, or a directory. No source overlap check is added: a source containing the root's parent also contains the root, which the existing check refuses.
 - **Same ownership.** The manifest keys the file by its destination-relative path (`../.claude.json`), so all of decision 0002's rules apply unchanged. Removing a created file never prunes the folder it sits in.
+- **No JSONC.** VS Code allows comments and trailing commas in `mcp.json`. SkillSinc keeps decision 0002's strict parser: such a file blocks the destination with a message to remove them. Files VS Code writes itself have neither, and an in-house comment-preserving editor would add risk to user data for a rare case.
 - **Permissions.** Rewriting any shared file (entries or managed blocks) keeps its permission bits, so a private `~/.claude.json` stays private.
 
 ## Consequences

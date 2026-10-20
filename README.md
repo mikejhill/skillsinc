@@ -80,7 +80,7 @@ my-agent-library/
 | --------- | --------- | ---------------------------- | -------------------- | -------------------- | ------------------------------ | ------------------------------------- | ----------------------- |
 | `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md`   | `commands/<name>.md` | `~/.claude.json` `mcpServers`  | `resources/` + `CLAUDE.md` `@` import | `settings.json` `hooks` |
 | `copilot` | `skills/` | `instructions/`              | `agents/`            | —                    | `mcp-config.json` `mcpServers` | `resources/`                          | `hooks/`                |
-| `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`    | `<name>.prompt.md`   | —                              | —                                     | —                       |
+| `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`    | `<name>.prompt.md`   | `User/mcp.json` `servers`      | —                                     | —                       |
 | `codex`   | —         | managed block in `AGENTS.md` | `agents/<name>.toml` | —                    | —                              | —                                     | —                       |
 | `agents`  | `skills/` | —                            | —                    | —                    | —                              | —                                     | —                       |
 | `generic` | verbatim  | verbatim                     | verbatim             | verbatim             | verbatim                       | verbatim                              | verbatim                |
