@@ -199,6 +199,16 @@ class TestEnvironment:
 
         assert result == expected, f"Expected {expected}, got {result}"
 
+    def test_expands_windows_separators_on_every_platform(
+        self, environment: Environment
+    ) -> None:
+        """Treat backslashes after ``~`` as separators so configs are portable."""
+        expected = environment.home / "nested" / "child"
+
+        result = environment.expand("~\\nested\\child", environment.home)
+
+        assert result == expected, f"Expected {expected}, got {result}"
+
     def test_relative_variables_fall_back(self, tmp_path: Path) -> None:
         """Ignore relative XDG variables and use fake-home defaults."""
         environment = Environment(tmp_path, {"XDG_CONFIG_HOME": "relative"}, "linux")

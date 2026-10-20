@@ -31,8 +31,11 @@ class Environment:
 
     def expand(self, raw: str, base: Path) -> Path:
         """Expand ``~`` against the home directory and resolve relative to ``base``."""
-        if raw == "~" or raw.startswith(("~/", "~\\")):
-            raw = str(self.home) + raw[1:]
+        if raw == "~":
+            return self.home
+        if raw.startswith(("~/", "~\\")):
+            # Accept either separator so one config works on every platform
+            return self.home / raw[2:].replace("\\", "/")
         path = Path(raw)
         return path if path.is_absolute() else base / path
 
