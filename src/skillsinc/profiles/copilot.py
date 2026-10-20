@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import ClassVar, override
+from typing import ClassVar, assert_never, override
 
 from skillsinc.models import Customization, Kind, Rendering, Support
 from skillsinc.paths import Environment
@@ -46,6 +46,7 @@ class CopilotProfile(Profile):
                 return self.copy_file(item, f"agents/{item.name}.agent.md")
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
+        assert_never(item.kind)
 
 
 class VSCodeProfile(Profile):
@@ -88,3 +89,4 @@ class VSCodeProfile(Profile):
                 return self.copy_file(item, f"{item.name}.agent.md")
             case Kind.PROMPT:
                 return self.copy_file(item, f"{item.name}.prompt.md")
+        assert_never(item.kind)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import ClassVar, Final, override
+from typing import ClassVar, Final, assert_never, override
 
 from skillsinc.models import (
     Customization,
@@ -56,6 +56,7 @@ class ClaudeProfile(Profile):
                 return self._agent(item)
             case Kind.PROMPT:
                 return self._command(item)
+        assert_never(item.kind)
 
     # Conversions
 

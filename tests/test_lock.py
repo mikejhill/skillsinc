@@ -55,7 +55,7 @@ class TestStateLock:
         """Exceptions from the writer still release the lock."""
         path = tmp_path / "sync.lock"
 
-        with pytest.raises(ValueError, match="writer failed"), StateLock(path):
-            raise ValueError("writer failed")
+        with pytest.raises(ValueError, match="invalid literal"), StateLock(path):
+            int("writer failed")
 
         assert path.exists() is False, f"Expected cleanup after exception, found {path}"
