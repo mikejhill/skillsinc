@@ -1,108 +1,128 @@
 name: Release
+
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing version tag on main (for example v0.1.0)
-        required: true
-        type: string
-      index:
-        description: Package index
-        required: true
-        default: testpypi
-        type: choice
-        options: [testpypi, pypi]
+      force-patch:
+        description: Force a patch bump when no releasable commits exist
+        type: boolean
+        default: false
+
 permissions:
-  contents: read
+  contents: write
+
 concurrency:
-  group: release-${{ github.event.release.tag_name || inputs.tag }}-${{ inputs.index || 'pypi' }}
+  group: release
   cancel-in-progress: false
+
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
-    with:
-      ref: ${{ github.event.release.tag_name || inputs.tag }}
-  security:
-    permissions:
-      contents: read
-      security-events: write
-      actions: read
-    uses: ./.github/workflows/security.yml
-    with:
-      ref: ${{ github.event.release.tag_name || inputs.tag }}
-  build:
-    needs: [ci, security]
+  release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
-          persist-credentials: false
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
-          version: '0.11.32'
-          python-version: '3.12'
-      - run: uv sync --locked
-      - name: Verify version and main ancestry
+          python-version: "3.12"
+          enable-cache: true
+      - name: Determine next version
+        id: version
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          FORCE_PATCH: ${{ inputs.force-patch }}
         run: |
-          uv run python -m tests.repository_checks --tag "$RELEASE_TAG"
-          git merge-base --is-ancestor HEAD origin/main
-      - run: uv build
-      - run: uv run poe package-check
-      - run: uv run python -m tests.repository_checks --dist dist
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-distributions
-          path: dist/*
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ inputs.index || 'pypi' }}
-      url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/p/skillsinc' || 'https://pypi.org/p/skillsinc' }}
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Require publisher registration
+          args=()
+          if [[ "$FORCE_PATCH" == "true" ]]; then args+=(--force-patch); fi
+          echo "version=$(uv run scripts/next_version.py "${args[@]}")" >> "$GITHUB_OUTPUT"
+      - name: Require a valid version bump
         env:
-          PUBLISH_ENABLED: ${{ vars.PYPI_PUBLISH_ENABLED }}
-        run: test "$PUBLISH_ENABLED" = true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::No valid version bump. Add releasable commits or use force-patch."
+            exit 1
+          fi
+          if git show-ref --verify --quiet "refs/tags/v$VERSION"; then
+            echo "::error::Release tag already exists."
+            exit 1
+          fi
+      - run: uv sync --locked
+      - run: uv run poe check
+      - name: Validate and promote the changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          uv run python - <<'PY'
+          import datetime
+          import os
+          import pathlib
+          import re
+
+          path = pathlib.Path("CHANGELOG.md")
+          text = path.read_text(encoding="utf-8")
+          version = os.environ["VERSION"]
+          headers = list(re.finditer(r"^## \[Unreleased\]\s*$", text, re.MULTILINE))
+          if len(headers) != 1:
+              raise SystemExit("CHANGELOG.md must contain exactly one ## [Unreleased] header")
+          if re.search(rf"^## \[{re.escape(version)}\]", text, re.MULTILINE):
+              raise SystemExit("CHANGELOG.md already contains the release version")
+          header = headers[0]
+          rest = text[header.end():]
+          section = re.split(r"^## ", rest, maxsplit=1, flags=re.MULTILINE)[0]
+          if not re.search(r"^### (Added|Changed|Deprecated|Removed|Fixed|Security)$", section, re.MULTILINE):
+              raise SystemExit("Unreleased must contain a Keep a Changelog category")
+          if not re.search(r"^[-*] \S", section, re.MULTILINE):
+              raise SystemExit("Unreleased must contain at least one change entry")
+          date = datetime.datetime.now(datetime.UTC).date().isoformat()
+          replacement = f"## [Unreleased]\n\n## [{version}] - {date}\n\n"
+          updated = text[:header.start()] + replacement + rest.lstrip("\n")
+          if len(re.findall(r"^## \[Unreleased\]$", updated, re.MULTILINE)) != 1:
+              raise SystemExit("Unreleased header verification failed")
+          if f"## [{version}] - {date}" not in updated:
+              raise SystemExit("Version header verification failed")
+          path.write_text(updated, encoding="utf-8", newline="\n")
+          PY
+      - name: Bump package and lockfile versions
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          uv version "$VERSION"
+          uv lock
+      - run: uv build
+      - uses: actions/upload-artifact@v7
         with:
-          name: release-distributions
-          path: dist
-      - name: Publish to TestPyPI with attestations
-        if: inputs.index == 'testpypi'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          attestations: true
-      - name: Publish to PyPI with attestations
-        if: inputs.index != 'testpypi'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          attestations: true
-  assets:
-    needs: publish
-    if: github.event_name == 'release'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-distributions
-          path: dist
-      - name: Attach published distributions
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Commit, tag, and push the release atomically
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md pyproject.toml uv.lock
+          git commit -m "chore(release): v$VERSION"
+          git tag "v$VERSION"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/*
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "v$VERSION" dist/* --title "v$VERSION" --generate-notes --verify-tag
+
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

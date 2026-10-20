@@ -1,13 +1,30 @@
 # Contributing
 
-1. Read [philosophy](docs/philosophy.md), [design](docs/design.md), and [architecture](docs/architecture.md).
-2. Create a branch and keep changes scoped. Preserve unrelated harness configuration.
-3. Run `uv sync --locked`, then `uv run poe check`.
-4. Include failure-path tests for ownership, deletion, recovery, or conversion-policy changes.
-5. Open a pull request describing the behavior, validation, and fidelity impact.
+This guide covers local setup, the quality gate, and how releases are cut. Read [philosophy](docs/architecture/philosophy.md) and [architecture](docs/architecture/overview.md) first.
 
-Use Python 3.12+, the `src/skillsinc/` layout, immutable value objects, typed class-based services, Ruff, and strict `ty`. Commit `uv.lock`. Do not weaken checks to obtain a passing build.
+## Setup
 
-Harness changes require independent fixtures, vendor documentation, a verification date, and explicit unsupported/approximate behavior. Native smoke evidence must identify runtime version and scope. Ordinary tests use isolated homes and never install real login services.
+```bash
+uv sync
+uv run poe check
+```
 
-Report defects through the issue forms. Report security defects privately through [GitHub Security Advisories](https://github.com/mikejhill/skillsinc/security/advisories/new). Maintainers use the [release process](docs/releasing.md).
+`uv run poe` lists every task. `poe fix` formats and auto-fixes lint; `poe docs-lint` runs markdownlint (needs Node.js).
+
+## Rules
+
+- Python follows the strict Astral toolchain configured in `pyproject.toml`: ruff with the broad rule set, `ty` with every rule at error, pytest with at least 90% branch coverage. Never loosen a setting to pass.
+- New behavior needs a test; user-visible behavior also needs a journey test in `tests/test_journeys.py`.
+- Tests never touch the real home directory. Pass an `Environment` rooted in `tmp_path`.
+- Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`feat:`, `fix:`, `docs:` ...); PRs are squash-merged.
+- Add an entry under `## [Unreleased]` in `CHANGELOG.md`.
+
+## Releasing
+
+Releases are cut by the **Release** workflow (`workflow_dispatch` on `main`). It computes the next version from commit messages, runs `poe check`, promotes the changelog, bumps `pyproject.toml`, tags `vX.Y.Z`, creates the GitHub release, and publishes to PyPI through trusted publishing.
+
+One-time setup:
+
+1. Register a PyPI trusted publisher for project `skillsinc`, workflow `release.yml`, environment `pypi`.
+2. Create the `pypi` GitHub environment with required reviewers.
+3. Allow the workflow to push the release commit and tag: add a bypass for GitHub Actions (or a GitHub App) to the `Protected main` and `Immutable version tags` rulesets.

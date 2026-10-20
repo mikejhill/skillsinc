@@ -1,130 +1,128 @@
-"""Typed immutable values and extension protocols."""
+"""Value objects shared by sources, profiles, planning, and reporting."""
 
 from __future__ import annotations
 
 import hashlib
-from abc import abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Protocol
+from enum import StrEnum
 
-from skillsinc.jsonutil import Json, JsonObject
+type FrontmatterValue = (
+    str
+    | int
+    | float
+    | bool
+    | list[FrontmatterValue]
+    | dict[str, FrontmatterValue]
+    | None
+)
+type Frontmatter = Mapping[str, FrontmatterValue]
+
+
+class Kind(StrEnum):
+    """Customization kinds, named after their library directories."""
+
+    SKILL = "skills"
+    INSTRUCTION = "instructions"
+    AGENT = "agents"
+    PROMPT = "prompts"
+
+
+class Support(StrEnum):
+    """How faithfully a profile can represent a kind."""
+
+    EXACT = "exact"
+    CONVERTED = "converted"
+    UNSUPPORTED = "unsupported"
+
+
+class Digest:
+    """Content hashing used for ownership and drift detection."""
+
+    @staticmethod
+    def of(content: bytes) -> str:
+        """Return the SHA-256 hex digest of ``content``."""
+        return hashlib.sha256(content).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
-class PackageFile:
-    """Contained package content and permission bits."""
+class Asset:
+    """A supporting file inside a skill directory."""
 
     path: str
     content: bytes
-    mode: int = 0o644
+    executable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Document:
+    """A Markdown file split into YAML frontmatter and body."""
+
+    frontmatter: Frontmatter
+    body: str
+    raw: bytes
 
 
 @dataclass(frozen=True, slots=True)
 class Customization:
-    """Semantic customization with preserved native metadata."""
+    """One authored customization read from a source library."""
 
+    kind: Kind
     name: str
-    kind: str
-    files: tuple[PackageFile, ...]
-    metadata: JsonObject
-    style: str = "portable"
-    source: str = ""
-    origins: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class Snapshot:
-    """Complete source revision."""
-
-    root: Path
-    revision: str
-    files: tuple[PackageFile, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class Output:
-    """Desired complete file or structured-document slot."""
-
-    path: Path
-    content: bytes
-    target: str
-    provenance: tuple[str, ...]
-    slot: tuple[str, ...] = ()
-    format: str = "file"
-    mode: int = 0o644
-    canonical: Path = field(init=False, repr=False, compare=False)
-    _key: str = field(init=False, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        """Resolve physical identity once per immutable proposed output."""
-        canonical = self.path.resolve()
-        object.__setattr__(self, "canonical", canonical)
-        object.__setattr__(
-            self, "_key", str(canonical) + "#" + Json.dumps(list(self.slot)).strip()
-        )
+    source: str
+    document: Document
+    file_name: str
+    assets: tuple[Asset, ...] = ()
 
     @property
-    def key(self) -> str:
-        """Return a physical ownership key."""
-        return self._key
+    def selector(self) -> str:
+        """Return the ``kind/name`` identity used by route filters."""
+        return f"{self.kind}/{self.name}"
 
 
 @dataclass(frozen=True, slots=True)
-class Operation:
-    """Preconditioned physical-file change."""
+class FileOutput:
+    """A complete file a profile wants at a destination-relative path."""
 
-    path: Path
-    before: bytes | None
-    after: bytes | None
-    mode: int = 0o644
-    before_mode: int = 0o644
+    path: str
+    content: bytes
+    executable: bool = False
 
 
-class SourceProvider(Protocol):
-    """Complete snapshot provider boundary."""
+@dataclass(frozen=True, slots=True)
+class BlockOutput:
+    """A section a profile wants inside a shared Markdown file's managed block."""
 
-    @abstractmethod
-    def snapshot(self) -> Snapshot:
-        """Return a complete revision."""
-        raise NotImplementedError
-
-
-class CustomizationReader(Protocol):
-    """Source interpretation boundary."""
-
-    @abstractmethod
-    def read(
-        self, snapshot: Snapshot, source: str, style: str
-    ) -> tuple[Customization, ...]:
-        """Interpret packages without losing metadata."""
-        raise NotImplementedError
+    path: str
+    text: str
 
 
-class Transformation(Protocol):
-    """Zero-to-many ordered transformation boundary."""
+@dataclass(frozen=True, slots=True)
+class Rendering:
+    """A profile's translation of one customization."""
 
-    @abstractmethod
-    def apply(
-        self, items: tuple[Customization, ...], options: JsonObject
-    ) -> tuple[Customization, ...]:
-        """Return proposed customizations without destination writes."""
-        raise NotImplementedError
+    files: tuple[FileOutput, ...] = ()
+    blocks: tuple[BlockOutput, ...] = ()
+    losses: tuple[str, ...] = ()
+    unsupported: str | None = None
 
-
-class DestinationRenderer(Protocol):
-    """Harness rendering boundary."""
-
-    @abstractmethod
-    def render(self, item: Customization) -> tuple[Output, ...]:
-        """Return proposed outputs."""
-        raise NotImplementedError
+    @classmethod
+    def refuse(cls, reason: str) -> Rendering:
+        """Return a rendering stating the profile cannot represent the item."""
+        return cls(unsupported=reason)
 
 
-class Digest:
-    """Shared content hashing."""
+@dataclass(frozen=True, slots=True)
+class LossPolicy:
+    """Frontmatter fields a converter carries, ignores, or reports as lost."""
 
-    @staticmethod
-    def of(content: bytes) -> str:
-        """Return SHA-256."""
-        return hashlib.sha256(content).hexdigest()
+    carried: frozenset[str]
+    ignored: frozenset[str] = field(default_factory=frozenset)
+
+    def losses(self, frontmatter: Frontmatter) -> list[str]:
+        """Return a loss message naming fields that are neither carried nor ignored."""
+        known = self.carried | self.ignored
+        dropped = [key for key in frontmatter if key not in known]
+        if not dropped:
+            return []
+        return [f"drops frontmatter: {', '.join(dropped)}"]

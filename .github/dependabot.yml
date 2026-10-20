@@ -4,12 +4,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: build
     groups:
-      development:
+      dev-dependencies:
         dependency-type: development
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: ci

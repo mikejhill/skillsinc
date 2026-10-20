@@ -1,59 +1,111 @@
 # SkillSinc
 
 [![CI](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml)
-[![Security](https://github.com/mikejhill/skillsinc/actions/workflows/security.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/security.yml)
+[![Release](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml)
+[![License](https://img.shields.io/github/license/mikejhill/skillsinc)](LICENSE)
 
-Distribute **agent customizations**—skills, instructions, agents, prompts, hooks, MCP declarations, and supporting files—from user-defined sources into harness-compatible destinations.
+Write your agent skills, instructions, agents, and prompts once. SkillSinc copies them into Claude Code, GitHub Copilot, VS Code, Codex, and the shared `~/.agents` folder, converting formats where it must and saying so when a conversion loses something.
 
-SkillSinc supplies the mechanism. Your configuration defines distribution policy.
+It replaces hand-copying, symlinks, and per-tool sync scripts with one command that shows you every change before it makes it.
 
-- Many-to-many routes, ordered transformations, and Python/executable plugins.
-- Local and Git sources; manual CLI, external schedulers, and event/poll watching.
-- Source-authoritative drift repair with explicit ownership, deletion boundaries, and journaled recovery.
-- Entry-preserving JSON, JSONC, TOML, and Markdown edits.
-- Explicit equivalent, approximate, and unsupported conversion outcomes.
-- XDG storage on Windows, macOS, and Linux; native harness paths remain native.
+## How it works
 
-## Start
+```mermaid
+graph LR
+    Library[Your library<br/>skills/ instructions/ agents/ prompts/] --> Plan[skillsinc plan]
+    Plan --> Claude[~/.claude]
+    Plan --> Copilot[~/.copilot]
+    Plan --> VSCode[VS Code prompts]
+    Plan --> Codex[~/.codex/AGENTS.md]
+    Plan --> Agents[~/.agents/skills]
+```
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Git sources also require Git. Until PyPI publication:
+- **Your library is the source of truth.** A sync makes each destination match it: new items are added, changed items updated, removed items deleted.
+- **SkillSinc only touches what it wrote.** It records every file it owns. An existing file it did not write blocks that destination until you review it and pass `--adopt`.
+- **Nothing is written without a plan.** `skillsinc plan` lists every change; `skillsinc sync` applies the same plan.
+- **Lossy conversions are opt-in.** If a harness cannot represent a field (for example, Claude ignores Copilot `tools` lists), the item is skipped until the route sets `allow_lossy = true`.
+- **A broken source never deletes anything.** If a library cannot be read completely, its destinations are left untouched.
 
-```console
+## Install
+
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
 uv tool install git+https://github.com/mikejhill/skillsinc.git
-skillsinc init
 ```
 
-1. Add packages under `~/.config/skillsinc/customizations/`.
-2. Enable destinations and edit routes in `~/.config/skillsinc/config.json`.
-3. Preview and apply:
+## Quick start
 
-```console
-skillsinc validate
-skillsinc plan
-skillsinc sync
-skillsinc explain review
-skillsinc watch
+1. Point SkillSinc at your library. It enables a destination for every harness folder found on this machine:
+
+    ```bash
+    skillsinc init --source ~/my-agent-library
+    ```
+
+2. Preview the changes:
+
+    ```bash
+    skillsinc plan
+    ```
+
+3. Apply them:
+
+    ```bash
+    skillsinc sync
+    ```
+
+Run `skillsinc sync` again whenever the library changes, or schedule it with Task Scheduler, cron, or launchd. Overlapping runs are serialized by a lock.
+
+## Library layout
+
+The layout matches GitHub Copilot's file conventions, so an existing Copilot library works unchanged:
+
+```text
+my-agent-library/
+├── skills/<name>/SKILL.md            # plus any supporting files
+├── instructions/<name>.instructions.md
+├── agents/<name>.agent.md
+└── prompts/<name>.prompt.md
 ```
 
-Default destinations are disabled. Existing harness content is never silently imported or adopted. Failed source acquisition retains managed output. See [usage](docs/usage.md) and [configuration](docs/configuration.md). The package, command, and Python import are all `skillsinc`.
+`INTENT.md`, `*.intent.md`, and hidden files are never distributed.
 
-## Harness coverage
+## What each harness receives
 
-Profiles cover Claude Code, Codex CLI/desktop, Copilot CLI/VS Code, Cursor IDE/CLI, Gemini CLI, OpenCode, shared `.agents` skills, and generic directories. Conversion support varies by kind, scope, and semantics. Unapproved losses block distribution.
+| Profile   | Skills    | Instructions                 | Agents             | Prompts              |
+| --------- | --------- | ---------------------------- | ------------------ | -------------------- |
+| `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md` | `commands/<name>.md` |
+| `copilot` | `skills/` | `instructions/`              | `agents/`          | —                    |
+| `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`  | `<name>.prompt.md`   |
+| `codex`   | —         | managed block in `AGENTS.md` | —                  | —                    |
+| `agents`  | `skills/` | —                            | —                  | —                    |
+| `generic` | verbatim  | verbatim                     | verbatim           | verbatim             |
 
-**Alpha:** passing fixtures do not prove native discovery or behavior. Native versions, hook behavior, actual service lifecycle, and approved performance baselines remain separate [release gates](docs/roadmap.md). See the [contract inventory](docs/contracts.md).
+Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/harness-profiles.md) for exact conversions.
 
-## Develop and release
+## Commands
 
-```console
-uv sync --locked
-uv run poe check
-uv build
-uv run poe package-check
-```
+| Command              | Purpose                                            |
+| -------------------- | -------------------------------------------------- |
+| `skillsinc init`     | Write a starter configuration                      |
+| `skillsinc plan`     | Show every change a sync would make; write nothing |
+| `skillsinc sync`     | Apply the plan                                     |
+| `skillsinc profiles` | List harness profiles and what each kind becomes   |
 
-CI runs Python 3.12–3.14 on Windows, macOS, and Linux, installed-wheel tests, mutation checks, documentation/workflow checks, dependency audits, and CodeQL. Releases rerun checks on the tag and use approval-gated PyPI Trusted Publishing.
+`plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, and `--config PATH`. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
-[Documentation](docs/README.md) · [Philosophy](docs/philosophy.md) · [Design](docs/design.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [Release process](docs/releasing.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
+## Documentation
 
-MIT licensed. Plugins are trusted code; distributing hooks does not execute them.
+- [Configuration reference](docs/guides/configuration.md)
+- [Command-line reference](docs/guides/command-line.md)
+- [Development guide](docs/guides/development.md)
+- [Roadmap](docs/planning/roadmap.md)
+- [Harness profiles](docs/guides/harness-profiles.md)
+- [Philosophy and goals](docs/architecture/philosophy.md)
+- [Architecture](docs/architecture/overview.md)
+- [Decision: rebuild scope](docs/decisions/0001-rebuild-scope.md)
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
+
+## License
+
+[MIT](LICENSE)

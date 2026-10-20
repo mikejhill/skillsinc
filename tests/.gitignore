@@ -1,0 +1,6 @@
+# Runtime artifacts from isolated test tooling.
+/.cache/
+/.tmp/
+/tmp-run/
+/.coverage
+/**/__pycache__/

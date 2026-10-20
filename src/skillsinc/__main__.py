@@ -1,180 +1,79 @@
-"""Application composition and class-based console entry point."""
+"""Application entry point."""
 
 from __future__ import annotations
 
 import logging
-import sqlite3
 import sys
 from collections.abc import Sequence
+from typing import Final, TextIO
 
-from filelock import Timeout
-
-from skillsinc.cli import Command, CommandLine
-from skillsinc.config import Configuration, Settings
-from skillsinc.contracts import ContractRegistry
-from skillsinc.engine import Engine
+from skillsinc.cli import CommandLine
+from skillsinc.commands import InitCommand, PlanCommand, ProfilesCommand
 from skillsinc.exceptions import AppError, ConfigurationError
-from skillsinc.jsonutil import Json, JsonObject
-from skillsinc.loggingutil import StructuredFormatter
-from skillsinc.paths import XdgPaths
-from skillsinc.services import ServiceManager
-from skillsinc.watch import WatchCoordinator
+from skillsinc.paths import Environment
+from skillsinc.profiles.registry import ProfileRegistry
+from skillsinc.settings import InitSettings, PlanSettings, Settings
 
 logger = logging.getLogger(__name__)
 
+EXIT_OK: Final = 0
+EXIT_FAILED: Final = 1
+EXIT_USAGE: Final = 2
+EXIT_INTERRUPTED: Final = 130
+
 
 class Application:
-    """Parse arguments, compose services, and report actionable failures."""
+    """The ``skillsinc`` command-line application."""
+
+    def __init__(
+        self, environment: Environment | None = None, out: TextIO | None = None
+    ) -> None:
+        self._environment = environment or Environment.current()
+        self._out = out or sys.stdout
+        self._profiles = ProfileRegistry()
 
     @classmethod
-    def main(cls) -> None:
-        """Run the installed CLI."""
-        sys.exit(cls().run())
+    def main(cls, argv: Sequence[str] | None = None) -> None:
+        """Run the application and exit with its status code."""
+        sys.exit(cls().run(argv))
 
     def run(self, argv: Sequence[str] | None = None) -> int:
-        """Execute a command with stable scheduler-friendly exit codes."""
-        command = CommandLine().parse(argv)
-        logging.basicConfig(level=logging.DEBUG if command.verbose else logging.WARNING)
-        if command.background_log:
-            command.background_log.parent.mkdir(parents=True, exist_ok=True)
-            logging.getLogger().addHandler(
-                logging.FileHandler(command.background_log, encoding="utf-8")
-            )
-        for handler in logging.getLogger().handlers:
-            handler.setFormatter(StructuredFormatter())
+        """Parse arguments, run one command, and return its exit code."""
+        settings = CommandLine(self._environment).parse(argv)
+        self._configure_logging(settings.log_level)
         try:
-            result = self._execute(command, XdgPaths.discover())
-            self._emit(result, command)
-            return 0 if bool(result.get("ok", True)) else 1
-        except ConfigurationError as error:
-            self._error(error, command)
-            return 2
-        except (AppError, OSError, sqlite3.Error, Timeout, UnicodeError) as error:
-            self._error(error, command)
-            return 1
+            return self._dispatch(settings)
+        except ConfigurationError as err:
+            logger.error("%s", err)  # noqa: TRY400 — user-facing message, not a crash
+            return EXIT_USAGE
+        except AppError as err:
+            logger.error("%s", err)  # noqa: TRY400 — user-facing message, not a crash
+            return EXIT_FAILED
         except KeyboardInterrupt:
-            return 130
+            logger.warning("Interrupted")
+            return EXIT_INTERRUPTED
 
-    @staticmethod
-    def _execute(command: Command, paths: XdgPaths) -> JsonObject:
-        """Keep dispatch separate from argument parsing and business logic."""
-        configuration = Configuration(paths)
-        engine = Engine(paths)
-        if command.name == "contracts":
-            if command.action == "show":
-                return ContractRegistry.get(command.query).report()
-            return {
-                "version": 1,
-                "contracts": [
-                    contract.report() for contract in ContractRegistry.CONTRACTS
-                ],
-            }
-        if command.name == "init":
-            if command.config:
-                raise ConfigurationError(
-                    "init uses default XDG configuration; "
-                    "author explicit config files directly"
-                )
-            return {"version": 1, "config": str(configuration.initialize()), "ok": True}
-        if command.name == "status":
-            return Application._status(command, paths, engine)
-        if command.name == "watch":
-            return WatchCoordinator(paths, command.config, command.targets).run(
-                once=command.once
+    def _dispatch(self, settings: Settings) -> int:
+        """Run the handler for ``settings``."""
+        if isinstance(settings, InitSettings):
+            return InitCommand(self._profiles, self._environment).run(
+                settings, self._out
             )
-        settings = configuration.load(command.config, bootstrap=command.name == "sync")
-        return Application._configured(command, paths, settings, engine)
+        if isinstance(settings, PlanSettings):
+            return PlanCommand(self._profiles, self._environment).run(
+                settings, self._out
+            )
+        return ProfilesCommand(self._profiles).run(self._out)
 
     @staticmethod
-    def _status(command: Command, paths: XdgPaths, engine: Engine) -> JsonObject:
-        """Inspect current drift and the selected configuration's last result."""
-        if command.config is None and not (paths.config / "config.json").is_file():
-            return engine.store.report()
-        settings = Configuration(paths).load(command.config)
-        result = engine.run(settings, command.targets)
-        result["last_run"] = engine.store.report(owner=str(settings.file.resolve()))
-        result["watcher"] = engine.store.watcher()
-        return result
-
-    @staticmethod
-    def _configured(
-        command: Command, paths: XdgPaths, settings: Settings, engine: Engine
-    ) -> JsonObject:
-        """Dispatch commands requiring a valid distribution policy."""
-        if command.name == "service":
-            return ServiceManager(paths, settings.file).execute(command.action)
-        if command.name == "validate":
-            plan = engine.planner.build(settings, command.targets, fetch=False)
-            return {
-                "version": 1,
-                "ok": not plan.blocked,
-                "blocked": dict(plan.blocked),
-                "diagnostics": list(plan.diagnostics),
-            }
-        result = engine.run(
-            settings,
-            command.targets,
-            apply=command.name in ("sync", "adopt"),
-            adopt=command.name == "adopt",
+    def _configure_logging(level: str) -> None:
+        """Send diagnostics to stderr."""
+        logging.basicConfig(
+            level=level,
+            format="%(levelname)s: %(message)s",
+            stream=sys.stderr,
+            force=True,
         )
-        if command.name == "explain" and command.query:
-            result["targets"] = [
-                target
-                for target in Json.array(result.get("targets"))
-                if command.query in Json.dumps(target)
-            ]
-        return result
-
-    @staticmethod
-    def _emit(result: JsonObject, command: Command) -> None:
-        """Emit machine JSON or concise human operations."""
-        if command.background_log:
-            logger.info("Background reconciliation completed")
-            return
-        if command.json:
-            sys.stdout.write(Json.dumps(result))
-            return
-        if command.name == "explain":
-            Application._explain(result)
-            return
-        if "targets" not in result:
-            sys.stdout.write(Json.dumps(result))
-            return
-        for raw in Json.array(result.get("targets")):
-            target = Json.object(raw)
-            names = ", ".join(Json.strings(target.get("names")))
-            if not bool(target.get("ok")):
-                sys.stdout.write(f"BLOCKED {names}: {target.get('error')}\n")
-                continue
-            operations = Json.array(target.get("operations", []))
-            sys.stdout.write(f"OK {names}: {len(operations)} change(s)\n")
-            for operation in operations:
-                item = Json.object(operation)
-                sys.stdout.write(f"  {item.get('action')} {item.get('path')}\n")
-        for note in Json.array(result.get("diagnostics", [])):
-            sys.stdout.write(f"NOTE {note}\n")
-
-    @staticmethod
-    def _explain(result: JsonObject) -> None:
-        """Expose source identities and ordered transformations in human output."""
-        for raw in Json.array(result.get("targets", [])):
-            target = Json.object(raw)
-            if not bool(target.get("ok")):
-                sys.stdout.write(f"BLOCKED: {target.get('error')}\n")
-            for output in Json.array(target.get("outputs", [])):
-                record = Json.object(output)
-                sys.stdout.write(f"{record.get('path')}\n")
-                for origin in Json.strings(record.get("provenance", [])):
-                    sys.stdout.write(f"  {origin}\n")
-
-    @staticmethod
-    def _error(error: Exception, command: Command) -> None:
-        """Expose operational failures without stack traces by default."""
-        if command.json and not command.background_log:
-            sys.stdout.write(
-                Json.dumps({"version": 1, "ok": False, "error": str(error)})
-            )
-        logger.error("%s", error)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,0 @@
-{
-  "recipe_version": 1,
-  "configuration_version": 1,
-  "source_layout": ["skills", "instructions", "agents", "prompts", "hooks", "mcp"],
-  "bootstrap_source": "customizations",
-  "destination_templates_enabled": false,
-  "source_authoritative": true,
-  "fidelity": {"approximate": "explicit opt-in", "unsupported": "block"}
-}

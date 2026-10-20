@@ -1,189 +1,168 @@
-"""Complete local and commit-addressed Git source snapshots."""
+"""Read a library directory into customizations, failing loudly on ambiguity."""
 
 from __future__ import annotations
 
-import io
+import logging
 import os
+import re
 import stat
-import subprocess
-import tarfile
+from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Final
 
-from filelock import FileLock
+from skillsinc.config import SourceConfig
+from skillsinc.exceptions import FrontmatterError, SourceError
+from skillsinc.frontmatter import FrontmatterCodec
+from skillsinc.models import Asset, Customization, Document, Frontmatter, Kind
 
-from skillsinc.config import Source
-from skillsinc.exceptions import SourceError
-from skillsinc.jsonutil import Json
-from skillsinc.models import Digest, PackageFile, Snapshot
-from skillsinc.paths import SafePath
+logger = logging.getLogger(__name__)
+
+NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+SUFFIXES: Final = {
+    Kind.INSTRUCTION: ".instructions.md",
+    Kind.AGENT: ".agent.md",
+    Kind.PROMPT: ".prompt.md",
+}
 
 
-class LocalSource:
-    """Scan stable trees without silently accepting incomplete enumeration."""
+class SourceReader:
+    """Read one library directory completely, or raise ``SourceError``."""
 
-    def __init__(self, root: Path) -> None:
-        self.root = root
+    def __init__(self, codec: FrontmatterCodec | None = None) -> None:
+        self._codec = codec or FrontmatterCodec()
 
-    def snapshot(self) -> Snapshot:
-        """Read all regular files and verify tree stability."""
+    def read(self, source: SourceConfig) -> tuple[Customization, ...]:
+        """Return every customization in ``source``, sorted by selector.
+
+        A missing kind directory means "none of that kind". A missing root or
+        any unreadable item fails the whole source, because a partial read
+        would look like deletions.
+
+        Raises:
+            SourceError: If the library cannot be read completely and unambiguously.
+        """
+        if not source.path.is_dir():
+            msg = f"source '{source.name}': directory not found: {source.path}"
+            raise SourceError(msg)
+
+        items: list[Customization] = []
         try:
-            before = self._inventory()
-            files = tuple(
-                PackageFile(name, path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
-                for name, path, _, _ in before
-            )
-            if before != self._inventory():
-                raise SourceError(f"Source changed while reading: {self.root}")
-        except OSError as error:
-            raise SourceError(f"Incomplete source scan: {self.root}") from error
-        fingerprint = b"".join(
-            file.path.encode()
-            + b"\0"
-            + file.mode.to_bytes(4)
-            + len(file.content).to_bytes(8)
-            + file.content
-            for file in files
-        )
-        return Snapshot(self.root, Digest.of(fingerprint), files)
-
-    def _inventory(self) -> tuple[tuple[str, Path, int, int], ...]:
-        """Enumerate with explicit permission and symlink errors."""
-        if not self.root.is_dir() or self.root.is_symlink() or self.root.is_junction():
-            raise SourceError(f"Source directory unavailable: {self.root}")
-        result = []
-        for directory, folders, files in os.walk(self.root, onerror=self._scan_error):
-            folders[:] = sorted(folder for folder in folders if folder != ".git")
-            self._validate_links(Path(directory), folders)
-            for name in sorted(files):
-                path = Path(directory) / name
-                if path.is_symlink() or not path.is_file():
-                    raise SourceError(
-                        f"Only regular source files are supported: {path}"
-                    )
-                info = path.stat()
-                relative = SafePath.relative(path.relative_to(self.root).as_posix())
-                result.append((relative, path, info.st_mtime_ns, info.st_size))
-        return tuple(sorted(result))
-
-    @staticmethod
-    def _validate_links(directory: Path, folders: list[str]) -> None:
-        """Reject directory links rather than omit their content."""
-        for name in folders:
-            path = directory / name
-            if path.is_symlink() or path.is_junction():
-                raise SourceError(f"Source directory link: {directory / name}")
-
-    @staticmethod
-    def _scan_error(error: OSError) -> None:
-        """Turn walk failures into authoritative snapshot failure."""
-        raise SourceError("Source enumeration failed") from error
-
-
-class GitSource:
-    """Fetch immutable snapshots without checkout hooks or submodules."""
-
-    def __init__(self, source: Source, cache: Path, *, fetch: bool = True) -> None:
-        self.source = source
-        self.root = cache / "git" / Digest.of(source.location.encode())
-        self.fetch = fetch
-
-    def snapshot(self) -> Snapshot:
-        """Fetch and archive one validated revision."""
-        if not self.fetch:
-            if not self.root.is_dir():
-                raise SourceError("Git mirror unavailable; run sync to fetch it")
-            return self._snapshot_locked()
-        self.root.parent.mkdir(parents=True, exist_ok=True)
-        with FileLock(str(self.root) + ".lock"):
-            return self._snapshot_locked()
-
-    def _snapshot_locked(self) -> Snapshot:
-        """Resolve refs only after a successful fetch."""
-        options = self.source.options or {}
-        if not self.root.exists():
-            if not self.fetch:
-                raise SourceError("Git mirror unavailable; run sync to fetch it")
-            self._git("clone", "--bare", "--", self.source.location, str(self.root))
-        elif self.fetch:
-            self._git(
-                "-C",
-                str(self.root),
-                "fetch",
-                "--prune",
-                "origin",
-                "+refs/heads/*:refs/heads/*",
-                "+refs/tags/*:refs/tags/*",
-            )
-            if "ref" not in options:
-                self._refresh_default_branch()
-        ref = Json.string(options.get("ref", "HEAD"))
-        if ref.startswith("-"):
-            raise SourceError("Git ref must not be an option")
-        revision = (
-            self._git("-C", str(self.root), "rev-parse", "--verify", ref + "^{commit}")
-            .decode()
-            .strip()
-        )
-        archive = self._git("-C", str(self.root), "archive", "--format=tar", revision)
-        self._validate_tree(revision)
-        files = []
-        with tarfile.open(fileobj=io.BytesIO(archive)) as stream:
-            for member in stream.getmembers():
-                if member.isdir():
+            for kind in Kind:
+                directory = source.path / source.layout[kind]
+                if not directory.is_dir():
                     continue
-                if not member.isfile():
-                    raise SourceError(
-                        f"Git source contains unsupported link: {member.name}"
-                    )
-                content = stream.extractfile(member)
-                if content is None:
-                    raise SourceError(f"Cannot read archive member {member.name}")
-                files.append(
-                    PackageFile(
-                        SafePath.relative(member.name), content.read(), member.mode
-                    )
+                if kind is Kind.SKILL:
+                    items.extend(self._skills(source, directory))
+                else:
+                    items.extend(self._documents(source, kind, directory))
+        except (OSError, FrontmatterError) as err:
+            msg = f"source '{source.name}': {err}"
+            raise SourceError(msg) from err
+        logger.debug("Read %d items from source %s", len(items), source.name)
+        return tuple(sorted(items, key=lambda item: item.selector))
+
+    # Kinds
+
+    def _skills(self, source: SourceConfig, directory: Path) -> list[Customization]:
+        """Read every ``<name>/SKILL.md`` package under ``directory``."""
+        items: list[Customization] = []
+        for package in sorted(directory.iterdir()):
+            if not package.is_dir() or self._excluded(source, package.name):
+                continue
+            name = self._name(package.name, package)
+            entry = package / "SKILL.md"
+            if not entry.is_file():
+                msg = f"skill directory has no SKILL.md: {package}"
+                raise SourceError(msg)
+            document = self._parse(entry)
+            self._check_skill(name, document.frontmatter, entry)
+            assets = tuple(self._assets(source, package))
+            items.append(
+                Customization(
+                    Kind.SKILL, name, source.name, document, "SKILL.md", assets
                 )
-        return Snapshot(self.root, revision, tuple(files))
-
-    def _validate_tree(self, revision: str) -> None:
-        """Reject omitted submodule contents as an incomplete resource snapshot."""
-        tree = self._git("-C", str(self.root), "ls-tree", "-r", "-z", revision)
-        if any(entry.startswith(b"160000 ") for entry in tree.split(b"\0")):
-            raise SourceError(
-                "Git submodule contents are unavailable; source snapshot incomplete"
             )
+        return items
 
-    def _refresh_default_branch(self) -> None:
-        """Follow a changed remote default branch after a successful fetch."""
-        advertised = self._git(
-            "-C", str(self.root), "ls-remote", "--symref", "origin", "HEAD"
-        ).decode()
-        for line in advertised.splitlines():
-            if line.startswith("ref: refs/heads/") and line.endswith("\tHEAD"):
-                branch = line.removeprefix("ref: ").split("\t", 1)[0]
-                self._git("-C", str(self.root), "symbolic-ref", "HEAD", branch)
-                return
-        raise SourceError("Remote default branch cannot be resolved")
+    def _documents(
+        self, source: SourceConfig, kind: Kind, directory: Path
+    ) -> list[Customization]:
+        """Read single-file customizations (``<name><suffix>`` or ``<name>.md``)."""
+        items: dict[str, Customization] = {}
+        for path in sorted(directory.iterdir()):
+            if not path.is_file() or self._excluded(source, path.name):
+                continue
+            stem = self._stem(path.name, SUFFIXES[kind])
+            if stem is None:
+                continue
+            name = self._name(stem, path)
+            if name in items:
+                msg = f"two {kind} files define '{name}' in {directory}"
+                raise SourceError(msg)
+            document = self._parse(path)
+            items[name] = Customization(kind, name, source.name, document, path.name)
+        return list(items.values())
+
+    # Internals
+
+    def _parse(self, path: Path) -> Document:
+        """Parse a Markdown file."""
+        try:
+            return self._codec.parse(path.read_bytes())
+        except FrontmatterError as err:
+            msg = f"{path}: {err}"
+            raise FrontmatterError(msg) from err
+
+    def _assets(self, source: SourceConfig, package: Path) -> list[Asset]:
+        """Collect a skill's supporting files, skipping excluded names."""
+        assets: list[Asset] = []
+        for root, directories, files in os.walk(package):
+            directories[:] = sorted(
+                name for name in directories if not self._excluded(source, name)
+            )
+            for file_name in sorted(files):
+                path = Path(root) / file_name
+                relative = path.relative_to(package).as_posix()
+                if relative == "SKILL.md" or self._excluded(source, file_name):
+                    continue
+                mode = path.stat().st_mode
+                executable = bool(mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
+                assets.append(Asset(relative, path.read_bytes(), executable))
+        return assets
 
     @staticmethod
-    def _git(*arguments: str) -> bytes:
-        """Execute Git with checkout hooks disabled and bounded time."""
-        command = [
-            "git",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "protocol.ext.allow=never",
-            "-c",
-            "core.longpaths=true",
-            *arguments,
-        ]
-        try:
-            result = subprocess.run(  # noqa: S603 - explicit trusted argv, no shell
-                command, capture_output=True, check=True, timeout=120
+    def _check_skill(name: str, frontmatter: Frontmatter, entry: Path) -> None:
+        """Enforce the Agent Skills rules harnesses rely on for discovery."""
+        declared = frontmatter.get("name")
+        if declared is not None and declared != name:
+            msg = (
+                f"{entry}: frontmatter name '{declared}' differs from"
+                f" directory name '{name}'"
             )
-        except (OSError, subprocess.SubprocessError) as error:
-            raise SourceError(
-                "Git fetch/archive failed; previous output retained"
-            ) from error
-        return result.stdout
+            raise SourceError(msg)
+        description = frontmatter.get("description")
+        if not isinstance(description, str) or not description.strip():
+            msg = f"{entry}: skills need a description so harnesses can discover them"
+            raise SourceError(msg)
+
+    @staticmethod
+    def _excluded(source: SourceConfig, name: str) -> bool:
+        """Return True if ``name`` matches one of the source's exclude patterns."""
+        return any(fnmatchcase(name, pattern) for pattern in source.exclude)
+
+    @staticmethod
+    def _stem(file_name: str, suffix: str) -> str | None:
+        """Return the item name for a file, or None if it is not Markdown."""
+        if file_name.endswith(suffix):
+            return file_name.removesuffix(suffix)
+        if file_name.endswith(".md"):
+            return file_name.removesuffix(".md")
+        return None
+
+    @staticmethod
+    def _name(name: str, path: Path) -> str:
+        """Validate an item name so it is safe to use as a path segment."""
+        if not NAME_PATTERN.match(name):
+            msg = f"invalid customization name '{name}': {path}"
+            raise SourceError(msg)
+        return name

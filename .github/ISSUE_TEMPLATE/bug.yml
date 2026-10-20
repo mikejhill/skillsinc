@@ -1,27 +1,25 @@
-name: Defect
-description: Incorrect distribution, conversion, or CLI behavior
-labels: [bug]
+name: Bug report
+description: Report incorrect behavior.
+title: "fix: "
 body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the command and a minimal configuration.
+    validations:
+      required: true
   - type: textarea
     id: behavior
     attributes:
       label: Expected and actual behavior
-    validations:
-      required: true
-  - type: textarea
-    id: reproduction
-    attributes:
-      label: Minimal reproduction
-      description: Include a sanitized configuration and customization. Remove credentials.
+      description: Include relevant error output. Remove secrets and private paths.
     validations:
       required: true
   - type: input
     id: environment
     attributes:
-      label: SkillSinc version, OS, Python, and harness/version/scope
+      label: Environment
+      placeholder: skillsinc version, Python version, OS, and target harness
     validations:
       required: true
-  - type: textarea
-    id: diagnostics
-    attributes:
-      label: Sanitized plan/status diagnostics

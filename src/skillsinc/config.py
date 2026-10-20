@@ -1,286 +1,314 @@
-"""Versioned extensible configuration and default initialization."""
+"""Load and validate the TOML configuration: sources, destinations, and routes."""
 
 from __future__ import annotations
 
+import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
+from itertools import pairwise
 from pathlib import Path
+from typing import Final, NoReturn
 
-from skillsinc.catalog import Catalog
 from skillsinc.exceptions import ConfigurationError
-from skillsinc.jsonutil import Json, JsonObject, JsonValue
-from skillsinc.paths import SafePath, XdgPaths
+from skillsinc.models import Customization, Kind
+from skillsinc.paths import Environment
+from skillsinc.profiles.registry import ProfileRegistry
+
+CONFIG_VERSION: Final = 1
+DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
+ALL_ITEMS: Final = ("*/*",)
 
 
 @dataclass(frozen=True, slots=True)
-class Source:
-    """Named provider and reader declaration."""
+class SourceConfig:
+    """A local library directory of authored customizations."""
 
     name: str
-    location: str
-    provider: str = "local"
-    style: str = "portable"
-    reader: str = "default"
-    options: JsonObject | None = None
-    select: tuple[str, ...] = ("*",)
+    path: Path
+    layout: Mapping[Kind, str]
+    exclude: tuple[str, ...] = DEFAULT_EXCLUDE
 
 
 @dataclass(frozen=True, slots=True)
-class Destination:
-    """Concrete root and optional harness profile."""
+class DestinationConfig:
+    """A harness directory that receives customizations."""
 
     name: str
-    location: Path
-    profile: str = "generic"
-    scope: str = "user"
-    enabled: bool = False
-    options: JsonObject | None = None
-    version: str | None = None
-    steps: tuple[Step, ...] = ()
+    profile: str
+    path: Path
+    enabled: bool = True
 
 
 @dataclass(frozen=True, slots=True)
-class Step:
-    """Ordered transformation and extension-owned settings."""
+class RouteConfig:
+    """Which items flow from which sources to which destinations."""
 
-    use: str
-    options: JsonObject
-
-
-@dataclass(frozen=True, slots=True)
-class Route:
-    """Many-to-many routing and fidelity policy."""
-
-    name: str
     sources: tuple[str, ...]
     destinations: tuple[str, ...]
-    steps: tuple[Step, ...]
-    select: tuple[str, ...] = ("*",)
-    approximate: bool = False
-    unsupported: str = "block"
+    include: tuple[str, ...] = ALL_ITEMS
+    exclude: tuple[str, ...] = ()
+    allow_lossy: bool = False
+
+    def selects(self, item: Customization) -> bool:
+        """Return True if ``item`` comes from a routed source and passes the filters."""
+        if item.source not in self.sources:
+            return False
+        selector = item.selector
+        included = any(fnmatchcase(selector, pattern) for pattern in self.include)
+        excluded = any(fnmatchcase(selector, pattern) for pattern in self.exclude)
+        return included and not excluded
 
 
 @dataclass(frozen=True, slots=True)
-class Settings:
-    """Resolved orchestration configuration."""
+class Config:
+    """A validated configuration file."""
 
-    file: Path
-    sources: tuple[Source, ...]
-    destinations: tuple[Destination, ...]
-    routes: tuple[Route, ...]
-    debounce: float = 0.5
-    poll: float = 60
-    verify: float = 300
-    remote_poll: float = 300
+    path: Path
+    sources: Mapping[str, SourceConfig]
+    destinations: Mapping[str, DestinationConfig]
+    routes: tuple[RouteConfig, ...]
 
 
-class Configuration:
-    """Load policy while leaving plugin payloads extensible."""
+class Table:
+    """Typed, strict accessor over one TOML table; reports unknown keys."""
 
-    def __init__(self, paths: XdgPaths) -> None:
-        self.paths = paths
+    def __init__(self, data: Mapping[str, object], where: str) -> None:
+        self._data = data
+        self._where = where
+        self._read: set[str] = set()
 
-    def load(self, file: Path | None = None, *, bootstrap: bool = False) -> Settings:
-        """Load without mutating read-only commands."""
-        selected = file.absolute() if file else self.paths.config / "config.json"
-        if not selected.exists() and bootstrap and file is None:
-            self.initialize()
-        if not selected.is_file():
-            raise ConfigurationError(
-                f"Configuration missing: {selected}; run skillsinc init"
-            )
-        return self.parse(
-            Json.object(Json.loads(selected.read_text(encoding="utf-8"))), selected
-        )
+    def string(self, key: str, default: str | None = None) -> str | None:
+        """Return a string value, or ``default`` when absent."""
+        value = self._take(key)
+        if value is None:
+            return default
+        if not isinstance(value, str) or not value:
+            self._fail(key, "a non-empty string")
+        return value
 
-    def initialize(self) -> Path:
-        """Create defaults once without replacing user configuration."""
-        file = self.paths.config / "config.json"
-        self.paths.config.mkdir(parents=True, exist_ok=True)
-        Catalog.install(self.paths.data)
-        if file.exists():
-            return file
-        for kind in ("skills", "instructions", "agents", "prompts", "hooks", "mcp"):
-            (self.paths.config / "customizations" / kind).mkdir(
-                parents=True, exist_ok=True
-            )
-        templates: JsonObject = {}
-        for profile, folder in (
-            ("shared", ".agents"),
-            ("claude", ".claude"),
-            ("codex", ".codex"),
-            ("codex-desktop", ".codex"),
-            ("copilot-cli", ".copilot"),
-            ("copilot-vscode", ".copilot"),
-            ("cursor-ide", ".cursor"),
-            ("cursor-cli", ".cursor"),
-            ("gemini", ".gemini"),
-            ("opencode", ".config/opencode"),
+    def strings(self, key: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+        """Return a list of strings, or ``default`` when absent."""
+        value = self._take(key)
+        if value is None:
+            return default
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item for item in value
         ):
-            templates[profile] = {
-                "location": str(Path.home() / folder),
-                "profile": profile,
-                "enabled": False,
-            }
-        default = Json.record(
-            {
-                "version": 1,
-                "sources": {"personal": {"location": "customizations"}},
-                "destinations": templates,
-                "routes": [
-                    {
-                        "name": profile,
-                        "sources": ["personal"],
-                        "destinations": [profile],
-                        "select": self._default_selection(profile),
-                    }
-                    for profile in templates
-                ],
-                "pipelines": {},
-                "settings": {
-                    "debounce": 0.5,
-                    "poll": 60,
-                    "verify": 300,
-                    "remote_poll": 300,
-                },
-            }
+            self._fail(key, "a list of non-empty strings")
+        return tuple(str(item) for item in value)
+
+    def boolean(self, key: str, *, default: bool) -> bool:
+        """Return a boolean value, or ``default`` when absent."""
+        value = self._take(key)
+        if value is None:
+            return default
+        if not isinstance(value, bool):
+            self._fail(key, "true or false")
+        return value
+
+    def integer(self, key: str) -> int | None:
+        """Return an integer value, or None when absent."""
+        value = self._take(key)
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            self._fail(key, "an integer")
+        return value
+
+    def table(self, key: str) -> Table | None:
+        """Return a nested table, or None when absent."""
+        value = self._take(key)
+        if value is None:
+            return None
+        return self._child(value, f"{self._where}.{key}")
+
+    def tables(self, key: str) -> dict[str, Table]:
+        """Return a table of named sub-tables."""
+        value = self._take(key)
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            self._fail(key, "a table")
+        return {
+            str(name): self._child(entry, f"{self._where}.{key}.{name}")
+            for name, entry in value.items()
+        }
+
+    def table_list(self, key: str) -> list[Table]:
+        """Return an array of tables."""
+        value = self._take(key)
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            self._fail(key, "an array of tables ([[...]])")
+        return [
+            self._child(entry, f"{self._where}.{key}[{index}]")
+            for index, entry in enumerate(value)
+        ]
+
+    def finish(self) -> None:
+        """Raise if the table holds keys nobody read (usually typos)."""
+        unknown = sorted(set(self._data) - self._read)
+        if unknown:
+            msg = f"{self._where}: unknown key(s): {', '.join(unknown)}"
+            raise ConfigurationError(msg)
+
+    # Internals
+
+    def _take(self, key: str) -> object:
+        """Mark ``key`` as read and return its raw value."""
+        self._read.add(key)
+        return self._data.get(key)
+
+    def _child(self, value: object, where: str) -> Table:
+        """Wrap a nested table, rejecting non-table values."""
+        if not isinstance(value, dict):
+            msg = f"{where}: expected a table"
+            raise ConfigurationError(msg)
+        return Table({str(key): item for key, item in value.items()}, where)
+
+    def _fail(self, key: str, expected: str) -> NoReturn:
+        """Raise a type error for ``key``."""
+        msg = f"{self._where}.{key}: expected {expected}"
+        raise ConfigurationError(msg)
+
+
+class ConfigLoader:
+    """Read a configuration file into validated ``Config`` values."""
+
+    def __init__(self, profiles: ProfileRegistry, environment: Environment) -> None:
+        self._profiles = profiles
+        self._environment = environment
+
+    def load(self, path: Path) -> Config:
+        """Parse and validate ``path``.
+
+        Raises:
+            ConfigurationError: If the file is missing, malformed, or inconsistent.
+        """
+        root = Table(self._read(path), path.name)
+        version = root.integer("version")
+        if version != CONFIG_VERSION:
+            msg = f"{path}: unsupported version {version!r} (expected {CONFIG_VERSION})"
+            raise ConfigurationError(msg)
+        base = path.parent
+        sources = {
+            name: self._source(name, table, base)
+            for name, table in root.tables("sources").items()
+        }
+        destinations = {
+            name: self._destination(name, table, base)
+            for name, table in root.tables("destinations").items()
+        }
+        routes = tuple(self._route(table) for table in root.table_list("routes"))
+        root.finish()
+
+        config = Config(path, sources, destinations, routes)
+        self._check_references(config)
+        self._check_overlaps(config)
+        return config
+
+    # Sections
+
+    def _source(self, name: str, table: Table, base: Path) -> SourceConfig:
+        """Build one source."""
+        raw = table.string("path")
+        if raw is None:
+            msg = f"sources.{name}.path is required"
+            raise ConfigurationError(msg)
+        layout = self._layout(table.table("layout"))
+        exclude = table.strings("exclude", DEFAULT_EXCLUDE)
+        table.finish()
+        return SourceConfig(name, self._environment.expand(raw, base), layout, exclude)
+
+    @staticmethod
+    def _layout(table: Table | None) -> dict[Kind, str]:
+        """Return each kind's directory, applying ``[sources.<name>.layout]``."""
+        layout = {kind: kind.value for kind in Kind}
+        if table is None:
+            return layout
+        for kind in Kind:
+            directory = table.string(kind.value)
+            if directory is not None:
+                layout[kind] = directory
+        table.finish()
+        return layout
+
+    def _destination(self, name: str, table: Table, base: Path) -> DestinationConfig:
+        """Build one destination, defaulting its path from the profile."""
+        profile_name = table.string("profile", name) or name
+        profile = self._profiles.get(profile_name)
+        raw = table.string("path")
+        enabled = table.boolean("enabled", default=True)
+        table.finish()
+        if raw is not None:
+            path = self._environment.expand(raw, base)
+        else:
+            default = profile.default_path(self._environment)
+            if default is None:
+                msg = (
+                    f"destinations.{name}.path is required for profile '{profile.name}'"
+                )
+                raise ConfigurationError(msg)
+            path = default
+        return DestinationConfig(name, profile.name, path, enabled)
+
+    @staticmethod
+    def _route(table: Table) -> RouteConfig:
+        """Build one route."""
+        route = RouteConfig(
+            sources=table.strings("sources"),
+            destinations=table.strings("destinations"),
+            include=table.strings("include", ALL_ITEMS),
+            exclude=table.strings("exclude"),
+            allow_lossy=table.boolean("allow_lossy", default=False),
         )
+        table.finish()
+        return route
+
+    # Validation
+
+    @staticmethod
+    def _check_references(config: Config) -> None:
+        """Every route must name existing sources and destinations."""
+        for index, route in enumerate(config.routes):
+            where = f"routes[{index}]"
+            if not route.sources or not route.destinations:
+                msg = f"{where}: needs at least one source and one destination"
+                raise ConfigurationError(msg)
+            missing = [name for name in route.sources if name not in config.sources]
+            missing += [
+                name for name in route.destinations if name not in config.destinations
+            ]
+            if missing:
+                msg = f"{where}: unknown source/destination: {', '.join(missing)}"
+                raise ConfigurationError(msg)
+
+    @staticmethod
+    def _check_overlaps(config: Config) -> None:
+        """Destinations may not share or nest directories; ownership would clash."""
+        destinations = sorted(config.destinations.values(), key=lambda d: d.path)
+        for first, second in pairwise(destinations):
+            if second.path == first.path or second.path.is_relative_to(first.path):
+                msg = (
+                    f"destinations '{first.name}' and '{second.name}' overlap"
+                    f" ({first.path} and {second.path})"
+                )
+                raise ConfigurationError(msg)
+
+    # Internals
+
+    @staticmethod
+    def _read(path: Path) -> dict[str, object]:
+        """Read and parse the TOML file."""
         try:
-            with file.open("x", encoding="utf-8") as stream:
-                stream.write(Json.dumps(default))
-        except FileExistsError:
-            return file
-        return file
-
-    @staticmethod
-    def _default_selection(profile: str) -> list[str]:
-        """Make default recipe capability selection explicit and editable."""
-        kinds = {
-            "shared": ["skills"],
-            "codex": ["instructions", "agents", "prompts", "mcp", "hooks"],
-            "codex-desktop": ["instructions", "agents", "prompts", "mcp", "hooks"],
-            "copilot-cli": ["skills", "instructions", "agents", "mcp", "hooks"],
-            "copilot-vscode": ["skills", "instructions", "agents", "hooks", "mcp"],
-            "gemini": ["skills", "instructions", "prompts", "mcp", "hooks"],
-            "opencode": ["skills", "instructions", "agents", "prompts", "mcp"],
-            "cursor-ide": ["skills", "agents", "prompts", "hooks", "mcp"],
-            "cursor-cli": ["skills", "agents", "prompts", "hooks", "mcp"],
-        }.get(profile)
-        return [kind + "/*" for kind in kinds] if kinds is not None else ["*"]
-
-    def parse(self, data: JsonObject, file: Path) -> Settings:
-        """Validate references and create typed settings."""
-        if data.get("version") != 1:
-            raise ConfigurationError("Unsupported configuration version; expected 1")
-        sources = tuple(
-            self._source(name, Json.object(value), file.parent)
-            for name, value in Json.object(data.get("sources", {})).items()
-        )
-        pipelines = Json.object(data.get("pipelines", {}))
-        destinations = tuple(
-            self._destination(name, Json.object(value), file.parent, pipelines)
-            for name, value in Json.object(data.get("destinations", {})).items()
-        )
-        routes = tuple(
-            self._route(Json.object(value), pipelines)
-            for value in Json.array(data.get("routes", []))
-        )
-        names = [route.name for route in routes]
-        if len(set(names)) != len(names):
-            raise ConfigurationError("Route names must be unique")
-        for route in routes:
-            if set(route.sources) - {source.name for source in sources} or set(
-                route.destinations
-            ) - {destination.name for destination in destinations}:
-                raise ConfigurationError(f"Unknown reference in route {route.name}")
-        timers = Json.object(data.get("settings", {}))
-        return Settings(
-            file,
-            sources,
-            destinations,
-            routes,
-            *(
-                Json.number(timers.get(key, default))
-                for key, default in (
-                    ("debounce", 0.5),
-                    ("poll", 60),
-                    ("verify", 300),
-                    ("remote_poll", 300),
-                )
-            ),
-        )
-
-    @staticmethod
-    def _source(name: str, value: JsonObject, base: Path) -> Source:
-        """Parse local paths or remote URLs."""
-        provider = Json.string(value.get("provider", "local"))
-        raw = Json.string(value.get("location"))
-        location = str(SafePath.configured(raw, base)) if provider == "local" else raw
-        return Source(
-            name,
-            location,
-            provider,
-            Json.string(value.get("style", "portable")),
-            Json.string(value.get("reader", "default")),
-            Json.object(value.get("options", {})),
-            Json.strings(value.get("select", ["*"])),
-        )
-
-    @classmethod
-    def _destination(
-        cls, name: str, value: JsonObject, base: Path, pipelines: JsonObject
-    ) -> Destination:
-        """Parse destination policy."""
-        scope = Json.string(value.get("scope", "user"))
-        if scope not in ("user", "project"):
-            raise ConfigurationError("Destination scope must be user or project")
-        version = value.get("version")
-        return Destination(
-            name,
-            SafePath.configured(Json.string(value.get("location")), base),
-            Json.string(value.get("profile", "generic")),
-            scope,
-            Json.boolean(value.get("enabled", False)),
-            Json.object(value.get("options", {})),
-            Json.string(version) if version is not None else None,
-            cls.steps(
-                Json.object(value.get("options", {})).get("steps", []), pipelines
-            ),
-        )
-
-    @classmethod
-    def _route(cls, value: JsonObject, pipelines: JsonObject) -> Route:
-        """Expand named pipelines in place."""
-        unsupported = Json.string(value.get("unsupported", "block"))
-        if unsupported not in ("block", "exclude"):
-            raise ConfigurationError("unsupported must be block or exclude")
-        return Route(
-            Json.string(value.get("name")),
-            Json.strings(value.get("sources")),
-            Json.strings(value.get("destinations")),
-            cls.steps(value.get("steps", []), pipelines),
-            Json.strings(value.get("select", ["*"])),
-            Json.boolean(value.get("allow_approximate", False)),
-            unsupported,
-        )
-
-    @classmethod
-    def steps(
-        cls, value: JsonValue, pipelines: JsonObject | None = None
-    ) -> tuple[Step, ...]:
-        """Resolve steps without recursive expansion."""
-        result = []
-        for raw in Json.array(value):
-            if isinstance(raw, str):
-                named = (pipelines or {}).get(raw)
-                if named is None:
-                    raise ConfigurationError(f"Unknown or recursive pipeline {raw}")
-                result.extend(cls.steps(named))
-            else:
-                step = Json.object(raw)
-                result.append(
-                    Step(
-                        Json.string(step.get("use")),
-                        Json.object(step.get("options", {})),
-                    )
-                )
-        return tuple(result)
+            with path.open("rb") as handle:
+                data = tomllib.load(handle)
+        except FileNotFoundError as err:
+            msg = f"configuration file not found: {path} (run `skillsinc init`)"
+            raise ConfigurationError(msg) from err
+        except tomllib.TOMLDecodeError as err:
+            msg = f"{path}: invalid TOML: {err}"
+            raise ConfigurationError(msg) from err
+        return {str(key): value for key, value in data.items()}
