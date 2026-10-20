@@ -65,3 +65,15 @@ class TestProfileRegistry:
         )
         assert result.unsupported is not None, f"Expected refusal, got {result!r}"
         assert hint in result.unsupported, f"Expected hint {hint!r}, got {result!r}"
+
+    @pytest.mark.parametrize("name", ["codex", "vscode", "agents"])
+    def test_resources_are_refused_where_unsupported(self, name: str) -> None:
+        """Profiles without a resources folder refuse resources."""
+        profile = ProfileRegistry().get(name)
+
+        result = profile.render(Builder.item(Kind.RESOURCE))
+
+        assert profile.support[Kind.RESOURCE] is Support.UNSUPPORTED, (
+            f"Expected {name} to list resources as unsupported, got {profile.support!r}"
+        )
+        assert result.unsupported is not None, f"Expected refusal, got {result!r}"

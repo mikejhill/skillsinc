@@ -1,4 +1,4 @@
-"""Claude Code profile: skills, rules, subagents, and slash commands."""
+"""Claude Code profile: skills, rules, subagents, slash commands, and imports."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import ClassVar, Final, assert_never, override
 
 from skillsinc.models import (
+    BlockOutput,
     Customization,
     FileOutput,
     FrontmatterValue,
@@ -31,13 +32,16 @@ class ClaudeProfile(Profile):
     """Claude Code user directory (``~/.claude``)."""
 
     name: ClassVar[str] = "claude"
-    summary: ClassVar[str] = "Claude Code: skills/, rules/, agents/, commands/"
+    summary: ClassVar[str] = (
+        "Claude Code: skills/, rules/, agents/, commands/, resources/ (CLAUDE.md)"
+    )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
         Kind.INSTRUCTION: Support.CONVERTED,
         Kind.AGENT: Support.CONVERTED,
         Kind.PROMPT: Support.CONVERTED,
         Kind.MCP: Support.UNSUPPORTED,
+        Kind.RESOURCE: Support.EXACT,
     }
 
     @override
@@ -63,6 +67,8 @@ class ClaudeProfile(Profile):
                     "Claude Code keeps user MCP servers in ~/.claude.json,"
                     " which SkillSinc does not edit yet",
                 )
+            case Kind.RESOURCE:
+                return self._resource(item)
         assert_never(item.kind)
 
     # Conversions
@@ -106,6 +112,19 @@ class ClaudeProfile(Profile):
         losses = PROMPT_POLICY.losses(source)
         losses.extend(self.variable_losses(item.document.body))
         return self._single(item, f"commands/{item.name}.md", frontmatter, losses)
+
+    @staticmethod
+    def _resource(item: Customization) -> Rendering:
+        """Copy a resource to ``resources/`` and import it from ``CLAUDE.md``.
+
+        Claude Code resolves ``@`` imports relative to the importing file, so the
+        managed block in ``CLAUDE.md`` loads the copy in every session.
+        """
+        path = f"resources/{item.name}.md"
+        return Rendering(
+            files=(FileOutput(path, item.document.raw),),
+            blocks=(BlockOutput("CLAUDE.md", f"@{path}"),),
+        )
 
     def _single(
         self,

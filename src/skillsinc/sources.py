@@ -56,6 +56,8 @@ class SourceReader:
                     items.extend(self._skills(source, directory))
                 elif kind is Kind.MCP:
                     items.extend(self._servers(source, directory))
+                elif kind is Kind.RESOURCE:
+                    items.extend(self._resources(source, directory))
                 else:
                     items.extend(self._documents(source, kind, directory))
         except (OSError, FrontmatterError) as err:
@@ -127,6 +129,23 @@ class SourceReader:
             document = Document(frontmatter=server, body="", raw=raw)
             items.append(
                 Customization(Kind.MCP, name, source.name, document, path.name)
+            )
+        return items
+
+    def _resources(self, source: SourceConfig, directory: Path) -> list[Customization]:
+        """Read reference files (``<name>.md``), kept byte for byte."""
+        items: list[Customization] = []
+        for path in sorted(directory.iterdir()):
+            if (
+                not path.is_file()
+                or self._excluded(source, path.name)
+                or path.suffix != ".md"
+            ):
+                continue
+            name = self._name(path.stem, path)
+            document = Document(frontmatter={}, body="", raw=path.read_bytes())
+            items.append(
+                Customization(Kind.RESOURCE, name, source.name, document, path.name)
             )
         return items
 

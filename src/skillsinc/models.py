@@ -28,6 +28,7 @@ class Kind(StrEnum):
     AGENT = "agents"
     PROMPT = "prompts"
     MCP = "mcp"
+    RESOURCE = "resources"
 
 
 class Support(StrEnum):
@@ -61,7 +62,8 @@ class Document:
     """A Markdown file split into YAML frontmatter and body.
 
     An MCP server definition is a JSON file: ``frontmatter`` holds the parsed
-    object and ``body`` is empty.
+    object and ``body`` is empty. A resource is copied as written, so only
+    ``raw`` is set.
     """
 
     frontmatter: Frontmatter

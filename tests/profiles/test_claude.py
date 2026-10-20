@@ -6,7 +6,7 @@ import pytest
 from tests.conftest import Builder
 
 from skillsinc.frontmatter import FrontmatterCodec
-from skillsinc.models import Frontmatter, Kind
+from skillsinc.models import BlockOutput, Frontmatter, Kind
 from skillsinc.paths import Environment
 from skillsinc.profiles.claude import ClaudeProfile
 
@@ -46,6 +46,20 @@ class TestClaudeProfile:
                 for actual, prefix in zip(result.losses, losses, strict=True)
             )
         ), f"Expected loss prefixes {losses!r}, got {result.losses!r}"
+
+    def test_resource_is_copied_and_imported_from_claude_md(self) -> None:
+        """Copy the resource verbatim and import it through the CLAUDE.md block."""
+        item = Builder.item(Kind.RESOURCE, name="style", frontmatter={})
+
+        result = ClaudeProfile().render(item)
+
+        assert [(output.path, output.content) for output in result.files] == [
+            ("resources/style.md", item.document.raw)
+        ], f"Expected verbatim resource copy, got {result!r}"
+        assert result.blocks == (BlockOutput("CLAUDE.md", "@resources/style.md"),), (
+            f"Expected one CLAUDE.md import, got {result!r}"
+        )
+        assert result.losses == (), f"Expected no losses, got {result!r}"
 
     def test_agent_drops_foreign_tools_and_model(self) -> None:
         """Avoid treating Copilot tool and model values as Claude-native values."""

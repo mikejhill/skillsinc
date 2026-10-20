@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Resources: `resources/<name>.md` reference files are copied byte for byte into `~/.copilot/resources` and `~/.claude/resources`; Claude Code also gets a managed block of `@resources/<name>.md` imports in `CLAUDE.md` ([decision 0003](docs/decisions/0003-resources-and-claude-imports.md)).
 - MCP servers: `mcp/<name>.json` library files sync into Copilot CLI's `mcp-config.json` as owned `mcpServers` entries, leaving the user's other servers and keys untouched ([decision 0002](docs/decisions/0002-mcp-server-entries.md)). Manifests move to version 2; version 1 manifests load unchanged.
 - [Gap list](docs/planning/gap-list.md) of what remains to sync skills, plugins, instructions, and MCP servers across harnesses, including parity with the earlier ai-feature-sync tool.
 - `init`, `plan`, `sync`, and `profiles` commands.
