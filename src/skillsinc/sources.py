@@ -200,7 +200,7 @@ class SourceReader:
                     expanded.extend(self._documents(source, kind, folder))
                     unsynced.extend(
                         f"{part}/{path.name}/"
-                        for path in sorted(folder.iterdir())
+                        for path in sorted(folder.iterdir(), key=lambda path: path.name)
                         if path.is_dir() and not self._excluded(source, path.name)
                     )
             servers = root / PLUGIN_SERVERS
@@ -337,7 +337,7 @@ class SourceReader:
     def _unsynced(self, source: SourceConfig, root: Path) -> list[str]:
         """Name the plugin's top-level parts that no kind carries."""
         found: list[str] = []
-        for path in sorted(root.iterdir()):
+        for path in sorted(root.iterdir(), key=lambda path: path.name):
             name = path.name
             if name in PLUGIN_EXPANDED:
                 continue
