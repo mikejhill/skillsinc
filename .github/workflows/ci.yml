@@ -25,10 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: amannn/action-semantic-pull-request@v6
+      - name: Check the PR title follows Conventional Commits
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: [^ ].*$'
+          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
+            echo "::error::PR title must be a Conventional Commit, e.g. 'feat(cli): add --diff'"
+            exit 1
+          fi
 
   lint:
     runs-on: ubuntu-latest
@@ -63,15 +68,10 @@ jobs:
       - run: uv run pytest --cov --junitxml=junit.xml
       - name: Publish test report
         if: always()
-        uses: mikepenz/action-junit-report@v6
-        with:
-          report_paths: junit.xml
-          check_name: Tests (${{ matrix.os }} / Python ${{ matrix.python }})
-          # Fork tokens cannot create checks; retain the job summary instead.
-          annotate_only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
-          include_passed: true
-          detailed_summary: true
-          require_tests: true
+        shell: bash
+        env:
+          TITLE: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+        run: uv run scripts/junit_summary.py junit.xml --title "$TITLE" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -110,7 +110,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: DavidAnson/markdownlint-cli2-action@v24
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: npx --yes markdownlint-cli2@0.23.3
 
   ci-pass:
     name: CI

@@ -16,3 +16,4 @@ SkillSinc syncs one library of agent customizations (skills, instructions, agent
 - Tests never read or write the real home directory; use the `environment` fixture or `Sandbox`.
 - Update the matching guide when behavior changes; record scope changes as a new file in `docs/decisions/`.
 - Conventional Commit PR titles; add a `CHANGELOG.md` entry under `[Unreleased]`.
+- Workflows may use only GitHub-owned actions, `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; put other CI logic in `scripts/`.

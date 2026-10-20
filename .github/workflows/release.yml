@@ -24,15 +24,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
       - name: Determine next version
         id: version
-        # Latest upstream major still declares Node 20; required release tool.
-        uses: go-semantic-release/action@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          allow-initial-development-versions: true
-          force-bump-patch-version: ${{ inputs.force-patch }}
-          dry: true
+        env:
+          FORCE_PATCH: ${{ inputs.force-patch }}
+        run: |
+          args=()
+          if [[ "$FORCE_PATCH" == "true" ]]; then args+=(--force-patch); fi
+          echo "version=$(uv run scripts/next_version.py "${args[@]}")" >> "$GITHUB_OUTPUT"
       - name: Require a valid version bump
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -45,10 +48,6 @@ jobs:
             echo "::error::Release tag already exists."
             exit 1
           fi
-      - uses: astral-sh/setup-uv@v10.3.0
-        with:
-          python-version: "3.12"
-          enable-cache: true
       - run: uv sync --locked
       - run: uv run poe check
       - name: Validate and promote the changelog
@@ -109,13 +108,10 @@ jobs:
           git tag "v$VERSION"
           git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: dist/*
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "v$VERSION" dist/* --title "v$VERSION" --generate-notes --verify-tag
 
   pypi:
     needs: release

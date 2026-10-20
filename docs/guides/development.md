@@ -20,6 +20,8 @@ uv run poe check
 
 CI (`.github/workflows/ci.yml`) runs the same tasks on Linux, Windows, and macOS with Python 3.12–3.14. The `CI` and `Security` aggregate jobs are required status checks on `main`.
 
+The repository's Actions policy allows only GitHub-owned actions plus `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; any other action makes the workflow fail at startup. Put extra CI logic in `scripts/` (PEP 723 scripts run with `uv run`): `junit_summary.py` writes the test report to the job summary, and `next_version.py` computes the release version from Conventional Commits.
+
 ## Code standards
 
 The gate enforces most rules; the rest are conventions to keep:
