@@ -54,7 +54,7 @@ Each destination has a manifest at `$XDG_STATE_HOME/skillsinc/manifests/<destina
 
 ## Managed blocks
 
-Harnesses that read a single instructions file (Codex's `AGENTS.md`) receive one block delimited by `<!-- skillsinc:begin -->` and `<!-- skillsinc:end -->`. Content outside the markers is never changed. Damaged markers block the destination rather than guessing.
+Harnesses that read a single instructions file (Codex's `AGENTS.md`, Claude Code's `CLAUDE.md` for resource imports) receive one block delimited by `<!-- skillsinc:begin -->` and `<!-- skillsinc:end -->`. Content outside the markers is never changed. Damaged markers block the destination rather than guessing.
 
 Blocks follow the same ownership rules as files. A block taken over with `--adopt` is reported as `adopt`. A block removed by hand is restored with a note. When no sections remain, an unedited block is removed (and its file deleted if SkillSinc created it and nothing else is left); an edited block is left in place and released. A path wanted in more than one form (whole file, managed block, JSON entries) blocks the destination.
 

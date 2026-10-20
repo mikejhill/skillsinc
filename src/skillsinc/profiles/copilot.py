@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import ClassVar, assert_never, override
+from typing import ClassVar, Final, assert_never, override
 
 from skillsinc.models import Customization, EntryOutput, Kind, Rendering, Support
 from skillsinc.paths import Environment
 from skillsinc.profiles.base import Profile
+
+COPY_PATHS: Final = {
+    Kind.AGENT: "agents/{name}.agent.md",
+    Kind.RESOURCE: "resources/{name}.md",
+}
 
 
 class CopilotProfile(Profile):
@@ -16,7 +21,7 @@ class CopilotProfile(Profile):
 
     name: ClassVar[str] = "copilot"
     summary: ClassVar[str] = (
-        "Copilot CLI: skills/, instructions/, agents/, mcp-config.json"
+        "Copilot CLI: skills/, instructions/, agents/, resources/, mcp-config.json"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
@@ -24,6 +29,7 @@ class CopilotProfile(Profile):
         Kind.AGENT: Support.EXACT,
         Kind.PROMPT: Support.UNSUPPORTED,
         Kind.MCP: Support.EXACT,
+        Kind.RESOURCE: Support.EXACT,
     }
 
     @override
@@ -45,8 +51,9 @@ class CopilotProfile(Profile):
                     return rendering
                 loss = "has no applyTo, which Copilot CLI needs to apply the file"
                 return Rendering(files=rendering.files, losses=(loss,))
-            case Kind.AGENT:
-                return self.copy_file(item, f"agents/{item.name}.agent.md")
+            case Kind.AGENT | Kind.RESOURCE:
+                path = COPY_PATHS[item.kind].format(name=item.name)
+                return self.copy_file(item, path)
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
             case Kind.MCP:
@@ -69,6 +76,7 @@ class VSCodeProfile(Profile):
         Kind.AGENT: Support.EXACT,
         Kind.PROMPT: Support.EXACT,
         Kind.MCP: Support.UNSUPPORTED,
+        Kind.RESOURCE: Support.UNSUPPORTED,
     }
 
     @override
@@ -102,5 +110,9 @@ class VSCodeProfile(Profile):
                     item,
                     "VS Code keeps user MCP servers in User/mcp.json, outside the"
                     " prompts folder, which SkillSinc does not edit yet",
+                )
+            case Kind.RESOURCE:
+                return self.refuse_kind(
+                    item, "route resources to a claude or copilot destination"
                 )
         assert_never(item.kind)

@@ -178,3 +178,33 @@ class TestMcpServers:
 
         with pytest.raises(SourceError, match=message):
             SourceReader().read(Builder.source(tmp_path))
+
+
+class TestResources:
+    """Resources are Markdown reference files read without parsing."""
+
+    def test_reads_markdown_verbatim_and_ignores_other_files(
+        self, tmp_path: Path
+    ) -> None:
+        """Each ``<name>.md`` becomes one ``resources/<name>`` item, bytes intact."""
+        directory = tmp_path / "resources"
+        directory.mkdir()
+        raw = b"---\nnot: [valid yaml\n---\nReference.\r\n"
+        (directory / "style.md").write_bytes(raw)
+        (directory / "notes.txt").write_text("Ignored.\n", encoding="utf-8")
+        (directory / "nested").mkdir()
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert [(item.selector, item.document.raw) for item in items] == [
+            ("resources/style", raw)
+        ], f"Expected one verbatim resource, got {items!r}"
+
+    def test_invalid_name_fails_the_source(self, tmp_path: Path) -> None:
+        """A name unsafe as a path segment fails the whole source."""
+        directory = tmp_path / "resources"
+        directory.mkdir()
+        (directory / "-bad.md").write_text("Reference.\n", encoding="utf-8")
+
+        with pytest.raises(SourceError, match="invalid customization name"):
+            SourceReader().read(Builder.source(tmp_path))
