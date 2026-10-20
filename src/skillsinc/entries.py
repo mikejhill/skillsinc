@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+from decimal import Decimal
 
 from skillsinc.exceptions import ConflictError
 from skillsinc.models import Digest, JsonValue
@@ -20,7 +22,10 @@ class JsonDocument:
                 something other than an object at the top level.
         """
         loaded: object = json.loads(
-            raw.decode("utf-8-sig"), object_pairs_hook=JsonDocument._pairs
+            raw.decode("utf-8-sig"),
+            object_pairs_hook=JsonDocument._pairs,
+            parse_float=JsonDocument._float,
+            parse_constant=JsonDocument._constant,
         )
         if not isinstance(loaded, dict):
             msg = "expected a JSON object at the top level"
@@ -39,6 +44,21 @@ class JsonDocument:
         return Digest.of(canonical.encode())
 
     # Internals
+
+    @staticmethod
+    def _float(token: str) -> float:
+        """Parse a decimal number, refusing ones a rewrite would change."""
+        value = float(token)
+        if not math.isfinite(value) or Decimal(repr(value)) != Decimal(token):
+            msg = f"number {token} cannot be rewritten without changing its value"
+            raise ValueError(msg)
+        return value
+
+    @staticmethod
+    def _constant(token: str) -> float:
+        """Refuse ``NaN`` and ``Infinity``, which are not valid JSON."""
+        msg = f"'{token}' is not valid JSON"
+        raise ValueError(msg)
 
     @staticmethod
     def _pairs(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
@@ -108,11 +128,12 @@ class EntryFile:
 
     def _container(self, container: str, *, create: bool) -> dict[str, JsonValue]:
         """Return the container object, creating it on request."""
-        values = self._document.get(container)
-        if values is None:
-            values = {}
+        if container not in self._document:
+            values: dict[str, JsonValue] = {}
             if create:
                 self._document[container] = values
+            return values
+        values = self._document[container]
         if not isinstance(values, dict):
             msg = f"'{container}' is not a JSON object; fix it by hand"
             raise ConflictError(msg)

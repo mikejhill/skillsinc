@@ -15,12 +15,28 @@ class TestJsonDocument:
 
     @pytest.mark.parametrize(
         "raw",
-        [b"[]", b'{"a": 1, "a": 2}', b'{"a": 1 // comment\n}', b"\xff"],
+        [
+            b"[]",
+            b'{"a": 1, "a": 2}',
+            b'{"a": 1 // comment\n}',
+            b"\xff",
+            b'{"a": 1e400}',
+            b'{"a": 9007199254740993.0}',
+            b'{"a": NaN}',
+        ],
     )
     def test_ambiguous_or_unsupported_json_is_refused(self, raw: bytes) -> None:
-        """Reject arrays, duplicate keys, comments, and non-UTF-8 bytes."""
+        """Reject arrays, duplicate keys, comments, bad bytes, and lossy numbers."""
         with pytest.raises(ValueError):  # noqa: PT011 — each case raises its own message
             JsonDocument.load(raw)
+
+    def test_exact_decimal_numbers_are_kept(self) -> None:
+        """Numbers that survive a rewrite unchanged are accepted."""
+        result = JsonDocument.load(b'{"a": 1.5, "b": 1e5, "c": 12345678901234567890}')
+
+        assert result == {"a": 1.5, "b": 100000.0, "c": 12345678901234567890}, (
+            f"Expected exact numbers, got {result!r}"
+        )
 
     def test_digest_ignores_key_order(self) -> None:
         """Equal values reordered by another tool keep the same digest."""
@@ -66,7 +82,9 @@ class TestEntryFile:
 
         assert result is None, f"Expected absent entry, got {result!r}"
 
-    @pytest.mark.parametrize("raw", [b"not json", b'{"mcpServers": []}'])
+    @pytest.mark.parametrize(
+        "raw", [b"not json", b'{"mcpServers": []}', b'{"mcpServers": null}']
+    )
     def test_unusable_file_is_a_conflict(self, raw: bytes) -> None:
         """Invalid files and non-object containers block instead of being rewritten."""
         with pytest.raises(ConflictError):
