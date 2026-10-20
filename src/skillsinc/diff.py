@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import stat
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -13,6 +15,12 @@ from skillsinc.models import Digest, EntryOutput, FileOutput
 from skillsinc.plan import Action, Change
 
 UNMANAGED = "exists but is not managed by SkillSinc; review it, then rerun with --adopt"
+EDITED = "edited since SkillSinc wrote it, so it is left in place and released"
+BOTH = (
+    "wanted in more than one form (whole file, managed block, JSON entries);"
+    " route it one way"
+)
+EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
 
 class DestinationDiff:
@@ -33,6 +41,14 @@ class DestinationDiff:
         entries: Mapping[str, Sequence[EntryOutput]] | None = None,
     ) -> tuple[tuple[Change, ...], tuple[str, ...]]:
         """Return ``(changes, errors)``; any error blocks the whole destination."""
+        wanted = entries or {}
+        overlap = sorted(
+            (set(files) & set(blocks))
+            | (set(files) & set(wanted))
+            | (set(blocks) & set(wanted))
+        )
+        if overlap:
+            return (), tuple(f"{path}: {BOTH}" for path in overlap)
         for path in sorted(files):
             self._guarded(path, lambda p=path: self._desired_file(files[p]))
         for path in sorted(set(self._manifest.files) - set(files)):
@@ -40,7 +56,6 @@ class DestinationDiff:
         for path in sorted(set(blocks) | set(self._manifest.blocks)):
             sections = sorted(blocks.get(path, ()))
             self._guarded(path, lambda p=path, s=sections: self._block(p, s))
-        wanted = entries or {}
         for path in sorted(set(wanted) | set(self._manifest.entries)):
             outputs = {output.entry: output for output in wanted.get(path, ())}
             self._guarded(path, lambda p=path, o=outputs: self._entries(p, o))
@@ -60,15 +75,16 @@ class DestinationDiff:
             return
 
         found = Digest.of(current)
+        matches = found == wanted and not self._mode_differs(output)
         if owned is None:
             if not self._adopt:
                 same = " (identical content)" if found == wanted else ""
                 self._errors.append(f"{path}: {UNMANAGED}{same}")
                 return
-            action = Action.TRACK if found == wanted else Action.ADOPT
+            action = Action.TRACK if matches else Action.ADOPT
             self._add(action, output, found, "")
-        elif found != wanted:
-            note = "overwrites local edits" if found != owned else ""
+        elif not matches:
+            note = "overwrites local edits" if found not in {owned, wanted} else ""
             self._add(Action.UPDATE, output, found, note)
         elif owned != wanted:
             self._add(Action.TRACK, output, found, "")
@@ -83,8 +99,7 @@ class DestinationDiff:
         if found == self._manifest.files[path]:
             self._changes.append(Change(Action.DELETE, path, found))
             return
-        note = "edited since SkillSinc wrote it, so it is left in place and released"
-        self._changes.append(Change(Action.FORGET, path, found, note=note))
+        self._changes.append(Change(Action.FORGET, path, found, note=EDITED))
 
     # Blocks
 
@@ -105,7 +120,7 @@ class DestinationDiff:
 
         block = ManagedBlock.build(sections)
         digest = Digest.of(block.encode())
-        created = owned.created_file if owned else raw is None
+        created = raw is None or (owned is not None and owned.created_file)
         updated = self._blocks.splice(text, block)
         if updated == text:
             if owned != OwnedBlock(digest, created):
@@ -113,13 +128,14 @@ class DestinationDiff:
                     Action.TRACK, path, expected, None, digest, created=created
                 )
             return
-        drifted = (
-            owned is not None
-            and existing is not None
-            and Digest.of(existing.encode()) != owned.digest
-        )
         action = Action.CREATE if raw is None else Action.UPDATE
-        note = "overwrites local edits to the block" if drifted else ""
+        note = ""
+        if owned is None:
+            action = Action.ADOPT if existing is not None else action
+        elif existing is None:
+            note = "restores a deleted managed block"
+        elif Digest.of(existing.encode()) != owned.digest:
+            note = "overwrites local edits to the block"
         self._block_change(
             action, path, expected, updated, digest, created=created, note=note
         )
@@ -132,6 +148,11 @@ class DestinationDiff:
         if text is None or existing is None:
             self._changes.append(
                 Change(Action.FORGET, path, expected, block=True, note="already gone")
+            )
+            return
+        if Digest.of(existing.encode()) != owned.digest:
+            self._changes.append(
+                Change(Action.FORGET, path, expected, block=True, note=EDITED)
             )
             return
         remaining = self._blocks.splice(text, None)
@@ -281,6 +302,13 @@ class DestinationDiff:
                 note=note,
             )
         )
+
+    def _mode_differs(self, output: FileOutput) -> bool:
+        """Return True if the file's executable flag differs from ``output``'s."""
+        if sys.platform == "win32":
+            return False
+        mode = (self._root / output.path).stat().st_mode
+        return bool(mode & EXECUTABLE) != output.executable
 
     def _guarded(self, path: str, step: Callable[[], None]) -> None:
         """Run ``step`` for ``path``, converting conflicts into blocking errors."""

@@ -111,6 +111,32 @@ class TestPlanner:
                 f"Expected deduplicated seven outputs, got {target.changes!r}"
             )
 
+    def test_each_harness_gets_its_own_diff(self, sandbox: Sandbox) -> None:
+        """A blocked harness never blocks another, and each keeps its own layout."""
+        home = sandbox.environment.home
+        Builder.write_config(
+            sandbox.config_path,
+            sandbox.library,
+            (("claude", "claude", home / "claude"), ("codex", "codex", home / "codex")),
+            allow_lossy=True,
+        )
+        (home / "codex").mkdir()
+        (home / "codex/AGENTS.md").write_text(
+            "<!-- skillsinc:begin -->\n", encoding="utf-8"
+        )
+
+        result = self.planner(sandbox).plan(sandbox.load())
+
+        claude, codex = result.destinations
+        assert claude.changes, f"Expected claude changes, got {claude!r}"
+        assert not claude.blocked, f"Expected claude unblocked, got {claude!r}"
+        assert not any(change.block for change in claude.changes), (
+            f"Expected only whole files for claude, got {claude.changes!r}"
+        )
+        assert (codex.blocked, codex.changes) == (True, ()), (
+            f"Expected damaged codex block to block only codex, got {codex!r}"
+        )
+
     def test_any_matching_route_can_accept_losses(self, sandbox: Sandbox) -> None:
         """Duplicate routes union their loss permission without duplicating files."""
         config = sandbox.configure("claude")
