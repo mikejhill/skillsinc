@@ -178,7 +178,7 @@ class TestPluginConversions:
         item = Builder.item(
             Kind.PROMPT,
             frontmatter=header,
-            body="Deploy $1 $ARGUMENTS.\n",
+            body="Deploy $1 $ARGUMENTS after !`git status`.\n",
             plugin="kit",
         )
 
@@ -191,5 +191,6 @@ class TestPluginConversions:
             (
                 "drops frontmatter: allowed-tools",
                 "uses Claude Code argument placeholders: $1, $ARGUMENTS",
+                "runs shell commands with !`...`, which only Claude Code executes",
             ),
         ), f"Expected converted prompt, got {result!r}"

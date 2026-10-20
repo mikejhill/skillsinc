@@ -353,9 +353,21 @@ class SourceReader:
 
     @staticmethod
     def _plugin_refusal(item: Customization) -> str | None:
-        """Refuse items that rely on variables only an installed plugin resolves."""
-        text = item.document.raw.decode("utf-8", errors="replace")
-        found = sorted({match.group(0) for match in PLUGIN_VARIABLE.finditer(text)})
+        """Refuse items whose files rely on variables only an installed plugin resolves.
+
+        Skill assets are scanned too: a script copied out of the plugin would
+        find nothing at ``${CLAUDE_PLUGIN_ROOT}``.
+        """
+        contents = [item.document.raw, *(asset.content for asset in item.assets)]
+        found = sorted(
+            {
+                match.group(0)
+                for content in contents
+                for match in PLUGIN_VARIABLE.finditer(
+                    content.decode("utf-8", errors="replace")
+                )
+            }
+        )
         if not found:
             return None
         return f"refers to {', '.join(found)}, which only an installed plugin resolves"

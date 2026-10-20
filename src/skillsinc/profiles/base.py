@@ -24,6 +24,7 @@ from skillsinc.paths import Environment
 VSCODE_VARIABLE: Final = re.compile(r"\$\{[A-Za-z]+(?::[^}]*)?\}")
 GLOBAL_GLOBS: Final = frozenset({"**", "**/*", "*"})
 CLAUDE_ARGUMENTS: Final = re.compile(r"\$(?:ARGUMENTS\b|\d)")
+CLAUDE_SHELL: Final = re.compile(r"!`[^`]*`")
 PLUGIN_AGENT_POLICY: Final = LossPolicy(carried=frozenset({"name", "description"}))
 PLUGIN_COMMAND_POLICY: Final = LossPolicy(
     carried=frozenset({"description", "argument-hint"})
@@ -105,6 +106,10 @@ class Profile(ABC):
         found = sorted(set(CLAUDE_ARGUMENTS.findall(item.document.body)))
         if found:
             losses.append(f"uses Claude Code argument placeholders: {', '.join(found)}")
+        if CLAUDE_SHELL.search(item.document.body):
+            losses.append(
+                "runs shell commands with !`...`, which only Claude Code executes"
+            )
         return self.rewrite(item, path, frontmatter, losses)
 
     @staticmethod

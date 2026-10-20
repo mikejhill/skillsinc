@@ -13,15 +13,15 @@ This guide lists exactly what each profile writes and which conversions lose inf
 
 Library plugins (`plugins/<plugin>/`, Claude Code layout) are expanded into skills, agents, prompts, and MCP servers before any profile sees them ([decision 0003](../decisions/0003-plugins-expand-into-kinds.md)). Each harness then receives the parts it supports, without the plugin namespace (`kit:reviewer` becomes `reviewer`).
 
-| Plugin part          | Becomes     | `claude`                         | `copilot`, `vscode`                                                          |
-| -------------------- | ----------- | -------------------------------- | ---------------------------------------------------------------------------- |
-| `skills/<name>/`     | skill       | exact                            | exact (`copilot`)                                                            |
-| `agents/<name>.md`   | agent       | exact                            | keeps `name`, `description`; other fields are losses                         |
-| `commands/<name>.md` | prompt      | exact                            | `vscode` keeps `description`, `argument-hint`; `$ARGUMENTS`, `$1` are losses |
-| `.mcp.json`          | MCP servers | refused (as for library items)   | `copilot` entries                                                            |
-| everything else      | —           | loss on every item of the plugin | loss on every item of the plugin                                             |
+| Plugin part          | Becomes     | `claude`                         | `copilot`, `vscode`                                                                        |
+| -------------------- | ----------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `skills/<name>/`     | skill       | exact                            | exact (`copilot`)                                                                          |
+| `agents/<name>.md`   | agent       | exact                            | keeps `name`, `description`; other fields are losses                                       |
+| `commands/<name>.md` | prompt      | exact                            | `vscode` keeps `description`, `argument-hint`; `$ARGUMENTS`, `$1`, `` !`cmd` `` are losses |
+| `.mcp.json`          | MCP servers | refused (as for library items)   | `copilot` entries                                                                          |
+| everything else      | —           | loss on every item of the plugin | loss on every item of the plugin                                                           |
 
-Items that refer to `${CLAUDE_PLUGIN_ROOT}`, another `CLAUDE_PLUGIN_*` variable, or `${user_config.*}` are skipped everywhere: only an installed plugin resolves them.
+Items whose files (skill assets included) refer to `${CLAUDE_PLUGIN_ROOT}`, another `CLAUDE_PLUGIN_*` variable, or `${user_config.*}` are skipped everywhere: only an installed plugin resolves them.
 
 ## claude
 

@@ -272,6 +272,8 @@ class TestPluginExpansion:
                 ),
                 "commands/run.md": "Run $CLAUDE_PLUGIN_DATA/x.\n",
                 "agents/plain.md": "---\ndescription: Plain\n---\nCost: $5.\n",
+                "skills/fmt/SKILL.md": "---\ndescription: Format\n---\nRun go.sh.\n",
+                "skills/fmt/go.sh": 'exec "${CLAUDE_PLUGIN_ROOT}/bin/fmt"\n',
             },
         )
 
@@ -287,6 +289,11 @@ class TestPluginExpansion:
             (
                 "prompts/run",
                 "refers to $CLAUDE_PLUGIN_DATA, which only an installed plugin"
+                " resolves",
+            ),
+            (
+                "skills/fmt",
+                "refers to ${CLAUDE_PLUGIN_ROOT}, which only an installed plugin"
                 " resolves",
             ),
         ], f"Expected refusals for plugin variables only, got {items!r}"
