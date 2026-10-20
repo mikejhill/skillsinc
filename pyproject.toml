@@ -96,7 +96,7 @@ branch = true
 fail_under = 90
 show_missing = true
 skip_covered = true
-exclude_also = ["if __name__ == .__main__.:", "assert_never\("]
+exclude_also = ['if __name__ == .__main__.:', 'assert_never\(']
 
 [tool.poe.tasks]
 format = { cmd = "ruff format .", help = "Format code" }
