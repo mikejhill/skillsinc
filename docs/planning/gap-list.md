@@ -10,7 +10,7 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | Instructions | yes (`rules/`)    | yes (lossy, `AGENTS.md`) | yes               | yes                    | —           |
 | Agents       | yes (lossy)       | **gap** (TOML agents)    | yes               | yes                    | —           |
 | Prompts      | yes (`commands/`) | no harness format        | no harness format | yes                    | —           |
-| MCP servers  | **gap**           | **gap**                  | yes (new)         | **gap**                | —           |
+| MCP servers  | **gap**           | yes (converted)          | yes               | **gap**                | —           |
 | Hooks        | **gap**           | **gap**                  | **gap**           | **gap**                | —           |
 | Resources    | yes (new)         | —                        | yes (new)         | —                      | —           |
 | Plugins      | **gap**           | **gap**                  | **gap**           | **gap**                | —           |
@@ -34,12 +34,12 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 
 ## Gaps, highest value first
 
-1. **Codex agents.** Render agents into `~/.codex/agents/<name>.toml` with `name`, `description`, and the body as `developer_instructions`; report `tools`, `model`, and other fields as losses. ai-feature-sync already does this, so it is the most direct regression. Needs a small, safe TOML string writer (the standard library only reads TOML).
+1. **Codex agents.** Render agents into `~/.codex/agents/<name>.toml` with `name`, `description`, and the body as `developer_instructions`; report `tools`, `model`, and other fields as losses. ai-feature-sync already does this, so it is the most direct regression. `tomlkit` is now a dependency ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)), so the agent files can be written with it.
 2. **Hooks.** A `hooks` kind. Copilot CLI hook files are whole JSON files under `~/.copilot/hooks` (plain copies). Claude Code reads `hooks` from `~/.claude/settings.json`, inside its root, so the entry mechanism from [decision 0002](../decisions/0002-mcp-server-entries.md) applies. Events differ across harnesses, so most conversions are lossy.
 3. ~~**Resources and Claude imports.**~~ Done: a `resources` kind copied to `~/.copilot/resources` and `~/.claude/resources`, with a managed `@`-import block in `~/.claude/CLAUDE.md` ([decision 0003](../decisions/0003-resources-and-claude-imports.md)).
 4. **Claude Code MCP servers.** Target `mcpServers` in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Needs a profile to name one file outside its root, with the same link and overlap checks. Claude Code rewrites this file while running, so expect precondition conflicts; the applier already fails closed and a rerun succeeds.
 5. **VS Code MCP servers.** Target `servers` in `Code/User/mcp.json`. Same outside-root need, plus a choice between comment-preserving JSONC edits and refusing files with comments (today's behavior).
-6. **Codex MCP servers.** Target `[mcp_servers.<name>]` in `~/.codex/config.toml`. Needs a formatting-preserving TOML editor (for example `tomlkit`); adding a dependency needs a decision record. `command`, `args`, and `env` carry over; check remote `url` servers against current Codex docs.
+6. ~~**Codex MCP servers.**~~ Done: `[mcp_servers.<name>]` in `config.toml`, edited with `tomlkit` ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)).
 7. **Plugins.** Bundles of skills, agents, commands, hooks, and MCP servers with a manifest (`.claude-plugin/plugin.json` for Claude Code). Two options: expand a library plugin into its component kinds per harness (works with every profile, loses the bundle), or publish a local marketplace directory for harnesses that install plugins. Needs a decision; expanding first is cheaper and reuses everything above.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
 9. **Scheduling helper.** ai-feature-sync ships a Task Scheduler registration script. SkillSinc documents scheduling but ships nothing; an example per OS (Task Scheduler, launchd, systemd timer) would close it.

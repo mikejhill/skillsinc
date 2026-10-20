@@ -108,6 +108,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 - [Decision: rebuild scope](docs/decisions/0001-rebuild-scope.md)
 - [Decision: MCP server entries](docs/decisions/0002-mcp-server-entries.md)
 - [Decision: resources and Claude imports](docs/decisions/0003-resources-and-claude-imports.md)
+- [Decision: TOML entries with tomlkit](docs/decisions/0004-toml-entries-with-tomlkit.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License
