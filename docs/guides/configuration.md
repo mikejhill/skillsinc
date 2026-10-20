@@ -48,13 +48,13 @@ Required. Must be `1`.
 
 ## `[sources.<name>]`
 
-| Key       | Required | Default                                                      | Meaning                                  |
-| --------- | -------- | ------------------------------------------------------------ | ---------------------------------------- |
-| `path`    | yes      | —                                                            | Library directory                        |
-| `exclude` | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]` | File and directory names never read      |
-| `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`         | Table mapping a kind to its subdirectory |
+| Key       | Required | Default                                                       | Meaning                                  |
+| --------- | -------- | ------------------------------------------------------------- | ---------------------------------------- |
+| `path`    | yes      | —                                                             | Library directory                        |
+| `exclude` | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`  | File and directory names never read      |
+| `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `hooks` | Table mapping a kind to its subdirectory |
 
-A missing kind directory means the library has none of that kind. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, or an MCP server file that is not a JSON object with exactly one of `command` or `url` fail the whole source.
+A missing kind directory means the library has none of that kind. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, or an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays fail the whole source.
 
 ## `[destinations.<name>]`
 

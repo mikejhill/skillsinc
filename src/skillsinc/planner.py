@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from skillsinc.config import Config, DestinationConfig, RouteConfig
 from skillsinc.diff import DestinationDiff
@@ -224,11 +224,25 @@ class Planner:
     def _add_entries(
         desired: DesiredState, label: str, entries: Iterable[EntryOutput]
     ) -> None:
-        """Add rendered JSON entries, flagging items that set one key differently."""
+        """Add rendered JSON entries, flagging items that set one key differently.
+
+        Mergeable list entries are concatenated, skipping elements already present.
+        """
         for output in entries:
             found = desired.entries.setdefault(output.path, {})
             origin = f"{output.path}#{output.entry}"
             previous = found.get(output.entry)
+            if (
+                previous is not None
+                and previous.merge
+                and output.merge
+                and isinstance(previous.value, list)
+                and isinstance(output.value, list)
+            ):
+                merged = list(previous.value)
+                merged.extend(value for value in output.value if value not in merged)
+                found[output.entry] = replace(previous, value=merged)
+                continue
             if previous is not None and previous != output:
                 other = desired.origins[origin]
                 desired.errors.append(

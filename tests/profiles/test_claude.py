@@ -6,7 +6,7 @@ import pytest
 from tests.conftest import Builder
 
 from skillsinc.frontmatter import FrontmatterCodec
-from skillsinc.models import Frontmatter, Kind
+from skillsinc.models import EntryOutput, Frontmatter, JsonValue, Kind, Rendering
 from skillsinc.paths import Environment
 from skillsinc.profiles.claude import ClaudeProfile
 
@@ -111,4 +111,51 @@ class TestClaudeProfile:
 
         assert result == environment.home / ".claude", (
             f"Expected fake Claude root, got {result}"
+        )
+
+
+class TestClaudeHooksRendering:
+    """Hook files become mergeable ``hooks`` entries in ``settings.json``."""
+
+    def test_hook_file_becomes_one_entry_per_event(self) -> None:
+        """Emit sorted, mergeable entries keyed by Claude event."""
+        item = Builder.item(
+            Kind.HOOK,
+            frontmatter={
+                "version": 1,
+                "hooks": {
+                    "Stop": [{"bash": "b.sh"}],
+                    "SessionStart": [{"bash": "a.sh"}],
+                },
+            },
+        )
+
+        result = ClaudeProfile().render(item)
+
+        def group(command: str) -> list[JsonValue]:
+            handler = {"type": "command", "command": command, "timeout": 30}
+            return [{"hooks": [handler]}]
+
+        assert result == Rendering(
+            entries=(
+                EntryOutput(
+                    "settings.json", "hooks", "SessionStart", group("a.sh"), merge=True
+                ),
+                EntryOutput(
+                    "settings.json", "hooks", "Stop", group("b.sh"), merge=True
+                ),
+            )
+        ), f"Expected two settings.json entries, got {result!r}"
+
+    def test_hook_file_without_runnable_hooks_is_refused(self) -> None:
+        """Refuse a file whose hooks all fall outside Claude Code."""
+        item = Builder.item(
+            Kind.HOOK,
+            frontmatter={"version": 1, "hooks": {"errorOccurred": [{"bash": "a"}]}},
+        )
+
+        result = ClaudeProfile().render(item)
+
+        assert result.unsupported == "has no hooks Claude Code can run", (
+            f"Expected refusal, got {result!r}"
         )

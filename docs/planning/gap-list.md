@@ -11,7 +11,7 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | Agents       | yes (lossy)       | **gap** (TOML agents)    | yes               | yes                    | —           |
 | Prompts      | yes (`commands/`) | no harness format        | no harness format | yes                    | —           |
 | MCP servers  | **gap**           | **gap**                  | yes (new)         | **gap**                | —           |
-| Hooks        | **gap**           | **gap**                  | **gap**           | **gap**                | —           |
+| Hooks        | yes (lossy, new)  | **gap**                  | yes (new)         | via `copilot`/`claude` | —           |
 | Resources    | **gap**           | —                        | **gap**           | —                      | —           |
 | Plugins      | **gap**           | **gap**                  | **gap**           | **gap**                | —           |
 
@@ -22,7 +22,7 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | Skills, agents, prompts, instructions into `~/.copilot` and `~/.claude`  | Covered, with format conversion instead of renaming           |
 | Codex skills                                                             | Covered through the `agents` destination (`~/.agents/skills`) |
 | Codex agents: `*.agent.md` → `~/.codex/agents/<name>.toml`               | **Gap 1**                                                     |
-| Hook files (`*.json`) copied to `~/.copilot/hooks`                       | **Gap 2**                                                     |
+| Hook files (`*.json`) copied to `~/.copilot/hooks`                       | Covered, plus conversion into Claude Code `settings.json`     |
 | Resources (`*.md`) copied to `~/.copilot/resources`                      | **Gap 3**                                                     |
 | `claude_md_import`: managed `@`-import block in `CLAUDE.md`              | **Gap 3** (the block mechanism exists; no profile uses it)    |
 | Prompts copied to `~/.copilot/prompts`                                   | Refused on purpose: Copilot CLI documents no prompt folder    |
@@ -35,7 +35,7 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 ## Gaps, highest value first
 
 1. **Codex agents.** Render agents into `~/.codex/agents/<name>.toml` with `name`, `description`, and the body as `developer_instructions`; report `tools`, `model`, and other fields as losses. ai-feature-sync already does this, so it is the most direct regression. Needs a small, safe TOML string writer (the standard library only reads TOML).
-2. **Hooks.** A `hooks` kind. Copilot CLI hook files are whole JSON files under `~/.copilot/hooks` (plain copies). Claude Code reads `hooks` from `~/.claude/settings.json`, inside its root, so the entry mechanism from [decision 0002](../decisions/0002-mcp-server-entries.md) applies. Events differ across harnesses, so most conversions are lossy.
+2. **Hooks.** Done for Copilot CLI and Claude Code ([decision 0003](../decisions/0003-hooks.md)). Remaining: Codex hooks, once its user hook location is confirmed against current Codex docs.
 3. **Resources and Claude imports.** A `resources` kind of plain reference files, copied to `~/.copilot/resources`, plus for Claude a managed `@`-import block in `CLAUDE.md` naming them (the block mechanism already exists for Codex).
 4. **Claude Code MCP servers.** Target `mcpServers` in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Needs a profile to name one file outside its root, with the same link and overlap checks. Claude Code rewrites this file while running, so expect precondition conflicts; the applier already fails closed and a rerun succeeds.
 5. **VS Code MCP servers.** Target `servers` in `Code/User/mcp.json`. Same outside-root need, plus a choice between comment-preserving JSONC edits and refusing files with comments (today's behavior).

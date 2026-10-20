@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Hooks: `hooks/<name>.json` library files in the Copilot CLI hook format are copied to `~/.copilot/hooks` and converted into owned, per-event `hooks` entries in `~/.claude/settings.json`, merging every file that uses an event and reporting what Claude Code cannot carry ([decision 0003](docs/decisions/0003-hooks.md)).
 - MCP servers: `mcp/<name>.json` library files sync into Copilot CLI's `mcp-config.json` as owned `mcpServers` entries, leaving the user's other servers and keys untouched ([decision 0002](docs/decisions/0002-mcp-server-entries.md)). Manifests move to version 2; version 1 manifests load unchanged.
 - [Gap list](docs/planning/gap-list.md) of what remains to sync skills, plugins, instructions, and MCP servers across harnesses, including parity with the earlier ai-feature-sync tool.
 - `init`, `plan`, `sync`, and `profiles` commands.

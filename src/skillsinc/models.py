@@ -28,6 +28,7 @@ class Kind(StrEnum):
     AGENT = "agents"
     PROMPT = "prompts"
     MCP = "mcp"
+    HOOK = "hooks"
 
 
 class Support(StrEnum):
@@ -60,8 +61,8 @@ class Asset:
 class Document:
     """A Markdown file split into YAML frontmatter and body.
 
-    An MCP server definition is a JSON file: ``frontmatter`` holds the parsed
-    object and ``body`` is empty.
+    MCP server and hook definitions are JSON files: ``frontmatter`` holds the
+    parsed object and ``body`` is empty.
     """
 
     frontmatter: Frontmatter
@@ -105,12 +106,17 @@ class BlockOutput:
 
 @dataclass(frozen=True, slots=True)
 class EntryOutput:
-    """A keyed value a profile wants inside a container object of a shared JSON file."""
+    """A keyed value a profile wants inside a container object of a shared JSON file.
+
+    With ``merge``, the value is a list that other items may extend: the planner
+    concatenates every item's list for the key instead of reporting a clash.
+    """
 
     path: str
     container: str
     key: str
     value: JsonValue
+    merge: bool = False
 
     @property
     def entry(self) -> str:

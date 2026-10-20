@@ -16,7 +16,7 @@ class CopilotProfile(Profile):
 
     name: ClassVar[str] = "copilot"
     summary: ClassVar[str] = (
-        "Copilot CLI: skills/, instructions/, agents/, mcp-config.json"
+        "Copilot CLI: skills/, instructions/, agents/, hooks/, mcp-config.json"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
@@ -24,6 +24,7 @@ class CopilotProfile(Profile):
         Kind.AGENT: Support.EXACT,
         Kind.PROMPT: Support.UNSUPPORTED,
         Kind.MCP: Support.EXACT,
+        Kind.HOOK: Support.EXACT,
     }
 
     @override
@@ -38,13 +39,7 @@ class CopilotProfile(Profile):
             case Kind.SKILL:
                 return self.copy_skill(item)
             case Kind.INSTRUCTION:
-                rendering = self.copy_file(
-                    item, f"instructions/{item.name}.instructions.md"
-                )
-                if "applyTo" in item.document.frontmatter:
-                    return rendering
-                loss = "has no applyTo, which Copilot CLI needs to apply the file"
-                return Rendering(files=rendering.files, losses=(loss,))
+                return self._instruction(item)
             case Kind.AGENT:
                 return self.copy_file(item, f"agents/{item.name}.agent.md")
             case Kind.PROMPT:
@@ -53,7 +48,17 @@ class CopilotProfile(Profile):
                 server = dict(item.document.frontmatter)
                 entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
                 return Rendering(entries=(entry,))
+            case Kind.HOOK:
+                return self.copy_file(item, f"hooks/{item.name}.json")
         assert_never(item.kind)
+
+    def _instruction(self, item: Customization) -> Rendering:
+        """Copy an instructions file, noting that Copilot CLI needs ``applyTo``."""
+        rendering = self.copy_file(item, f"instructions/{item.name}.instructions.md")
+        if "applyTo" in item.document.frontmatter:
+            return rendering
+        loss = "has no applyTo, which Copilot CLI needs to apply the file"
+        return Rendering(files=rendering.files, losses=(loss,))
 
 
 class VSCodeProfile(Profile):
@@ -69,6 +74,7 @@ class VSCodeProfile(Profile):
         Kind.AGENT: Support.EXACT,
         Kind.PROMPT: Support.EXACT,
         Kind.MCP: Support.UNSUPPORTED,
+        Kind.HOOK: Support.UNSUPPORTED,
     }
 
     @override
@@ -102,5 +108,11 @@ class VSCodeProfile(Profile):
                     item,
                     "VS Code keeps user MCP servers in User/mcp.json, outside the"
                     " prompts folder, which SkillSinc does not edit yet",
+                )
+            case Kind.HOOK:
+                return self.refuse_kind(
+                    item,
+                    "VS Code reads user hooks from Copilot CLI and Claude Code"
+                    " locations; route hooks to a copilot or claude destination",
                 )
         assert_never(item.kind)

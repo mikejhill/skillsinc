@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import stat
+from collections.abc import Callable
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Final
@@ -24,6 +25,7 @@ SUFFIXES: Final = {
     Kind.AGENT: ".agent.md",
     Kind.PROMPT: ".prompt.md",
 }
+JSON_LABELS: Final = {Kind.MCP: "MCP server definition", Kind.HOOK: "hook file"}
 
 
 class SourceReader:
@@ -55,7 +57,13 @@ class SourceReader:
                 if kind is Kind.SKILL:
                     items.extend(self._skills(source, directory))
                 elif kind is Kind.MCP:
-                    items.extend(self._servers(source, directory))
+                    items.extend(
+                        self._json_items(source, kind, directory, self._check_server)
+                    )
+                elif kind is Kind.HOOK:
+                    items.extend(
+                        self._json_items(source, kind, directory, self._check_hooks)
+                    )
                 else:
                     items.extend(self._documents(source, kind, directory))
         except (OSError, FrontmatterError) as err:
@@ -106,8 +114,14 @@ class SourceReader:
             items[name] = Customization(kind, name, source.name, document, path.name)
         return list(items.values())
 
-    def _servers(self, source: SourceConfig, directory: Path) -> list[Customization]:
-        """Read MCP server definitions (``<name>.json``, one server per file)."""
+    def _json_items(
+        self,
+        source: SourceConfig,
+        kind: Kind,
+        directory: Path,
+        check: Callable[[Frontmatter, Path], None],
+    ) -> list[Customization]:
+        """Read JSON definitions (``<name>.json``, one item per file)."""
         items: list[Customization] = []
         for path in sorted(directory.iterdir()):
             if (
@@ -119,15 +133,13 @@ class SourceReader:
             name = self._name(path.stem, path)
             raw = path.read_bytes()
             try:
-                server = JsonDocument.load(raw)
+                value = JsonDocument.load(raw)
             except (UnicodeDecodeError, ValueError) as err:
-                msg = f"{path}: invalid MCP server definition ({err})"
+                msg = f"{path}: invalid {JSON_LABELS[kind]} ({err})"
                 raise SourceError(msg) from err
-            self._check_server(server, path)
-            document = Document(frontmatter=server, body="", raw=raw)
-            items.append(
-                Customization(Kind.MCP, name, source.name, document, path.name)
-            )
+            check(value, path)
+            document = Document(frontmatter=value, body="", raw=raw)
+            items.append(Customization(kind, name, source.name, document, path.name))
         return items
 
     # Internals
@@ -183,6 +195,21 @@ class SourceReader:
         if len(methods) != 1:
             msg = f"{path}: an MCP server needs either a 'command' or a 'url' string"
             raise SourceError(msg)
+
+    @staticmethod
+    def _check_hooks(hooks: Frontmatter, path: Path) -> None:
+        """Require a Copilot CLI hook file: version 1 and event arrays of objects."""
+        version = hooks.get("version")
+        events = hooks.get("hooks")
+        if isinstance(version, bool) or version != 1 or not isinstance(events, dict):
+            msg = f'{path}: a hook file needs "version": 1 and a "hooks" object'
+            raise SourceError(msg)
+        for event, entries in events.items():
+            if not isinstance(entries, list) or not all(
+                isinstance(entry, dict) for entry in entries
+            ):
+                msg = f"{path}: hook event '{event}' must be an array of objects"
+                raise SourceError(msg)
 
     @staticmethod
     def _excluded(source: SourceConfig, name: str) -> bool:

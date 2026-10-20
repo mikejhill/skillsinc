@@ -416,3 +416,80 @@ class TestApplication:
         assert adopted["mcpServers"]["github"] == {"command": "gh"}, (
             f"Expected adopted server replaced, got {adopted!r}"
         )
+
+    def test_claude_hooks_lifecycle_preserves_user_settings(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Hooks enter settings.json beside the user's keys and leave it as found."""
+        sandbox.configure("claude", allow_lossy=True)
+        settings = sandbox.root / "settings.json"
+        settings.parent.mkdir(parents=True)
+        user = {
+            "model": "x",
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "me"}]}]},
+        }
+        settings.write_text(json.dumps(user), encoding="utf-8")
+        hook = sandbox.library / "hooks/guard.json"
+        hook.parent.mkdir()
+        hook.write_text(
+            '{"version": 1, "hooks": {"preToolUse": [{"bash": "guard.sh"}]}}',
+            encoding="utf-8",
+        )
+
+        first_status, first = sandbox.run("sync")
+        added = json.loads(settings.read_text(encoding="utf-8"))
+        hook.unlink()
+        remove_status, _ = sandbox.run("sync")
+        final_status, final = sandbox.run("plan")
+
+        assert (first_status, remove_status, final_status) == (0, 0, 0), (
+            f"Expected three successful runs, got {first!r}"
+        )
+        assert "settings.json [hooks/PreToolUse]" in first, (
+            f"Expected hook entry creation, got {first!r}"
+        )
+        assert added["hooks"]["PreToolUse"] == [
+            {"hooks": [{"type": "command", "command": "guard.sh", "timeout": 30}]}
+        ], f"Expected converted hook, got {added!r}"
+        assert added["hooks"]["Stop"] == user["hooks"]["Stop"], (
+            f"Expected user hook kept, got {added!r}"
+        )
+        assert json.loads(settings.read_text(encoding="utf-8")) == user, (
+            f"Expected user settings restored, got {settings.read_text()!r}"
+        )
+        assert "up to date" in final, f"Expected convergence, got {final!r}"
+
+    def test_user_hooks_for_the_same_event_block_until_adopted(
+        self, sandbox: Sandbox
+    ) -> None:
+        """An event the user already hooks is never replaced without --adopt."""
+        sandbox.configure("claude")
+        settings = sandbox.root / "settings.json"
+        settings.parent.mkdir(parents=True)
+        user = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "me"}]}]}}
+        settings.write_text(json.dumps(user), encoding="utf-8")
+        hook = sandbox.library / "hooks/stop.json"
+        hook.parent.mkdir()
+        hook.write_text(
+            '{"version": 1, "hooks": {"Stop": [{"bash": "lib.sh"}]}}',
+            encoding="utf-8",
+        )
+
+        blocked_status, blocked = sandbox.run("sync")
+        kept = json.loads(settings.read_text(encoding="utf-8"))
+
+        assert blocked_status == 1, f"Expected block, got {blocked_status}: {blocked}"
+        assert kept == user, f"Expected user settings untouched, got {kept!r}"
+
+    def test_copilot_hook_file_is_copied(self, sandbox: Sandbox) -> None:
+        """Copilot CLI receives the authored hook file unchanged."""
+        sandbox.configure("copilot", allow_lossy=True)
+        text = '{"version": 1, "hooks": {"sessionStart": [{"bash": "a.sh"}]}}'
+        hook = sandbox.library / "hooks/start.json"
+        hook.parent.mkdir()
+        hook.write_text(text, encoding="utf-8")
+
+        status, output = sandbox.run("sync")
+
+        copied = (sandbox.root / "hooks/start.json").read_text(encoding="utf-8")
+        assert (status, copied) == (0, text), f"Expected exact copy, got {output!r}"

@@ -33,6 +33,7 @@ class CodexProfile(Profile):
         Kind.AGENT: Support.UNSUPPORTED,
         Kind.PROMPT: Support.UNSUPPORTED,
         Kind.MCP: Support.UNSUPPORTED,
+        Kind.HOOK: Support.UNSUPPORTED,
     }
 
     @override

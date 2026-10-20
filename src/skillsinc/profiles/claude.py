@@ -8,6 +8,7 @@ from typing import ClassVar, Final, assert_never, override
 
 from skillsinc.models import (
     Customization,
+    EntryOutput,
     FileOutput,
     FrontmatterValue,
     Kind,
@@ -17,6 +18,7 @@ from skillsinc.models import (
 )
 from skillsinc.paths import Environment
 from skillsinc.profiles.base import Profile
+from skillsinc.profiles.hooks import ClaudeHooks
 
 INSTRUCTION_POLICY: Final = LossPolicy(
     carried=frozenset({"applyTo"}), ignored=frozenset({"name", "description"})
@@ -31,13 +33,16 @@ class ClaudeProfile(Profile):
     """Claude Code user directory (``~/.claude``)."""
 
     name: ClassVar[str] = "claude"
-    summary: ClassVar[str] = "Claude Code: skills/, rules/, agents/, commands/"
+    summary: ClassVar[str] = (
+        "Claude Code: skills/, rules/, agents/, commands/, settings.json hooks"
+    )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
         Kind.INSTRUCTION: Support.CONVERTED,
         Kind.AGENT: Support.CONVERTED,
         Kind.PROMPT: Support.CONVERTED,
         Kind.MCP: Support.UNSUPPORTED,
+        Kind.HOOK: Support.CONVERTED,
     }
 
     @override
@@ -63,6 +68,8 @@ class ClaudeProfile(Profile):
                     "Claude Code keeps user MCP servers in ~/.claude.json,"
                     " which SkillSinc does not edit yet",
                 )
+            case Kind.HOOK:
+                return self._hooks(item)
         assert_never(item.kind)
 
     # Conversions
@@ -106,6 +113,19 @@ class ClaudeProfile(Profile):
         losses = PROMPT_POLICY.losses(source)
         losses.extend(self.variable_losses(item.document.body))
         return self._single(item, f"commands/{item.name}.md", frontmatter, losses)
+
+    @staticmethod
+    def _hooks(item: Customization) -> Rendering:
+        """Convert a Copilot hook file into ``settings.json`` hook groups per event."""
+        hooks = item.document.frontmatter.get("hooks")
+        converted = ClaudeHooks.convert(hooks if isinstance(hooks, dict) else {})
+        if not converted.events:
+            return Rendering.refuse("has no hooks Claude Code can run")
+        entries = tuple(
+            EntryOutput("settings.json", "hooks", event, groups, merge=True)
+            for event, groups in sorted(converted.events.items())
+        )
+        return Rendering(entries=entries, losses=tuple(converted.losses))
 
     def _single(
         self,
