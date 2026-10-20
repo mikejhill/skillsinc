@@ -126,3 +126,19 @@ class TestClaudeProfile:
         assert result == environment.home / ".claude", (
             f"Expected fake Claude root, got {result}"
         )
+
+    @pytest.mark.parametrize(
+        ("kind", "path"),
+        [(Kind.AGENT, "agents/sample.md"), (Kind.PROMPT, "commands/sample.md")],
+    )
+    def test_plugin_components_are_copied_verbatim(self, kind: Kind, path: str) -> None:
+        """Plugin agents and commands are already in Claude Code's format."""
+        header: Frontmatter = {"description": "Run", "tools": "Read", "model": "x"}
+        item = Builder.item(kind, frontmatter=header, plugin="kit")
+
+        result = ClaudeProfile().render(item)
+
+        assert [(output.path, output.content) for output in result.files] == [
+            (path, item.document.raw)
+        ], f"Expected exact copy at {path}, got {result!r}"
+        assert result.losses == (), f"Expected no losses, got {result.losses!r}"

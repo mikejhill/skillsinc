@@ -501,3 +501,63 @@ class TestApplication:
             f"Expected resources folder pruned, got {removed!r}"
         )
         assert "up to date" in final, f"Expected convergence, got {final!r}"
+
+    def test_plugin_expands_into_claude_and_copilot(self, sandbox: Sandbox) -> None:
+        """A plugin syncs its parts per harness, with unsynced hooks as a loss."""
+        root = sandbox.library / "plugins/kit"
+        files = {
+            ".claude-plugin/plugin.json": '{"name": "kit"}',
+            "agents/checker.md": "---\ndescription: Check\ntools: Read\n---\nCheck.\n",
+            "commands/ship.md": "---\ndescription: Ship\n---\nShip $ARGUMENTS.\n",
+            ".mcp.json": '{"mcpServers": {"api": {"command": "api"}}}',
+            "commands/fmt.md": "Run ${CLAUDE_PLUGIN_ROOT}/fmt.sh.\n",
+            "hooks/hooks.json": "{}",
+        }
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8", newline="\n")
+        claude = sandbox.environment.home / "claude"
+        copilot = sandbox.environment.home / "copilot"
+        Builder.write_config(
+            sandbox.config_path,
+            sandbox.library,
+            (("claude", "claude", claude), ("copilot", "copilot", copilot)),
+            include=("plugins/kit/*",),
+        )
+
+        _, strict = sandbox.run("plan", "--verbose")
+        Builder.write_config(
+            sandbox.config_path,
+            sandbox.library,
+            (("claude", "claude", claude), ("copilot", "copilot", copilot)),
+            include=("plugins/kit/*",),
+            allow_lossy=True,
+        )
+        status, output = sandbox.run("sync")
+
+        assert "hooks/, which is not synced" in strict, (
+            f"Expected hooks named as a loss, got {strict!r}"
+        )
+        assert status == 0, f"Expected a successful sync, got {status}: {output}"
+        assert (claude / "agents/checker.md").read_bytes() == (
+            root / "agents/checker.md"
+        ).read_bytes(), "Expected the plugin agent copied exactly into Claude"
+        assert (claude / "commands/ship.md").is_file(), (
+            f"Expected the plugin command in Claude, got {output}"
+        )
+        assert json.loads((copilot / "mcp-config.json").read_text())["mcpServers"] == {
+            "api": {"command": "api"}
+        }, f"Expected the plugin server, got {output}"
+        assert (copilot / "agents/checker.agent.md").is_file(), (
+            f"Expected the converted agent in Copilot, got {output}"
+        )
+        assert not (claude / "commands/fmt.md").exists(), (
+            f"Expected the command needing the plugin root refused, got {output}"
+        )
+        assert "only an installed plugin resolves" in strict, (
+            f"Expected the refusal reason reported, got {strict!r}"
+        )
+        assert not (claude / "skills").exists(), (
+            f"Expected library items outside the plugin left unrouted, got {output}"
+        )

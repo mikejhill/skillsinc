@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import stat
+from dataclasses import replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Final
@@ -14,7 +15,14 @@ from skillsinc.config import SourceConfig
 from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import FrontmatterError, SourceError
 from skillsinc.frontmatter import FrontmatterCodec
-from skillsinc.models import Asset, Customization, Document, Frontmatter, Kind
+from skillsinc.models import (
+    Asset,
+    Customization,
+    Document,
+    Frontmatter,
+    JsonValue,
+    Kind,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +32,44 @@ SUFFIXES: Final = {
     Kind.AGENT: ".agent.md",
     Kind.PROMPT: ".prompt.md",
 }
+
+# Claude Code plugin layout (decision 0003)
+PLUGIN_MANIFEST: Final = ".claude-plugin"
+PLUGIN_SERVERS: Final = ".mcp.json"
+PLUGIN_PARTS: Final = {
+    Kind.SKILL: "skills",
+    Kind.AGENT: "agents",
+    Kind.PROMPT: "commands",
+}
+PLUGIN_EXPANDED: Final = frozenset(
+    {PLUGIN_MANIFEST, PLUGIN_SERVERS, *PLUGIN_PARTS.values()}
+)
+PLUGIN_RELOCATING: Final = ("skills", "agents", "commands", "mcpServers")
+PLUGIN_METADATA: Final = frozenset(
+    {
+        "$schema",
+        "name",
+        "displayName",
+        "version",
+        "description",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "keywords",
+        "metadata",
+        "icon",
+        "documentationUrl",
+        "supportUrl",
+        "privacyPolicyUrl",
+        "termsOfServiceUrl",
+        "defaultEnabled",
+    }
+)
+PLUGIN_HIDDEN: Final = frozenset({".lsp.json"})
+PLUGIN_VARIABLE: Final = re.compile(
+    r"\$(?:\{CLAUDE_PLUGIN_\w+\}|CLAUDE_PLUGIN_\w+|\{user_config\.[^}]*\})"
+)
 
 
 class SourceReader:
@@ -60,9 +106,13 @@ class SourceReader:
                     items.extend(self._resources(source, directory))
                 else:
                     items.extend(self._documents(source, kind, directory))
+            plugins = source.path / source.plugins
+            if plugins.is_dir():
+                items.extend(self._plugins(source, plugins))
         except (OSError, FrontmatterError) as err:
             msg = f"source '{source.name}': {err}"
             raise SourceError(msg) from err
+        self._check_unique(source, items)
         logger.debug("Read %d items from source %s", len(items), source.name)
         return tuple(sorted(items, key=lambda item: item.selector))
 
@@ -149,6 +199,74 @@ class SourceReader:
             )
         return items
 
+    def _plugins(self, source: SourceConfig, directory: Path) -> list[Customization]:
+        """Expand each ``<plugin>/`` into skills, agents, prompts, and MCP servers."""
+        items: list[Customization] = []
+        for root in sorted(directory.iterdir()):
+            if not root.is_dir() or self._excluded(source, root.name):
+                continue
+            plugin = self._name(root.name, root)
+            unsynced = self._manifest(plugin, root)
+            unsynced.extend(self._unsynced(source, root))
+            expanded: list[Customization] = []
+            for kind, part in PLUGIN_PARTS.items():
+                folder = root / part
+                if not folder.is_dir():
+                    continue
+                if kind is Kind.SKILL:
+                    expanded.extend(self._skills(source, folder))
+                else:
+                    expanded.extend(self._documents(source, kind, folder))
+                    unsynced.extend(
+                        f"{part}/{path.name}/"
+                        for path in sorted(folder.iterdir(), key=lambda path: path.name)
+                        if path.is_dir() and not self._excluded(source, path.name)
+                    )
+            servers = root / PLUGIN_SERVERS
+            if servers.is_file():
+                expanded.extend(self._plugin_servers(source, servers))
+            if not expanded:
+                logger.warning("plugin '%s' has nothing SkillSinc can sync", plugin)
+            losses: tuple[str, ...] = ()
+            if unsynced:
+                parts = ", ".join(unsynced)
+                losses = (f"plugin '{plugin}' also has {parts}, which is not synced",)
+            items.extend(
+                replace(
+                    item,
+                    plugin=plugin,
+                    losses=losses,
+                    refusal=self._plugin_refusal(item),
+                )
+                for item in expanded
+            )
+        return items
+
+    def _plugin_servers(self, source: SourceConfig, path: Path) -> list[Customization]:
+        """Read a plugin's ``.mcp.json``: an ``mcpServers`` map, or the bare map."""
+        try:
+            loaded = JsonDocument.load(path.read_bytes())
+        except (UnicodeDecodeError, ValueError) as err:
+            msg = f"{path}: invalid MCP server file ({err})"
+            raise SourceError(msg) from err
+        servers: JsonValue = loaded.get("mcpServers", loaded)
+        if not isinstance(servers, dict):
+            msg = f"{path}: 'mcpServers' must be a JSON object"
+            raise SourceError(msg)
+        items: list[Customization] = []
+        for key, server in sorted(servers.items()):
+            name = self._name(key, path)
+            if not isinstance(server, dict):
+                msg = f"{path}: MCP server '{name}' must be a JSON object"
+                raise SourceError(msg)
+            self._check_server(server, path)
+            raw = JsonDocument.dump(server)
+            document = Document(frontmatter=server, body="", raw=raw)
+            items.append(
+                Customization(Kind.MCP, name, source.name, document, f"{name}.json")
+            )
+        return items
+
     # Internals
 
     def _parse(self, path: Path) -> Document:
@@ -201,6 +319,96 @@ class SourceReader:
         ]
         if len(methods) != 1:
             msg = f"{path}: an MCP server needs either a 'command' or a 'url' string"
+            raise SourceError(msg)
+
+    @staticmethod
+    def _manifest(plugin: str, root: Path) -> list[str]:
+        """Check the optional manifest; return the keys SkillSinc does not sync.
+
+        Raises:
+            SourceError: If the manifest is invalid, names another plugin, or
+                moves components out of their standard folders.
+        """
+        path = root / PLUGIN_MANIFEST / "plugin.json"
+        if not path.is_file():
+            return []
+        try:
+            manifest = JsonDocument.load(path.read_bytes())
+        except (UnicodeDecodeError, ValueError) as err:
+            msg = f"{path}: invalid plugin manifest ({err})"
+            raise SourceError(msg) from err
+        declared = manifest.get("name")
+        if declared is not None and declared != plugin:
+            msg = (
+                f"{path}: manifest name '{declared}' differs from"
+                f" directory name '{plugin}'"
+            )
+            raise SourceError(msg)
+        relocated = [key for key in PLUGIN_RELOCATING if key in manifest]
+        if relocated:
+            msg = (
+                f"{path}: SkillSinc reads only the standard plugin layout;"
+                f" move {', '.join(relocated)} into their default folders"
+            )
+            raise SourceError(msg)
+        return [f"manifest key {key}" for key in manifest if key not in PLUGIN_METADATA]
+
+    def _unsynced(self, source: SourceConfig, root: Path) -> list[str]:
+        """Name the plugin's top-level parts that no kind carries."""
+        found: list[str] = []
+        for path in sorted(root.iterdir(), key=lambda path: path.name):
+            name = path.name
+            if name in PLUGIN_EXPANDED:
+                continue
+            if self._excluded(source, name) and name not in PLUGIN_HIDDEN:
+                continue
+            if path.is_dir():
+                found.append(f"{name}/")
+            elif name == "SKILL.md" or not (
+                name.endswith(".md") or name.startswith("LICENSE")
+            ):
+                found.append(name)
+        return found
+
+    @staticmethod
+    def _plugin_refusal(item: Customization) -> str | None:
+        """Refuse items whose files rely on variables only an installed plugin resolves.
+
+        Skill assets are scanned too: a script copied out of the plugin would
+        find nothing at ``${CLAUDE_PLUGIN_ROOT}``.
+        """
+        contents = [item.document.raw, *(asset.content for asset in item.assets)]
+        found = sorted(
+            {
+                match.group(0)
+                for content in contents
+                for match in PLUGIN_VARIABLE.finditer(
+                    content.decode("utf-8", errors="replace")
+                )
+            }
+        )
+        if not found:
+            return None
+        return f"refers to {', '.join(found)}, which only an installed plugin resolves"
+
+    @staticmethod
+    def _check_unique(source: SourceConfig, items: list[Customization]) -> None:
+        """Fail when two items, from the library or its plugins, share an identity."""
+        seen: dict[str, Customization] = {}
+        for item in items:
+            previous = seen.setdefault(item.selector, item)
+            if previous is item:
+                continue
+            origins = sorted(
+                f"plugin '{found.plugin}'"
+                if found.plugin is not None
+                else "the library"
+                for found in (previous, item)
+            )
+            msg = (
+                f"source '{source.name}': {item.selector} is defined by"
+                f" {' and '.join(origins)}"
+            )
             raise SourceError(msg)
 
     @staticmethod

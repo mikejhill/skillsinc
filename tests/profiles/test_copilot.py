@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 from tests.conftest import Builder
 
-from skillsinc.models import EntryOutput, JsonValue, Kind, Rendering
+from skillsinc.frontmatter import FrontmatterCodec
+from skillsinc.models import EntryOutput, Frontmatter, JsonValue, Kind, Rendering
 from skillsinc.paths import Environment
 from skillsinc.profiles.copilot import CopilotProfile, VSCodeProfile
 
@@ -140,3 +141,57 @@ class TestVSCodeProfile:
         assert result == tmp_path / "roaming/Code/User/prompts", (
             f"Expected APPDATA root, got {result}"
         )
+
+
+class TestPluginConversions:
+    """Claude Code plugin agents and commands keep only fields both formats share."""
+
+    @pytest.mark.parametrize(
+        ("profile", "path"),
+        [
+            (CopilotProfile(), "agents/sample.agent.md"),
+            (VSCodeProfile(), "sample.agent.md"),
+        ],
+    )
+    def test_plugin_agent_keeps_name_and_description(
+        self, profile: CopilotProfile | VSCodeProfile, path: str
+    ) -> None:
+        """Claude tool and model fields are reported, not copied."""
+        header: Frontmatter = {"name": "sample", "description": "D", "tools": "Read"}
+        item = Builder.item(Kind.AGENT, frontmatter=header, plugin="kit")
+
+        result = profile.render(item)
+
+        written = FrontmatterCodec().parse(result.files[0].content).frontmatter
+        assert (result.files[0].path, written, result.losses) == (
+            path,
+            {"name": "sample", "description": "D"},
+            ("drops frontmatter: tools",),
+        ), f"Expected converted agent at {path}, got {result!r}"
+
+    def test_plugin_command_becomes_prompt_with_losses(self) -> None:
+        """Claude argument placeholders and tool permissions are reported."""
+        header: Frontmatter = {
+            "description": "D",
+            "argument-hint": "[env]",
+            "allowed-tools": "Bash",
+        }
+        item = Builder.item(
+            Kind.PROMPT,
+            frontmatter=header,
+            body="Deploy $1 $ARGUMENTS after !`git status`.\n",
+            plugin="kit",
+        )
+
+        result = VSCodeProfile().render(item)
+
+        written = FrontmatterCodec().parse(result.files[0].content).frontmatter
+        assert (result.files[0].path, written, result.losses) == (
+            "sample.prompt.md",
+            {"description": "D", "argument-hint": "[env]"},
+            (
+                "drops frontmatter: allowed-tools",
+                "uses Claude Code argument placeholders: $1, $ARGUMENTS",
+                "runs shell commands with !`...`, which only Claude Code executes",
+            ),
+        ), f"Expected converted prompt, got {result!r}"

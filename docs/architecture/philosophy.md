@@ -32,5 +32,5 @@ When goals conflict, earlier wins:
 
 - Watching for changes or running as a service. A scheduler calling `skillsinc sync` covers this without a resident process.
 - Fetching sources from Git. Keep the library in a local clone and update it with Git.
-- Transformation pipelines or plugins. Write the library in the format you want; profiles do the necessary conversion.
+- Transformation pipelines or SkillSinc extension plugins. Write the library in the format you want; profiles do the necessary conversion. (Agent plugins in the library are supported by expanding them; see [decision 0005](../decisions/0005-plugins-expand-into-kinds.md).)
 - Merging whole configuration files. SkillSinc edits only the MCP server entries it owns inside a shared file, and refuses files it cannot parse exactly; see [decisions 0002](../decisions/0002-mcp-server-entries.md) and [0004](../decisions/0004-toml-entries-with-tomlkit.md).

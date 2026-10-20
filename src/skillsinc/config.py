@@ -18,6 +18,7 @@ from skillsinc.profiles.registry import ProfileRegistry
 CONFIG_VERSION: Final = 1
 DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
 ALL_ITEMS: Final = ("*/*",)
+PLUGINS: Final = "plugins"
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +29,7 @@ class SourceConfig:
     path: Path
     layout: Mapping[Kind, str]
     exclude: tuple[str, ...] = DEFAULT_EXCLUDE
+    plugins: str = PLUGINS
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,10 +56,18 @@ class RouteConfig:
         """Return True if ``item`` comes from a routed source and passes the filters."""
         if item.source not in self.sources:
             return False
-        selector = item.selector
-        included = any(fnmatchcase(selector, pattern) for pattern in self.include)
-        excluded = any(fnmatchcase(selector, pattern) for pattern in self.exclude)
+        included = self._matches(item, self.include)
+        excluded = self._matches(item, self.exclude)
         return included and not excluded
+
+    @staticmethod
+    def _matches(item: Customization, patterns: tuple[str, ...]) -> bool:
+        """Return True if any of ``item``'s selectors matches any pattern."""
+        return any(
+            fnmatchcase(selector, pattern)
+            for selector in item.selectors
+            for pattern in patterns
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,23 +227,25 @@ class ConfigLoader:
         if raw is None:
             msg = f"sources.{name}.path is required"
             raise ConfigurationError(msg)
-        layout = self._layout(table.table("layout"))
+        layout, plugins = self._layout(table.table("layout"))
         exclude = table.strings("exclude", DEFAULT_EXCLUDE)
         table.finish()
-        return SourceConfig(name, self._environment.expand(raw, base), layout, exclude)
+        path = self._environment.expand(raw, base)
+        return SourceConfig(name, path, layout, exclude, plugins)
 
     @staticmethod
-    def _layout(table: Table | None) -> dict[Kind, str]:
-        """Return each kind's directory, applying ``[sources.<name>.layout]``."""
+    def _layout(table: Table | None) -> tuple[dict[Kind, str], str]:
+        """Return each kind's and the plugins directory from ``[...layout]``."""
         layout = {kind: kind.value for kind in Kind}
         if table is None:
-            return layout
+            return layout, PLUGINS
         for kind in Kind:
             directory = table.string(kind.value)
             if directory is not None:
                 layout[kind] = directory
+        plugins = table.string(PLUGINS, PLUGINS) or PLUGINS
         table.finish()
-        return layout
+        return layout, plugins
 
     def _destination(self, name: str, table: Table, base: Path) -> DestinationConfig:
         """Build one destination, defaulting its path from the profile."""

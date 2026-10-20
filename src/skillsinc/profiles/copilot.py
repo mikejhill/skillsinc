@@ -52,8 +52,7 @@ class CopilotProfile(Profile):
                 loss = "has no applyTo, which Copilot CLI needs to apply the file"
                 return Rendering(files=rendering.files, losses=(loss,))
             case Kind.AGENT | Kind.RESOURCE:
-                path = COPY_PATHS[item.kind].format(name=item.name)
-                return self.copy_file(item, path)
+                return self.agent(item, COPY_PATHS[item.kind].format(name=item.name))
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
             case Kind.MCP:
@@ -102,9 +101,9 @@ class VSCodeProfile(Profile):
             case Kind.INSTRUCTION:
                 return self.copy_file(item, f"{item.name}.instructions.md")
             case Kind.AGENT:
-                return self.copy_file(item, f"{item.name}.agent.md")
+                return self.agent(item, f"{item.name}.agent.md")
             case Kind.PROMPT:
-                return self.copy_file(item, f"{item.name}.prompt.md")
+                return self.prompt(item, f"{item.name}.prompt.md")
             case Kind.MCP:
                 return self.refuse_kind(
                     item,

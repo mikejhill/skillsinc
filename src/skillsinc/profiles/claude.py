@@ -86,10 +86,15 @@ class ClaudeProfile(Profile):
         frontmatter: dict[str, FrontmatterValue] = {}
         if globs is not None:
             frontmatter["paths"] = list[FrontmatterValue](globs)
-        return self._single(item, f"rules/{item.name}.md", frontmatter, losses)
+        return self.rewrite(item, f"rules/{item.name}.md", frontmatter, losses)
 
     def _agent(self, item: Customization) -> Rendering:
-        """Convert an agent into a ``agents/<name>.md`` subagent."""
+        """Convert an agent into a ``agents/<name>.md`` subagent.
+
+        Plugin agents are already Claude Code subagents, so they are copied.
+        """
+        if item.plugin is not None:
+            return self.copy_file(item, f"agents/{item.name}.md")
         source = item.document.frontmatter
         description = source.get("description")
         if description is None or description == "":
@@ -99,10 +104,15 @@ class ClaudeProfile(Profile):
             "description": description,
         }
         losses = AGENT_POLICY.losses(source)
-        return self._single(item, f"agents/{item.name}.md", frontmatter, losses)
+        return self.rewrite(item, f"agents/{item.name}.md", frontmatter, losses)
 
     def _command(self, item: Customization) -> Rendering:
-        """Convert a prompt file into a ``commands/<name>.md`` slash command."""
+        """Convert a prompt file into a ``commands/<name>.md`` slash command.
+
+        Plugin commands are already Claude Code commands, so they are copied.
+        """
+        if item.plugin is not None:
+            return self.copy_file(item, f"commands/{item.name}.md")
         source = item.document.frontmatter
         frontmatter: dict[str, FrontmatterValue] = {
             key: source[key]
@@ -111,7 +121,7 @@ class ClaudeProfile(Profile):
         }
         losses = PROMPT_POLICY.losses(source)
         losses.extend(self.variable_losses(item.document.body))
-        return self._single(item, f"commands/{item.name}.md", frontmatter, losses)
+        return self.rewrite(item, f"commands/{item.name}.md", frontmatter, losses)
 
     @staticmethod
     def _resource(item: Customization) -> Rendering:
@@ -125,14 +135,3 @@ class ClaudeProfile(Profile):
             files=(FileOutput(path, item.document.raw),),
             blocks=(BlockOutput("CLAUDE.md", f"@{path}"),),
         )
-
-    def _single(
-        self,
-        item: Customization,
-        path: str,
-        frontmatter: dict[str, FrontmatterValue],
-        losses: list[str],
-    ) -> Rendering:
-        """Build a one-file rendering with rewritten frontmatter."""
-        content = self._codec.render(frontmatter, item.document.body)
-        return Rendering(files=(FileOutput(path, content),), losses=tuple(losses))
