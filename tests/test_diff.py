@@ -491,7 +491,7 @@ class TestDestinationDiffEdgeCases:
 
     def test_new_block_appends_to_user_file(self, tmp_path: Path) -> None:
         """A block for a user's file without markers appends and keeps their text."""
-        (tmp_path / "AGENTS.md").write_text("User\n", encoding="utf-8")
+        (tmp_path / "AGENTS.md").write_text("User\n", encoding="utf-8", newline="\n")
         sections = (("section", "Body"),)
 
         changes, _ = DestinationDiff(
@@ -573,7 +573,9 @@ class TestDestinationDiffEdgeCases:
     def test_damaged_markers_block(self, tmp_path: Path) -> None:
         """Duplicated markers are never guessed at."""
         block = ManagedBlock.build((("section", "Body"),))
-        (tmp_path / "AGENTS.md").write_text(block + "\n" + block, encoding="utf-8")
+        (tmp_path / "AGENTS.md").write_text(
+            block + "\n" + block, encoding="utf-8", newline="\n"
+        )
 
         changes, errors = DestinationDiff(
             tmp_path, Manifest("target", str(tmp_path)), adopt=True
@@ -601,7 +603,7 @@ class TestDestinationDiffEdgeCases:
     def test_deleted_block_is_restored_with_note(self, tmp_path: Path) -> None:
         """A block removed by hand from an existing file is restored and noted."""
         sections = (("section", "Body"),)
-        (tmp_path / "AGENTS.md").write_text("User\n", encoding="utf-8")
+        (tmp_path / "AGENTS.md").write_text("User\n", encoding="utf-8", newline="\n")
         manifest = Manifest(
             "target",
             str(tmp_path),
@@ -641,7 +643,9 @@ class TestDestinationDiffEdgeCases:
         """An edited block that is no longer wanted is left in place and released."""
         sections = (("section", "Body"),)
         edited = ManagedBlock.build((("section", "Edited"),))
-        (tmp_path / "AGENTS.md").write_text(edited + "\n", encoding="utf-8")
+        (tmp_path / "AGENTS.md").write_text(
+            edited + "\n", encoding="utf-8", newline="\n"
+        )
         manifest = Manifest(
             "target",
             str(tmp_path),
