@@ -15,6 +15,9 @@ variables (XDG_*, CLAUDE_CONFIG_DIR, COPILOT_HOME, CODEX_HOME) as a new shell.
 .\Register-SkillSincTask.ps1 -Interval (New-TimeSpan -Minutes 30)
 
 .EXAMPLE
+.\Register-SkillSincTask.ps1 -Background   # from an elevated shell; no console window
+
+.EXAMPLE
 .\Register-SkillSincTask.ps1 -Unregister
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -30,6 +33,11 @@ param(
 
     # Extra arguments after `sync`, for example '--config C:\path\config.toml'.
     [string] $Arguments = '',
+
+    # Run without a console window, also while logged off (S4U logon). Registering
+    # needs an elevated shell once; no password is stored. The task cannot reach
+    # network shares, so keep the library and harness folders local.
+    [switch] $Background,
 
     # Remove the task instead of registering it.
     [switch] $Unregister
@@ -75,7 +83,14 @@ $triggers = @(
     New-ScheduledTaskTrigger -AtLogOn -User $user
     New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $Interval
 )
-$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$logonType = if ($Background) { 'S4U' } else { 'Interactive' }
+if ($Background) {
+    $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw '-Background registers an S4U task, which needs an elevated shell.'
+    }
+}
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType $logonType -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 30)

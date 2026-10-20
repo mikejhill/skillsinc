@@ -53,4 +53,5 @@ def test_task_scheduler_script_runs_sync_and_supports_what_if() -> None:
     """The registration script runs `sync` and previews with -WhatIf."""
     script = (EXAMPLES / "Register-SkillSincTask.ps1").read_text(encoding="utf-8")
     assert "SupportsShouldProcess" in script, "expected -WhatIf support"
+    assert "'S4U'" in script, "expected -Background to register a windowless task"
     assert '`" sync $Arguments' in script, "expected the task to run skillsinc sync"

@@ -17,7 +17,7 @@ This guide shows how to run `skillsinc sync` on a schedule with the example file
 
 ## Windows: Task Scheduler
 
-The script registers a per-user task named `SkillSinc sync` that runs at logon and every hour, appends output to `sync.log` in the SkillSinc state directory (`~\.local\state\skillsinc` unless `XDG_STATE_HOME` is set), skips a run while the previous one is still going, and stops one after 30 minutes. It needs no administrator rights. Tasks read the user's persistent environment variables, so set `XDG_*` with `setx` or System Properties, not only in a shell session.
+The script registers a per-user task named `SkillSinc sync` that runs at logon and every hour, appends output to `sync.log` in the SkillSinc state directory (`~\.local\state\skillsinc` unless `XDG_STATE_HOME` is set), skips a run while the previous one is still going, and stops one after 30 minutes. By default it needs no administrator rights. Tasks read the user's persistent environment variables, so set `XDG_*` with `setx` or System Properties, not only in a shell session.
 
 ```powershell
 .\examples\scheduling\Register-SkillSincTask.ps1 -WhatIf      # show what it would register
@@ -27,18 +27,22 @@ Start-ScheduledTask -TaskName 'SkillSinc sync'                 # run now
 .\examples\scheduling\Register-SkillSincTask.ps1 -Unregister   # remove
 ```
 
-If script execution is disabled, run it with `powershell -ExecutionPolicy Bypass -File <path>`. The task runs only while you are logged on, and a console window may flash briefly at each run.
+If script execution is disabled, run it with `powershell -ExecutionPolicy Bypass -File <path>`.
+
+By default the task runs only while you are logged on, and a console window flashes briefly at each run. To avoid both, register once from an elevated shell with `-Background`: the task uses an S4U logon, which runs without a window and stores no password, but cannot reach network shares, so keep the library and harness folders on local disks.
 
 ## macOS: launchd
 
 launchd does not expand `~`, so the install command substitutes your home directory for `@HOME@`. Edit `StartInterval` (seconds) or add `EnvironmentVariables` entries before loading.
 
 ```bash
+mkdir -p ~/Library/LaunchAgents
 sed "s|@HOME@|$HOME|g" examples/scheduling/io.github.mikejhill.skillsinc.plist \
   > ~/Library/LaunchAgents/io.github.mikejhill.skillsinc.plist
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/io.github.mikejhill.skillsinc.plist
 launchctl kickstart "gui/$(id -u)/io.github.mikejhill.skillsinc"   # run now
-launchctl bootout "gui/$(id -u)/io.github.mikejhill.skillsinc"     # remove
+launchctl bootout "gui/$(id -u)/io.github.mikejhill.skillsinc"     # remove:
+rm ~/Library/LaunchAgents/io.github.mikejhill.skillsinc.plist      # unload, then delete
 ```
 
 ## Linux: systemd user timer
