@@ -65,7 +65,7 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
       "blocked": false,
       "errors": [],
       "changes": [
-        {"action": "create", "path": "skills/review/SKILL.md", "block": false, "note": ""}
+        {"action": "create", "path": "skills/review/SKILL.md", "block": false, "entry": null, "note": ""}
       ],
       "skipped": [
         {"item": "library:prompts/review", "reason": "uses VS Code variables ...", "lossy": true}
@@ -83,6 +83,7 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
 | `applied`                | True for `sync`                                                       |
 | `source_errors`          | Source name to error message                                          |
 | `destinations[].errors`  | Blocking errors; also apply failures after `sync`                     |
+| `destinations[].changes` | `entry` names the `container/key` changed inside a shared JSON file   |
 | `destinations[].skipped` | Items not delivered; `lossy` marks ones `allow_lossy` would accept    |
 | `destinations[].notes`   | Losses accepted through `allow_lossy`                                 |
 | `destinations[].applied` | Number of changes applied by `sync`                                   |

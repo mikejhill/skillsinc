@@ -8,7 +8,7 @@ import pytest
 
 from skillsinc.applier import Applier
 from skillsinc.config import DestinationConfig
-from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock
+from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock, OwnedEntries
 from skillsinc.models import Digest
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
 
@@ -216,3 +216,64 @@ class TestApplier:
         assert not (tmp_path / "file").exists(), (
             f"Expected no application, got {result!r}"
         )
+
+    @pytest.mark.parametrize(
+        ("content", "remaining"),
+        [(b'{"servers": {}}\n', True), (None, False)],
+    )
+    def test_entry_delete_rewrites_or_removes_the_file(
+        self, tmp_path: Path, content: bytes | None, *, remaining: bool
+    ) -> None:
+        """Removing an entry writes the remaining JSON, or deletes an emptied file."""
+        store = ManifestStore(tmp_path / "state")
+        root = tmp_path / "destination"
+        root.mkdir()
+        before = b'{"servers": {"ours": {}}}'
+        (root / "mcp.json").write_bytes(before)
+        store.save(
+            Manifest(
+                "target",
+                str(root),
+                entries={
+                    "mcp.json": OwnedEntries(
+                        created_file=False, keys={"servers/ours": "d"}
+                    )
+                },
+            )
+        )
+        change = Change(
+            Action.DELETE,
+            "mcp.json",
+            Digest.of(before),
+            content=content,
+            entry="servers/ours",
+        )
+
+        Applier(store).apply(self.plan(root, (change,)))
+
+        assert (root / "mcp.json").exists() is remaining, (
+            f"Expected file kept {remaining}, got {list(root.iterdir())!r}"
+        )
+        assert store.load("target", root).entries == {}, (
+            f"Expected entry released, got {store.load('target', root)!r}"
+        )
+
+    def test_entry_ownership_is_recorded_per_key(self, tmp_path: Path) -> None:
+        """Entry changes add keys to the file's entry record."""
+        store = ManifestStore(tmp_path / "state")
+        change = Change(
+            Action.CREATE,
+            "mcp.json",
+            None,
+            content=b"{}\n",
+            owned_digest="d",
+            entry="servers/ours",
+            created_file=True,
+        )
+
+        Applier(store).apply(self.plan(tmp_path, (change,)))
+
+        actual = store.load("target", tmp_path).entries
+        assert actual == {
+            "mcp.json": OwnedEntries(created_file=True, keys={"servers/ours": "d"})
+        }, f"Expected recorded entry, got {actual!r}"

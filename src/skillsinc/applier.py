@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skillsinc.exceptions import ConflictError
-from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock
+from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock, OwnedEntries
 from skillsinc.models import Digest
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
 
@@ -64,11 +64,11 @@ class Applier:
         target = root / change.path
         self._verify(target, change.expected)
         match change.action:
-            case Action.CREATE | Action.UPDATE | Action.ADOPT:
-                self._write(target, change)
-            case Action.DELETE:
+            case Action.DELETE if change.content is None:
                 target.unlink()
                 self._prune(target.parent, root)
+            case Action.CREATE | Action.UPDATE | Action.ADOPT | Action.DELETE:
+                self._write(target, change)
             case Action.TRACK | Action.FORGET:
                 pass
 
@@ -107,6 +107,17 @@ class Applier:
     @staticmethod
     def _record(manifest: Manifest, change: Change) -> None:
         """Update ownership to reflect an applied change."""
+        if change.entry:
+            owned = manifest.entries.setdefault(
+                change.path, OwnedEntries(change.created_file)
+            )
+            if change.owned_digest is None:
+                owned.keys.pop(change.entry, None)
+            else:
+                owned.keys[change.entry] = change.owned_digest
+            if not owned.keys:
+                manifest.entries.pop(change.path)
+            return
         if change.block:
             if change.owned_digest is None:
                 manifest.blocks.pop(change.path, None)

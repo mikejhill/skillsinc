@@ -9,7 +9,8 @@ from typing import Final
 
 from skillsinc.exceptions import ConfigurationError
 
-MANIFEST_VERSION: Final = 1
+MANIFEST_VERSION: Final = 2
+READABLE_VERSIONS: Final = frozenset({1, MANIFEST_VERSION})
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,14 @@ class OwnedBlock:
 
 
 @dataclass(slots=True)
+class OwnedEntries:
+    """Keyed entries SkillSinc owns in a shared JSON file (mutated while applying)."""
+
+    created_file: bool
+    keys: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class Manifest:
     """Files and blocks SkillSinc owns in one destination (mutated while applying)."""
 
@@ -28,6 +37,7 @@ class Manifest:
     root: str
     files: dict[str, str] = field(default_factory=dict)
     blocks: dict[str, OwnedBlock] = field(default_factory=dict)
+    entries: dict[str, OwnedEntries] = field(default_factory=dict)
 
     def to_json(self) -> str:
         """Serialize to stable, human-readable JSON."""
@@ -39,6 +49,13 @@ class Manifest:
             "blocks": {
                 path: {"digest": block.digest, "created_file": block.created_file}
                 for path, block in sorted(self.blocks.items())
+            },
+            "entries": {
+                path: {
+                    "created_file": owned.created_file,
+                    "keys": dict(sorted(owned.keys.items())),
+                }
+                for path, owned in sorted(self.entries.items())
             },
         }
         return json.dumps(data, indent=2) + "\n"
@@ -91,13 +108,14 @@ class ManifestStore:
     @staticmethod
     def _parse(destination: str, data: object) -> Manifest:
         """Convert decoded JSON into a ``Manifest``."""
-        if not isinstance(data, dict) or data.get("version") != MANIFEST_VERSION:
+        if not isinstance(data, dict) or data.get("version") not in READABLE_VERSIONS:
             msg = "unsupported manifest version"
             raise ValueError(msg)
         files = data["files"]
         blocks = data["blocks"]
-        if not isinstance(files, dict) or not isinstance(blocks, dict):
-            msg = "files and blocks must be objects"
+        entries = data.get("entries", {})
+        if not all(isinstance(value, dict) for value in (files, blocks, entries)):
+            msg = "files, blocks, and entries must be objects"
             raise TypeError(msg)
         return Manifest(
             destination=destination,
@@ -106,5 +124,12 @@ class ManifestStore:
             blocks={
                 str(path): OwnedBlock(str(entry["digest"]), bool(entry["created_file"]))
                 for path, entry in blocks.items()
+            },
+            entries={
+                str(path): OwnedEntries(
+                    bool(entry["created_file"]),
+                    {str(key): str(digest) for key, digest in entry["keys"].items()},
+                )
+                for path, entry in entries.items()
             },
         )

@@ -134,3 +134,47 @@ class TestSourceReader:
         assert "prompts/ask" in [item.selector for item in items], (
             f"Expected renamed prompt discovered, got {items!r}"
         )
+
+
+class TestMcpServers:
+    """MCP server definitions are strict JSON objects with one launch method."""
+
+    @staticmethod
+    def write(root: Path, name: str, text: str) -> Path:
+        """Write ``mcp/<name>`` under ``root``."""
+        path = root / "mcp" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_reads_server_definitions_and_ignores_other_files(
+        self, tmp_path: Path
+    ) -> None:
+        """Each ``<name>.json`` becomes one ``mcp/<name>`` item."""
+        self.write(tmp_path, "github.json", '{"type": "http", "url": "https://x"}')
+        self.write(tmp_path, "README.md", "Notes.\n")
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert [(item.selector, item.document.frontmatter) for item in items] == [
+            ("mcp/github", {"type": "http", "url": "https://x"})
+        ], f"Expected one server, got {items!r}"
+
+    @pytest.mark.parametrize(
+        ("text", "message"),
+        [
+            ("{", "invalid MCP server definition"),
+            ('{"command": "a", "command": "b"}', "duplicate key"),
+            ("[]", "JSON object"),
+            ('{"args": []}', "either a 'command' or a 'url'"),
+            ('{"command": "a", "url": "https://x"}', "either a 'command' or a 'url'"),
+        ],
+    )
+    def test_invalid_definition_fails_the_source(
+        self, tmp_path: Path, text: str, message: str
+    ) -> None:
+        """Ambiguous or incomplete servers fail the whole source."""
+        self.write(tmp_path, "bad.json", text)
+
+        with pytest.raises(SourceError, match=message):
+            SourceReader().read(Builder.source(tmp_path))

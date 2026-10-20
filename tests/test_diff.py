@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
 from skillsinc.blocks import ManagedBlock
 from skillsinc.diff import DestinationDiff
-from skillsinc.manifest import Manifest, OwnedBlock
-from skillsinc.models import Digest, FileOutput
-from skillsinc.plan import Action
+from skillsinc.entries import JsonDocument
+from skillsinc.manifest import Manifest, OwnedBlock, OwnedEntries
+from skillsinc.models import Digest, EntryOutput, FileOutput, JsonValue
+from skillsinc.plan import Action, Change
 
 
 class TestDestinationDiff:
@@ -290,4 +293,207 @@ class TestDestinationDiff:
         assert changes == (), f"Expected decoding conflict, got {(changes, errors)!r}"
         assert "cannot read" in errors[0], (
             f"Expected decoding conflict, got {(changes, errors)!r}"
+        )
+
+
+class TestEntryDiff:
+    """JSON entries follow the ownership table one key at a time."""
+
+    SERVER: ClassVar[dict[str, JsonValue]] = {"command": "server"}
+
+    @staticmethod
+    def compare(
+        root: Path,
+        current: dict[str, JsonValue] | None,
+        owned: dict[str, str] | None,
+        outputs: tuple[EntryOutput, ...],
+        *,
+        adopt: bool = False,
+    ) -> tuple[tuple[Change, ...], tuple[str, ...]]:
+        """Write ``current`` as ``mcp.json`` and diff ``outputs`` against it."""
+        if current is not None:
+            (root / "mcp.json").write_text(json.dumps(current), encoding="utf-8")
+        manifest = Manifest("target", str(root))
+        if owned is not None:
+            manifest.entries["mcp.json"] = OwnedEntries(created_file=False, keys=owned)
+        return DestinationDiff(root, manifest, adopt=adopt).compare(
+            {}, {}, {"mcp.json": outputs} if outputs else {}
+        )
+
+    def output(self, value: dict[str, JsonValue] | None = None) -> EntryOutput:
+        """Return the desired ``servers/ours`` entry."""
+        return EntryOutput("mcp.json", "servers", "ours", value or self.SERVER)
+
+    @pytest.mark.parametrize(
+        ("current", "owned", "adopt", "action", "note"),
+        [
+            (None, None, False, Action.CREATE, ""),
+            (
+                {"other": 1},
+                "old",
+                False,
+                Action.CREATE,
+                "restores a deleted managed entry",
+            ),
+            ({"servers": {"ours": "old"}}, "old", False, Action.UPDATE, ""),
+            (
+                {"servers": {"ours": "edited"}},
+                "old",
+                False,
+                Action.UPDATE,
+                "overwrites local edits",
+            ),
+            (
+                {"servers": {"ours": {"command": "server"}}},
+                "old",
+                False,
+                Action.TRACK,
+                "",
+            ),
+            (
+                {"servers": {"ours": {"command": "server"}}},
+                None,
+                True,
+                Action.TRACK,
+                "",
+            ),
+            ({"servers": {"ours": "old"}}, None, True, Action.ADOPT, ""),
+        ],
+    )
+    def test_desired_entry_transition(  # noqa: PLR0913 - transition matrix
+        self,
+        tmp_path: Path,
+        current: dict[str, JsonValue] | None,
+        owned: str | None,
+        action: Action,
+        note: str,
+        *,
+        adopt: bool,
+    ) -> None:
+        """Choose the action, note, and precondition for each entry transition."""
+        recorded = (
+            {"servers/ours": JsonDocument.digest(owned)} if owned is not None else None
+        )
+
+        changes, errors = self.compare(
+            tmp_path, current, recorded, (self.output(),), adopt=adopt
+        )
+
+        raw = (tmp_path / "mcp.json").read_bytes() if current is not None else None
+        expected = Digest.of(raw) if raw is not None else None
+        assert errors == (), f"Expected no errors, got {errors!r}"
+        assert [
+            (c.action, c.entry, c.expected, c.note, c.owned_digest) for c in changes
+        ] == [
+            (action, "servers/ours", expected, note, JsonDocument.digest(self.SERVER))
+        ], f"Expected one {action} change, got {changes!r}"
+
+    def test_written_file_keeps_unrelated_settings(self, tmp_path: Path) -> None:
+        """The planned bytes add the entry and keep every other key."""
+        changes, _ = self.compare(
+            tmp_path, {"theme": "dark", "servers": {"mine": 1}}, None, (self.output(),)
+        )
+
+        written = json.loads(changes[0].content or b"")
+        assert written == {
+            "theme": "dark",
+            "servers": {"mine": 1, "ours": self.SERVER},
+        }, f"Expected user keys preserved, got {written!r}"
+
+    def test_unmanaged_entry_blocks_without_adopt(self, tmp_path: Path) -> None:
+        """An existing entry SkillSinc did not write blocks the destination."""
+        changes, errors = self.compare(
+            tmp_path, {"servers": {"ours": self.SERVER}}, None, (self.output(),)
+        )
+
+        assert changes == (), f"Expected no changes, got {changes!r}"
+        assert errors == (
+            "mcp.json: entry servers/ours exists but is not managed by SkillSinc;"
+            " review it, then rerun with --adopt (identical content)",
+        ), f"Expected one unmanaged-entry error, got {errors!r}"
+
+    def test_up_to_date_entry_has_no_change(self, tmp_path: Path) -> None:
+        """An owned entry matching the library needs nothing."""
+        owned = {"servers/ours": JsonDocument.digest(self.SERVER)}
+
+        changes, errors = self.compare(
+            tmp_path, {"servers": {"ours": self.SERVER}}, owned, (self.output(),)
+        )
+
+        assert (changes, errors) == ((), ()), f"Expected no work, got {changes!r}"
+
+    @pytest.mark.parametrize(
+        ("current", "action", "note"),
+        [
+            ({"servers": {"ours": {"command": "server"}}}, Action.DELETE, ""),
+            (
+                {"servers": {"ours": "edited"}},
+                Action.FORGET,
+                "edited since SkillSinc wrote it, so it is left in place and released",
+            ),
+            ({"servers": {}}, Action.FORGET, "already gone"),
+            (None, Action.FORGET, "already gone"),
+        ],
+    )
+    def test_removed_entry_transition(
+        self,
+        tmp_path: Path,
+        current: dict[str, JsonValue] | None,
+        action: Action,
+        note: str,
+    ) -> None:
+        """Delete unchanged owned entries and release edited or missing ones."""
+        owned = {"servers/ours": JsonDocument.digest(self.SERVER)}
+
+        changes, errors = self.compare(tmp_path, current, owned, ())
+
+        assert errors == (), f"Expected no errors, got {errors!r}"
+        assert [(c.action, c.note, c.owned_digest) for c in changes] == [
+            (action, note, None)
+        ], f"Expected {action}, got {changes!r}"
+
+    def test_removing_last_entry_of_created_file_deletes_it(
+        self, tmp_path: Path
+    ) -> None:
+        """A file SkillSinc created is deleted once its last entry goes."""
+        (tmp_path / "mcp.json").write_text(
+            json.dumps({"servers": {"ours": self.SERVER}}), encoding="utf-8"
+        )
+        manifest = Manifest("target", str(tmp_path))
+        manifest.entries["mcp.json"] = OwnedEntries(
+            created_file=True, keys={"servers/ours": JsonDocument.digest(self.SERVER)}
+        )
+
+        changes, _ = DestinationDiff(tmp_path, manifest, adopt=False).compare({}, {})
+
+        assert [(c.action, c.content) for c in changes] == [(Action.DELETE, None)], (
+            f"Expected whole-file delete, got {changes!r}"
+        )
+
+    def test_sequential_changes_chain_preconditions(self, tmp_path: Path) -> None:
+        """Each change expects the bytes the previous change wrote."""
+        outputs = (
+            EntryOutput("mcp.json", "servers", "a", self.SERVER),
+            EntryOutput("mcp.json", "servers", "b", self.SERVER),
+        )
+
+        changes, _ = self.compare(tmp_path, None, None, outputs)
+
+        first, second = changes
+        assert first.expected is None, f"Expected missing file first, got {first!r}"
+        assert second.expected == Digest.of(first.content or b""), (
+            f"Expected chained precondition, got {second!r}"
+        )
+
+    def test_invalid_json_blocks_destination(self, tmp_path: Path) -> None:
+        """A file that is not plain JSON is never rewritten."""
+        (tmp_path / "mcp.json").write_text("{ // comment\n}", encoding="utf-8")
+
+        changes, errors = DestinationDiff(
+            tmp_path, Manifest("target", str(tmp_path)), adopt=False
+        ).compare({}, {}, {"mcp.json": (self.output(),)})
+
+        assert changes == (), f"Expected no changes, got {changes!r}"
+        assert "is not a plain JSON object" in errors[0], (
+            f"Expected JSON refusal, got {errors!r}"
         )

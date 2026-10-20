@@ -11,7 +11,7 @@ from skillsinc.config import Config, DestinationConfig, RouteConfig
 from skillsinc.diff import DestinationDiff
 from skillsinc.exceptions import ConfigurationError, SourceError
 from skillsinc.manifest import ManifestStore
-from skillsinc.models import Customization, FileOutput
+from skillsinc.models import Customization, EntryOutput, FileOutput
 from skillsinc.plan import DestinationPlan, Plan, Skip
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.sources import SourceReader
@@ -25,6 +25,7 @@ class DesiredState:
 
     files: dict[str, FileOutput] = field(default_factory=dict)
     blocks: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    entries: dict[str, dict[str, EntryOutput]] = field(default_factory=dict)
     origins: dict[str, str] = field(default_factory=dict)
     skipped: list[Skip] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -131,7 +132,10 @@ class Planner:
         except ConfigurationError as err:
             return DestinationPlan(destination, errors=(str(err),))
         diff = DestinationDiff(destination.path, manifest, adopt=adopt)
-        changes, errors = diff.compare(desired.files, desired.blocks)
+        entries = {
+            path: tuple(found.values()) for path, found in desired.entries.items()
+        }
+        changes, errors = diff.compare(desired.files, desired.blocks, entries)
         return DestinationPlan(
             destination,
             changes=() if errors else changes,
@@ -181,6 +185,7 @@ class Planner:
             self._add_files(desired, label, rendering.files)
             for block in rendering.blocks:
                 desired.blocks.setdefault(block.path, []).append((label, block.text))
+            self._add_entries(desired, label, rendering.entries)
         return desired
 
     @staticmethod
@@ -214,3 +219,22 @@ class Planner:
                 continue
             desired.files[output.path] = output
             desired.origins.setdefault(output.path, label)
+
+    @staticmethod
+    def _add_entries(
+        desired: DesiredState, label: str, entries: Iterable[EntryOutput]
+    ) -> None:
+        """Add rendered JSON entries, flagging items that set one key differently."""
+        for output in entries:
+            found = desired.entries.setdefault(output.path, {})
+            origin = f"{output.path}#{output.entry}"
+            previous = found.get(output.entry)
+            if previous is not None and previous != output:
+                other = desired.origins[origin]
+                desired.errors.append(
+                    f"{output.path}: entry {output.entry}: {other} and {label}"
+                    " produce different content"
+                )
+                continue
+            found[output.entry] = output
+            desired.origins.setdefault(origin, label)

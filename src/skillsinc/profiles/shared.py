@@ -21,6 +21,7 @@ class AgentsProfile(Profile):
         Kind.INSTRUCTION: Support.UNSUPPORTED,
         Kind.AGENT: Support.UNSUPPORTED,
         Kind.PROMPT: Support.UNSUPPORTED,
+        Kind.MCP: Support.UNSUPPORTED,
     }
 
     @override

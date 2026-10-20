@@ -29,7 +29,9 @@ class TestAgentsProfile:
             ("skills/sample/scripts/run.sh", b"run", True),
         ], f"Expected complete skill package, got {result!r}"
 
-    @pytest.mark.parametrize("kind", [Kind.INSTRUCTION, Kind.AGENT, Kind.PROMPT])
+    @pytest.mark.parametrize(
+        "kind", [Kind.INSTRUCTION, Kind.AGENT, Kind.PROMPT, Kind.MCP]
+    )
     def test_non_skills_are_refused(self, kind: Kind) -> None:
         """Refuse kinds outside the shared Agent Skills format."""
         result = AgentsProfile().render(Builder.item(kind))
