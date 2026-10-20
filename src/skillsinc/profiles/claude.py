@@ -117,6 +117,8 @@ class ClaudeProfile(Profile):
     @staticmethod
     def _hooks(item: Customization) -> Rendering:
         """Convert a Copilot hook file into ``settings.json`` hook groups per event."""
+        if item.document.frontmatter.get("disableAllHooks") is True:
+            return Rendering.refuse("sets disableAllHooks, so none of its hooks run")
         hooks = item.document.frontmatter.get("hooks")
         converted = ClaudeHooks.convert(hooks if isinstance(hooks, dict) else {})
         if not converted.events:

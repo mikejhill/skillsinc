@@ -235,11 +235,11 @@ class TestPlanner:
         hooks = sandbox.library / "hooks"
         hooks.mkdir()
         (hooks / "a.json").write_text(
-            '{"version": 1, "hooks": {"SessionStart": [{"bash": "a.sh"}]}}',
+            '{"version": 1, "hooks": {"Stop": [{"bash": "a.sh"}]}}',
             encoding="utf-8",
         )
         (hooks / "b.json").write_text(
-            '{"version": 1, "hooks": {"SessionStart": [{"bash": "b.sh"}]}}',
+            '{"version": 1, "hooks": {"Stop": [{"bash": "b.sh"}]}}',
             encoding="utf-8",
         )
         second = tmp_path / "second"
@@ -257,13 +257,11 @@ class TestPlanner:
 
         target = self.planner(sandbox).plan(config).destinations[0]
 
-        assert [change.entry for change in target.changes] == ["hooks/SessionStart"], (
+        assert [change.entry for change in target.changes] == ["hooks/Stop"], (
             f"Expected one merged entry, got {target!r}"
         )
         written = json.loads(target.changes[0].content or b"{}")
-        commands = [
-            group["hooks"][0]["command"] for group in written["hooks"]["SessionStart"]
-        ]
+        commands = [group["hooks"][0]["command"] for group in written["hooks"]["Stop"]]
         assert commands == ["a.sh", "b.sh"], (
             f"Expected both hooks once each, got {commands!r}"
         )

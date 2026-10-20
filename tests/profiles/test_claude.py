@@ -125,7 +125,7 @@ class TestClaudeHooksRendering:
                 "version": 1,
                 "hooks": {
                     "Stop": [{"bash": "b.sh"}],
-                    "SessionStart": [{"bash": "a.sh"}],
+                    "SessionEnd": [{"bash": "a.sh"}],
                 },
             },
         )
@@ -139,7 +139,7 @@ class TestClaudeHooksRendering:
         assert result == Rendering(
             entries=(
                 EntryOutput(
-                    "settings.json", "hooks", "SessionStart", group("a.sh"), merge=True
+                    "settings.json", "hooks", "SessionEnd", group("a.sh"), merge=True
                 ),
                 EntryOutput(
                     "settings.json", "hooks", "Stop", group("b.sh"), merge=True
@@ -147,15 +147,29 @@ class TestClaudeHooksRendering:
             )
         ), f"Expected two settings.json entries, got {result!r}"
 
-    def test_hook_file_without_runnable_hooks_is_refused(self) -> None:
-        """Refuse a file whose hooks all fall outside Claude Code."""
-        item = Builder.item(
-            Kind.HOOK,
-            frontmatter={"version": 1, "hooks": {"errorOccurred": [{"bash": "a"}]}},
-        )
+    @pytest.mark.parametrize(
+        ("header", "reason"),
+        [
+            (
+                {"version": 1, "hooks": {"errorOccurred": [{"bash": "a"}]}},
+                "has no hooks Claude Code can run",
+            ),
+            (
+                {
+                    "version": 1,
+                    "disableAllHooks": True,
+                    "hooks": {"Stop": [{"bash": "a"}]},
+                },
+                "sets disableAllHooks, so none of its hooks run",
+            ),
+        ],
+    )
+    def test_hook_file_without_runnable_hooks_is_refused(
+        self, header: Frontmatter, reason: str
+    ) -> None:
+        """Refuse a file whose hooks all fall outside Claude Code or are disabled."""
+        item = Builder.item(Kind.HOOK, frontmatter=header)
 
         result = ClaudeProfile().render(item)
 
-        assert result.unsupported == "has no hooks Claude Code can run", (
-            f"Expected refusal, got {result!r}"
-        )
+        assert result.unsupported == reason, f"Expected refusal, got {result!r}"

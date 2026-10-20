@@ -5,12 +5,18 @@ from __future__ import annotations
 from skillsinc.models import JsonValue
 from skillsinc.profiles.hooks import ClaudeHooks
 
+PAYLOAD = "scripts get Claude's snake_case input, not Copilot's camelCase input, for"
+OUTPUT = (
+    "Claude reads hook output JSON differently (for example, permissionDecision"
+    " belongs inside hookSpecificOutput), for"
+)
+
 
 class TestClaudeHooks:
     """Each Copilot hook entry becomes one Claude matcher group."""
 
     def test_camel_case_events_map_to_claude_events(self) -> None:
-        """Rename events, carry bash and timeoutSec, and report the payload change."""
+        """Rename events, carry bash and timeoutSec, and report payload changes."""
         hooks: dict[str, JsonValue] = {
             "sessionStart": [{"type": "command", "bash": "start.sh", "timeoutSec": 5}],
             "agentStop": [{"command": "stop.sh"}],
@@ -27,33 +33,43 @@ class TestClaudeHooks:
             ],
         }, f"Expected renamed events with timeouts, got {result.events!r}"
         assert result.losses == [
-            (
-                "scripts get Claude's snake_case input, not Copilot's camelCase"
-                " input, for: sessionStart, agentStop"
-            )
-        ], f"Expected payload loss only, got {result.losses!r}"
+            f"{PAYLOAD}: agentStop, sessionStart",
+            f"{OUTPUT}: sessionStart",
+        ], f"Expected payload and output losses, got {result.losses!r}"
 
-    def test_pascal_case_events_and_matchers_carry_exactly(self) -> None:
-        """Claude-format events keep their matcher semantics with no losses."""
+    def test_pascal_case_events_with_shared_output_carry_exactly(self) -> None:
+        """Claude-format events whose output both harnesses read alike lose nothing."""
         hooks: dict[str, JsonValue] = {
-            "PreToolUse": [{"matcher": "Bash", "bash": "guard.sh", "timeout": 9}]
+            "Stop": [{"matcher": "x", "bash": "stop.sh", "timeout": 9}]
         }
 
         result = ClaudeHooks.convert(hooks)
 
         assert (result.events, result.losses) == (
             {
-                "PreToolUse": [
+                "Stop": [
                     {
-                        "matcher": "Bash",
+                        "matcher": "x",
                         "hooks": [
-                            {"type": "command", "command": "guard.sh", "timeout": 9}
+                            {"type": "command", "command": "stop.sh", "timeout": 9}
                         ],
                     }
                 ]
             },
             [],
         ), f"Expected exact carry, got {result!r}"
+
+    def test_pascal_case_pre_tool_use_reports_output_protocol(self) -> None:
+        """A permission guard never syncs silently; Claude reads verdicts elsewhere."""
+        hooks: dict[str, JsonValue] = {
+            "PreToolUse": [{"matcher": "Bash", "bash": "guard.sh"}]
+        }
+
+        result = ClaudeHooks.convert(hooks)
+
+        assert result.losses == [f"{OUTPUT}: PreToolUse"], (
+            f"Expected output-protocol loss, got {result.losses!r}"
+        )
 
     def test_unrepresentable_parts_are_reported(self) -> None:
         """Report missing events, foreign matchers, dropped fields, skipped hooks."""
@@ -63,7 +79,6 @@ class TestClaudeHooks:
                 {
                     "matcher": "bash",
                     "bash": "a.sh",
-                    "powershell": "a.ps1",
                     "cwd": "x",
                     "env": {"A": "1"},
                 },
@@ -86,27 +101,37 @@ class TestClaudeHooks:
         }, f"Expected one converted hook, got {result.events!r}"
         assert result.losses == [
             "drops events Claude Code lacks: errorOccurred",
-            (
-                "scripts get Claude's snake_case input, not Copilot's camelCase"
-                " input, for: preToolUse, sessionEnd"
-            ),
+            f"{PAYLOAD}: preToolUse, sessionEnd",
+            f"{OUTPUT}: preToolUse",
             (
                 "matchers are tested against Claude tool names (Bash, Edit), not"
                 " Copilot's, for: preToolUse"
             ),
-            "drops hook fields: cwd, env, powershell",
+            "drops hook fields: cwd, env",
             "drops hooks with no bash, command, or exec command for: preToolUse",
         ], f"Expected every loss reported, got {result.losses!r}"
 
-    def test_exec_becomes_a_quoted_command(self) -> None:
-        """Join ``exec`` and ``args`` into one shell-safe command."""
+    def test_powershell_override_is_reported_beside_command(self) -> None:
+        """Keep ``command`` and report the dropped Windows override."""
         hooks: dict[str, JsonValue] = {
-            "SessionStart": [{"exec": "my tool", "args": ["--flag", "a b"]}]
+            "Stop": [{"command": "stop.sh", "powershell": "stop.ps1"}]
         }
 
         result = ClaudeHooks.convert(hooks)
 
-        handler = result.events["SessionStart"][0]
+        assert result.losses == ["drops hook fields: powershell"], (
+            f"Expected powershell loss, got {result.losses!r}"
+        )
+
+    def test_exec_becomes_a_quoted_command(self) -> None:
+        """Join ``exec`` and ``args`` into one shell-safe command."""
+        hooks: dict[str, JsonValue] = {
+            "Stop": [{"exec": "my tool", "args": ["--flag", "a b"]}]
+        }
+
+        result = ClaudeHooks.convert(hooks)
+
+        handler = result.events["Stop"][0]
         assert handler == {
             "hooks": [
                 {

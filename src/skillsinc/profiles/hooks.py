@@ -43,6 +43,37 @@ CARRIED_FIELDS: Final = frozenset(
     }
 )
 DEFAULT_TIMEOUT: Final = 30
+# Claude events whose stdout JSON Claude reads differently from Copilot CLI
+# (for example permissionDecision inside hookSpecificOutput); Stop, SubagentStop,
+# SessionEnd, and PreCompact agree
+OUTPUT_EVENTS: Final = frozenset(
+    {
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PermissionRequest",
+        "Notification",
+        "SubagentStart",
+    }
+)
+
+# Loss messages, in report order
+MISSING: Final = "drops events Claude Code lacks"
+CAMEL: Final = (
+    "scripts get Claude's snake_case input, not Copilot's camelCase input, for"
+)
+OUTPUT: Final = (
+    "Claude reads hook output JSON differently (for example, permissionDecision"
+    " belongs inside hookSpecificOutput), for"
+)
+MATCHED: Final = (
+    "matchers are tested against Claude tool names (Bash, Edit), not Copilot's, for"
+)
+DROPPED: Final = "drops hook fields"
+SKIPPED: Final = "drops hooks with no bash, command, or exec command for"
+LOSSES: Final = (MISSING, CAMEL, OUTPUT, MATCHED, DROPPED, SKIPPED)
 
 
 @dataclass(slots=True)
@@ -56,41 +87,56 @@ class ClaudeHooks:
     def convert(cls, hooks: Mapping[str, JsonValue]) -> ClaudeHooks:
         """Convert the ``hooks`` object of a Copilot CLI hook file."""
         result = cls()
-        missing: list[str] = []
-        camel: list[str] = []
-        matched: list[str] = []
-        dropped: set[str] = set()
-        skipped: list[str] = []
+        found: dict[str, set[str]] = {message: set() for message in LOSSES}
         for event, entries in hooks.items():
             target = CAMEL_EVENTS.get(event) or (
                 event if event in CLAUDE_EVENTS else None
             )
             if target is None:
-                missing.append(event)
+                found[MISSING].add(event)
                 continue
             if event in CAMEL_EVENTS:
-                camel.append(event)
+                found[CAMEL].add(event)
             for entry in entries if isinstance(entries, list) else []:
                 if not isinstance(entry, dict):
                     continue
-                handler = cls._handler(entry)
-                if handler is None:
-                    skipped.append(event)
-                    continue
-                dropped.update(key for key in entry if key not in CARRIED_FIELDS)
-                group: dict[str, JsonValue] = {"hooks": [handler]}
-                matcher = entry.get("matcher")
-                if isinstance(matcher, str) and matcher:
-                    group = {"matcher": matcher, **group}
-                    if event in TOOL_EVENTS:
-                        matched.append(event)
-                if "powershell" in entry and "bash" in entry:
-                    dropped.add("powershell")
-                result.events.setdefault(target, []).append(group)
-        result.losses = cls._losses(missing, camel, matched, sorted(dropped), skipped)
+                group = cls._group(event, target, entry, found)
+                if group is not None:
+                    result.events.setdefault(target, []).append(group)
+        result.losses = [
+            f"{message}: {', '.join(sorted(names))}"
+            for message, names in found.items()
+            if names
+        ]
         return result
 
     # Internals
+
+    @classmethod
+    def _group(
+        cls,
+        event: str,
+        target: str,
+        entry: Mapping[str, JsonValue],
+        found: dict[str, set[str]],
+    ) -> dict[str, JsonValue] | None:
+        """Return the Claude matcher group for one entry, recording its losses."""
+        handler = cls._handler(entry)
+        if handler is None:
+            found[SKIPPED].add(event)
+            return None
+        found[DROPPED].update(key for key in entry if key not in CARRIED_FIELDS)
+        if "powershell" in entry:
+            found[DROPPED].add("powershell")
+        if target in OUTPUT_EVENTS:
+            found[OUTPUT].add(event)
+        group: dict[str, JsonValue] = {"hooks": [handler]}
+        matcher = entry.get("matcher")
+        if isinstance(matcher, str) and matcher:
+            group = {"matcher": matcher, **group}
+            if event in TOOL_EVENTS:
+                found[MATCHED].add(event)
+        return group
 
     @staticmethod
     def _handler(entry: Mapping[str, JsonValue]) -> dict[str, JsonValue] | None:
@@ -107,34 +153,3 @@ class ClaudeHooks:
             return None
         timeout = entry.get("timeoutSec", entry.get("timeout", DEFAULT_TIMEOUT))
         return {"type": "command", "command": command, "timeout": timeout}
-
-    @staticmethod
-    def _losses(
-        missing: list[str],
-        camel: list[str],
-        matched: list[str],
-        dropped: list[str],
-        skipped: list[str],
-    ) -> list[str]:
-        """Describe everything the conversion could not carry."""
-        losses: list[str] = []
-        if missing:
-            losses.append(f"drops events Claude Code lacks: {', '.join(missing)}")
-        if camel:
-            losses.append(
-                "scripts get Claude's snake_case input, not Copilot's camelCase"
-                f" input, for: {', '.join(camel)}"
-            )
-        if matched:
-            losses.append(
-                "matchers are tested against Claude tool names (Bash, Edit),"
-                f" not Copilot's, for: {', '.join(sorted(set(matched)))}"
-            )
-        if dropped:
-            losses.append(f"drops hook fields: {', '.join(dropped)}")
-        if skipped:
-            losses.append(
-                "drops hooks with no bash, command, or exec command for:"
-                f" {', '.join(sorted(set(skipped)))}"
-            )
-        return losses
