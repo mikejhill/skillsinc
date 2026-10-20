@@ -54,7 +54,7 @@ uv tool install git+https://github.com/mikejhill/skillsinc.git
     skillsinc sync
     ```
 
-Run `skillsinc sync` again whenever the library changes, or schedule it with Task Scheduler, cron, or launchd. Overlapping runs are serialized by a lock.
+Run `skillsinc sync` again whenever the library changes, or schedule it with Task Scheduler, launchd, or a systemd timer using the [scheduling examples](docs/guides/scheduling.md). An overlapping run exits without writing.
 
 ## Library layout
 
@@ -99,6 +99,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 
 - [Configuration reference](docs/guides/configuration.md)
 - [Command-line reference](docs/guides/command-line.md)
+- [Scheduling](docs/guides/scheduling.md)
 - [Development guide](docs/guides/development.md)
 - [Roadmap](docs/planning/roadmap.md)
 - [Harness profiles](docs/guides/harness-profiles.md)

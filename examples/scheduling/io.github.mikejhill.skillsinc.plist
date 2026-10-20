@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent for `skillsinc sync`. launchd does not expand ~ or $HOME:
+     install with the command in docs/guides/scheduling.md, which replaces @HOME@. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.github.mikejhill.skillsinc</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@HOME@/.local/bin/skillsinc</string>
+        <string>sync</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>@HOME@</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>@HOME@/Library/Logs/skillsinc.log</string>
+    <key>StandardErrorPath</key>
+    <string>@HOME@/Library/Logs/skillsinc.log</string>
+</dict>
+</plist>

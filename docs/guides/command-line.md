@@ -90,4 +90,4 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
 
 ## Scheduling
 
-Run `skillsinc sync` from Task Scheduler, cron, or launchd using the absolute path from `uv tool dir --bin`. Keep the same `XDG_*` environment as interactive runs so the scheduled job sees the same configuration and manifests.
+Run `skillsinc sync` from Task Scheduler, launchd, a systemd timer, or cron using the absolute path from `uv tool dir --bin`. Keep the same `XDG_*` environment as interactive runs so the scheduled job sees the same configuration and manifests. The [scheduling guide](scheduling.md) has a ready example for each.

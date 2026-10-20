@@ -28,7 +28,7 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | Prompts copied to `~/.copilot/prompts`                                   | Refused on purpose: Copilot CLI documents no prompt folder    |
 | Junctions and hard links                                                 | Not planned: copies plus ownership are safer (decision 0001)  |
 | Optional `--prune`                                                       | Covered: owned files are always reconciled, edits released    |
-| Windows Task Scheduler registration script                               | **Gap 9**                                                     |
+| Windows Task Scheduler registration script                               | Covered: [scheduling examples](../guides/scheduling.md)       |
 
 ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from the documented scope only.
 
@@ -42,5 +42,4 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 6. **Codex MCP servers.** Target `[mcp_servers.<name>]` in `~/.codex/config.toml`. Needs a formatting-preserving TOML editor (for example `tomlkit`); adding a dependency needs a decision record. `command`, `args`, and `env` carry over; check remote `url` servers against current Codex docs.
 7. **Plugins.** Bundles of skills, agents, commands, hooks, and MCP servers with a manifest (`.claude-plugin/plugin.json` for Claude Code). Two options: expand a library plugin into its component kinds per harness (works with every profile, loses the bundle), or publish a local marketplace directory for harnesses that install plugins. Needs a decision; expanding first is cheaper and reuses everything above.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
-9. **Scheduling helper.** ai-feature-sync ships a Task Scheduler registration script. SkillSinc documents scheduling but ships nothing; an example per OS (Task Scheduler, launchd, systemd timer) would close it.
-10. **Native verification.** None of the mappings, including the new Copilot MCP entries, have been confirmed by loading the harness (roadmap item 2).
+9. **Native verification.** None of the mappings, including the new Copilot MCP entries, have been confirmed by loading the harness (roadmap item 2).
