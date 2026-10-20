@@ -12,7 +12,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Final
+from typing import Final, assert_never
 
 HEADER: Final = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?(?P<bang>!)?: ")
 TAG: Final = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
@@ -91,6 +91,7 @@ class NextVersion:
                 return f"{major}.{minor}.{patch + 1}"
             case Bump.NONE:
                 return ""
+        assert_never(bump)
 
     # Internals
 
