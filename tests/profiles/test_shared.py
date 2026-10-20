@@ -30,7 +30,7 @@ class TestAgentsProfile:
         ], f"Expected complete skill package, got {result!r}"
 
     @pytest.mark.parametrize(
-        "kind", [Kind.INSTRUCTION, Kind.AGENT, Kind.PROMPT, Kind.MCP]
+        "kind", [Kind.INSTRUCTION, Kind.AGENT, Kind.PROMPT, Kind.MCP, Kind.RESOURCE]
     )
     def test_non_skills_are_refused(self, kind: Kind) -> None:
         """Refuse kinds outside the shared Agent Skills format."""

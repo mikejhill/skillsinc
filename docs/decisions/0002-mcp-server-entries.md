@@ -28,7 +28,7 @@ Where each harness reads user MCP servers:
 - **First harness.** Copilot CLI, the only JSON target inside its destination root. The others refuse MCP items with the reason, until each gets its own follow-up:
   - Claude Code and VS Code need a way for a profile to write one named file outside its root, and Claude Code rewrites `~/.claude.json` while running.
   - VS Code needs comment-preserving JSONC edits, or a rule that SkillSinc only edits comment-free files.
-  - Codex needs a formatting-preserving TOML editor, which means a new dependency.
+  - Codex needs a formatting-preserving TOML editor, which means a new dependency (done in [decision 0004](0004-toml-entries-with-tomlkit.md)).
 
 ## Consequences
 

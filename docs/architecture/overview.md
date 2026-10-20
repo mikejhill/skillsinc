@@ -22,21 +22,21 @@ graph LR
 
 ## Modules
 
-| Module                        | Responsibility                                                       |
-| ----------------------------- | -------------------------------------------------------------------- |
-| `config`                      | Parse and validate `config.toml` into frozen dataclasses             |
-| `sources`                     | Read a library completely, expanding plugins, or raise `SourceError` |
-| `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back        |
-| `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses  |
-| `planner`                     | Select items per route, render, apply loss policy, detect clashes    |
-| `diff`                        | Compare desired files and blocks with disk and the manifest          |
-| `blocks`                      | Find, replace, and remove the managed block in a Markdown file       |
-| `entries`                     | Strict JSON parsing; set and remove keyed entries in a shared file   |
-| `manifest`                    | Load and atomically save per-destination ownership records           |
-| `applier`                     | Verify preconditions, write atomically, update the manifest          |
-| `lock`                        | Serialize overlapping `sync` runs                                    |
-| `report`                      | Text and versioned JSON output                                       |
-| `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                       |
+| Module                        | Responsibility                                                          |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `config`                      | Parse and validate `config.toml` into frozen dataclasses                |
+| `sources`                     | Read a library completely, expanding plugins, or raise `SourceError`    |
+| `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back           |
+| `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses     |
+| `planner`                     | Select items per route, render, apply loss policy, detect clashes       |
+| `diff`                        | Compare desired files and blocks with disk and the manifest             |
+| `blocks`                      | Find, replace, and remove the managed block in a Markdown file          |
+| `entries`                     | Strict JSON and verified TOML editing of keyed entries in a shared file |
+| `manifest`                    | Load and atomically save per-destination ownership records              |
+| `applier`                     | Verify preconditions, write atomically, update the manifest             |
+| `lock`                        | Serialize overlapping `sync` runs                                       |
+| `report`                      | Text and versioned JSON output                                          |
+| `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                          |
 
 ## Ownership
 
@@ -54,13 +54,13 @@ Each destination has a manifest at `$XDG_STATE_HOME/skillsinc/manifests/<destina
 
 ## Managed blocks
 
-Harnesses that read a single instructions file (Codex's `AGENTS.md`) receive one block delimited by `<!-- skillsinc:begin -->` and `<!-- skillsinc:end -->`. Content outside the markers is never changed. Damaged markers block the destination rather than guessing.
+Harnesses that read a single instructions file (Codex's `AGENTS.md`, Claude Code's `CLAUDE.md` for resource imports) receive one block delimited by `<!-- skillsinc:begin -->` and `<!-- skillsinc:end -->`. Content outside the markers is never changed. Damaged markers block the destination rather than guessing.
 
-Blocks follow the same ownership rules as files. A block taken over with `--adopt` is reported as `adopt`. A block removed by hand is restored with a note. When no sections remain, an unedited block is removed (and its file deleted if SkillSinc created it and nothing else is left); an edited block is left in place and released. A path wanted in more than one form (whole file, managed block, JSON entries) blocks the destination.
+Blocks follow the same ownership rules as files. A block taken over with `--adopt` is reported as `adopt`. A block removed by hand is restored with a note. When no sections remain, an unedited block is removed (and its file deleted if SkillSinc created it and nothing else is left); an edited block is left in place and released. A path wanted in more than one form (whole file, managed block, config entries) blocks the destination.
 
 ## Managed entries
 
-Harnesses that read MCP servers from a shared JSON file (Copilot CLI's `mcp-config.json`) receive one entry per server under a container key such as `mcpServers`. The manifest records each owned `container/key` with the digest of its value (key order and whitespace ignored) and whether SkillSinc created the file. Each entry follows the ownership table above; changes to one file are chained, each expecting the bytes the previous one wrote. Other keys are never changed, an unowned key with the same name blocks until `--adopt`, and a file that is not plain JSON blocks the destination. A file SkillSinc created is deleted when its last entry goes.
+Harnesses that read MCP servers from a shared JSON or TOML file (Copilot CLI's `mcp-config.json`, Codex's `config.toml`) receive one entry per server under a container key such as `mcpServers` or `mcp_servers`. The manifest records each owned `container/key` with the digest of its value (key order and whitespace ignored) and whether SkillSinc created the file. Each entry follows the ownership table above; changes to one file are chained, each expecting the bytes the previous one wrote. Other keys are never changed, an unowned key with the same name blocks until `--adopt`, and a file that is not plain JSON, or not valid TOML, blocks the destination. TOML is edited with `tomlkit`, keeping comments and layout, and every edit is parsed back and compared with the intended data before it is planned. A file SkillSinc created is deleted when its last entry goes.
 
 ## Safety checks
 

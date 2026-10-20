@@ -20,7 +20,7 @@ This is the prioritized list of work after the 2026-10 rebuild, with enough cont
 
 ## Later
 
-- **MCP servers for Claude Code, VS Code, and Codex, then hooks.** Plugins expand into existing kinds ([decision 0003](../decisions/0003-plugins-expand-into-kinds.md)). Copilot CLI MCP entries shipped under [decision 0002](../decisions/0002-mcp-server-entries.md). The remaining harnesses, in order, are in the [gap list](gap-list.md).
+- **MCP servers for Claude Code, VS Code, and Codex, then hooks.** Plugins expand into existing kinds ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Copilot CLI and Codex MCP entries shipped under decisions [0002](../decisions/0002-mcp-server-entries.md) and [0004](../decisions/0004-toml-entries-with-tomlkit.md). The remaining harnesses, in order, are in the [gap list](gap-list.md).
 - **More profiles.** Cursor (`~/.cursor`), Gemini CLI (`~/.gemini`), OpenCode (`~/.config/opencode`). Each is one class plus tests; verify locations against vendor docs.
 - **Project-scope destinations.** Writing into a repository's `.github/` or `.claude/` folders. Profiles currently assume user-level folders.
 - **`skillsinc release <destination>`.** Drop a destination's manifest deliberately (today: delete the manifest file by hand, as the error message explains).

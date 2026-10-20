@@ -1,4 +1,4 @@
-# 0003: Plugins expand into their component kinds
+# 0005: Plugins expand into their component kinds
 
 This record decides how SkillSinc syncs agent plugins: by expanding each library plugin into the kinds it already syncs, or by publishing a local plugin marketplace. It is for anyone extending plugin support or adding a harness.
 

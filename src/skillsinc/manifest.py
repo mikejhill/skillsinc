@@ -23,7 +23,7 @@ class OwnedBlock:
 
 @dataclass(slots=True)
 class OwnedEntries:
-    """Keyed entries SkillSinc owns in a shared JSON file (mutated while applying)."""
+    """Keyed entries SkillSinc owns in a shared config file (mutated while applying)."""
 
     created_file: bool
     keys: dict[str, str] = field(default_factory=dict)

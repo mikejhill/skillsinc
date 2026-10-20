@@ -46,7 +46,7 @@ class StarterConfig:
         if source is None:
             lines.append(
                 "# Replace with your library: skills/, instructions/, agents/,"
-                " prompts/, mcp/"
+                " prompts/, mcp/, resources/"
             )
 
         detected: list[str] = []

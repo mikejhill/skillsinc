@@ -8,10 +8,11 @@ This guide lists exactly what each profile writes and which conversions lose inf
 - **converted**: frontmatter is rewritten for the harness; losses are reported per item.
 - Library files use the GitHub Copilot formats: `applyTo` on instructions, `tools`/`model` on agents, `${input:...}` variables in prompts.
 - MCP servers are `mcp/<name>.json` files, each one server object in the `mcpServers` entry format (`type`, `command`, `args`, `env`, or `url`, `headers`). SkillSinc owns only its own keys inside a shared JSON file; see [decision 0002](../decisions/0002-mcp-server-entries.md).
+- Resources are `resources/<name>.md` reference files, copied byte for byte and never parsed; see [decision 0003](../decisions/0003-resources-and-claude-imports.md).
 
 ## Plugins
 
-Library plugins (`plugins/<plugin>/`, Claude Code layout) are expanded into skills, agents, prompts, and MCP servers before any profile sees them ([decision 0003](../decisions/0003-plugins-expand-into-kinds.md)). Each harness then receives the parts it supports, without the plugin namespace (`kit:reviewer` becomes `reviewer`).
+Library plugins (`plugins/<plugin>/`, Claude Code layout) are expanded into skills, agents, prompts, and MCP servers before any profile sees them ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Each harness then receives the parts it supports, without the plugin namespace (`kit:reviewer` becomes `reviewer`).
 
 | Plugin part          | Becomes     | `claude`                         | `copilot`, `vscode`                                                                        |
 | -------------------- | ----------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -27,12 +28,15 @@ Items whose files (skill assets included) refer to `${CLAUDE_PLUGIN_ROOT}`, anot
 
 Default path `$CLAUDE_CONFIG_DIR` or `~/.claude`. Reference: [Claude Code memory and rules](https://code.claude.com/docs/en/memory).
 
-| Kind         | Output               | Conversion                                             |
-| ------------ | -------------------- | ------------------------------------------------------ |
-| skills       | `skills/<name>/`     | exact                                                  |
-| instructions | `rules/<name>.md`    | `applyTo` → `paths`; `**` → no `paths` (always loaded) |
-| agents       | `agents/<name>.md`   | keeps `name`, `description`; requires a description    |
-| prompts      | `commands/<name>.md` | keeps `description`, `argument-hint`                   |
+| Kind         | Output                | Conversion                                             |
+| ------------ | --------------------- | ------------------------------------------------------ |
+| skills       | `skills/<name>/`      | exact                                                  |
+| instructions | `rules/<name>.md`     | `applyTo` → `paths`; `**` → no `paths` (always loaded) |
+| agents       | `agents/<name>.md`    | keeps `name`, `description`; requires a description    |
+| prompts      | `commands/<name>.md`  | keeps `description`, `argument-hint`                   |
+| resources    | `resources/<name>.md` | exact, plus `@resources/<name>.md` in `CLAUDE.md`      |
+
+Each resource is imported from a managed block in `CLAUDE.md`, so Claude Code loads it in every session. Text outside the block is never changed; a `CLAUDE.md` SkillSinc created is deleted when the last resource goes.
 
 MCP servers are not written: Claude Code keeps user servers in `~/.claude.json`, outside this destination, and rewrites that file while running.
 
@@ -49,8 +53,11 @@ Default path `$COPILOT_HOME` or `~/.copilot`. Reference: [Copilot CLI custom ins
 | agents       | `agents/<name>.agent.md`                | exact      |
 | prompts      | unsupported                             | —          |
 | mcp          | `mcp-config.json` → `mcpServers.<name>` | exact      |
+| resources    | `resources/<name>.md`                   | exact      |
 
 Loss: an instructions file without `applyTo`, which Copilot CLI never applies.
+
+Copilot CLI does not load `resources/` on its own; instructions and agents can point at the files there.
 
 MCP servers are copied as written into `mcpServers` in `~/.copilot/mcp-config.json`; other servers and keys in the file are kept, and the file is rewritten with two-space indentation. A server with the same name that SkillSinc did not write blocks the destination until `--adopt`. A file that is not plain JSON (comments, duplicate keys) blocks it too. Write each server in the shape Copilot CLI documents; SkillSinc does not convert fields.
 
@@ -64,7 +71,13 @@ Default path `$CODEX_HOME` or `~/.codex`. Instructions are combined, in name ord
 
 Losses: `applyTo` globs become an advisory sentence; files without `applyTo` become always-on.
 
-MCP servers are not written: Codex reads them from `[mcp_servers.<name>]` tables in `config.toml`, which needs a TOML editor that preserves formatting.
+| Kind         | Output                                 | Conversion |
+| ------------ | -------------------------------------- | ---------- |
+| instructions | managed block in `AGENTS.md`           | lossy      |
+| mcp          | `config.toml` → `[mcp_servers.<name>]` | converted  |
+| others       | unsupported                            | —          |
+
+MCP servers become `[mcp_servers.<name>]` tables in `config.toml`, edited in place with comments, ordering, and other tables kept ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)). Codex rejects fields it does not know, so only these are written: `command`, `args`, `env`, `cwd` for stdio servers; `url` and `headers` (as `http_headers`) for streamable HTTP servers; `tools` as `enabled_tools` unless it contains `"*"`. `type` is checked, not written: SSE servers and unknown types are refused, as are carried fields of the wrong type. Losses: any other field, and `${...}` variables, which Codex does not expand. A server with the same name that SkillSinc did not write blocks until `--adopt`; invalid TOML, or an `mcp_servers` that is not a table, blocks the destination.
 
 ## agents
 

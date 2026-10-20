@@ -22,6 +22,7 @@ class TestCopilotProfile:
             (Kind.SKILL, "skills/sample/SKILL.md"),
             (Kind.INSTRUCTION, "instructions/sample.instructions.md"),
             (Kind.AGENT, "agents/sample.agent.md"),
+            (Kind.RESOURCE, "resources/sample.md"),
         ],
     )
     def test_native_files_are_copied_verbatim(self, kind: Kind, path: str) -> None:
