@@ -467,7 +467,9 @@ class TestDestinationDiffEdgeCases:
         )
 
         assert len(errors) == 1, f"Expected one overlap error, got {errors!r}"
-        assert "more than one form" in errors[0], f"Expected overlap error, got {errors!r}"
+        assert "more than one form" in errors[0], (
+            f"Expected overlap error, got {errors!r}"
+        )
         assert changes == (), f"Expected nothing planned, got {changes!r}"
 
     def test_new_block_creates_file(self, tmp_path: Path) -> None:
