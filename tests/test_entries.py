@@ -201,6 +201,16 @@ class TestTomlEntryFile:
 
         assert result == expected, f"Expected {expected!r}, got {result!r}"
 
+    def test_pruning_keeps_comments_the_user_added(self) -> None:
+        """A created file is kept, comments intact, when only comments remain."""
+        raw = b'# my notes\n\n[mcp_servers.ours]\ncommand = "b"\n'
+        document = TomlEntryFile(raw)
+
+        result = document.remove("mcp_servers", "ours", prune=True)
+
+        assert result is not None, "Expected the commented file kept"
+        assert b"# my notes" in result, f"Expected the comment kept, got {result!r}"
+
     def test_pruning_keeps_other_settings(self) -> None:
         """Dropping the emptied container leaves the rest of the file."""
         document = TomlEntryFile(b'model = "o3"\n\n[mcp_servers.ours]\ncommand = "b"\n')

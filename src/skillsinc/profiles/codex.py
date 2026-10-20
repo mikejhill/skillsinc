@@ -96,6 +96,8 @@ class CodexProfile(Profile):
         """
         server = dict(item.document.frontmatter)
         transport = server.get("type")
+        if transport is not None and not isinstance(transport, str):
+            return Rendering.refuse("'type' must be a string for Codex")
         if transport == "sse":
             return Rendering.refuse(
                 "Codex supports stdio and streamable HTTP MCP servers, not SSE"

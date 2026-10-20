@@ -273,7 +273,8 @@ class TomlEntryFile(EntryFile):
         if not values:
             del expected[container]
             del self._document[container]
-            if prune and not expected:
+            # Comments the user added keep a file SkillSinc created
+            if prune and not expected and not tomlkit.dumps(self._document).strip():
                 self.raw = None
                 return None
         return self._dump(expected)

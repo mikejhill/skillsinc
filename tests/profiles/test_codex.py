@@ -147,6 +147,7 @@ class TestCodexServers:
             ({"type": "sse", "url": "https://x"}, "not SSE"),
             ({"type": "http", "command": "gh"}, "no MCP server type 'http'"),
             ({"type": "ws", "url": "https://x"}, "no MCP server type 'ws'"),
+            ({"command": "gh", "type": []}, "'type' must be a string"),
             ({"command": 3}, "'command' must be a string"),
             ({"command": "gh", "args": ["a", 1]}, "'args' must be a list of strings"),
             (
