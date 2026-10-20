@@ -28,6 +28,7 @@ class Kind(StrEnum):
     AGENT = "agents"
     PROMPT = "prompts"
     MCP = "mcp"
+    RESOURCE = "resources"
     HOOK = "hooks"
 
 
@@ -62,7 +63,8 @@ class Document:
     """A Markdown file split into YAML frontmatter and body.
 
     MCP server and hook definitions are JSON files: ``frontmatter`` holds the
-    parsed object and ``body`` is empty.
+    parsed object and ``body`` is empty. A resource is copied as written, so
+    only ``raw`` is set.
     """
 
     frontmatter: Frontmatter

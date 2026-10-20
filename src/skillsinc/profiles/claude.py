@@ -1,12 +1,13 @@
-"""Claude Code profile: skills, rules, subagents, and slash commands."""
+"""Claude Code profile: skills, rules, subagents, slash commands, and imports."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import ClassVar, Final, assert_never, override
+from typing import ClassVar, Final, override
 
 from skillsinc.models import (
+    BlockOutput,
     Customization,
     EntryOutput,
     FileOutput,
@@ -34,7 +35,8 @@ class ClaudeProfile(Profile):
 
     name: ClassVar[str] = "claude"
     summary: ClassVar[str] = (
-        "Claude Code: skills/, rules/, agents/, commands/, settings.json hooks"
+        "Claude Code: skills/, rules/, agents/, commands/, resources/ (CLAUDE.md),"
+        " settings.json hooks"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
@@ -43,6 +45,7 @@ class ClaudeProfile(Profile):
         Kind.PROMPT: Support.CONVERTED,
         Kind.MCP: Support.UNSUPPORTED,
         Kind.HOOK: Support.CONVERTED,
+        Kind.RESOURCE: Support.EXACT,
     }
 
     @override
@@ -53,24 +56,21 @@ class ClaudeProfile(Profile):
     @override
     def render(self, item: Customization) -> Rendering:
         """Translate ``item`` into Claude Code's native layout."""
-        match item.kind:
-            case Kind.SKILL:
-                return self.copy_skill(item)
-            case Kind.INSTRUCTION:
-                return self._rule(item)
-            case Kind.AGENT:
-                return self._agent(item)
-            case Kind.PROMPT:
-                return self._command(item)
-            case Kind.MCP:
-                return self.refuse_kind(
-                    item,
-                    "Claude Code keeps user MCP servers in ~/.claude.json,"
-                    " which SkillSinc does not edit yet",
-                )
-            case Kind.HOOK:
-                return self._hooks(item)
-        assert_never(item.kind)
+        if item.kind is Kind.MCP:
+            return self.refuse_kind(
+                item,
+                "Claude Code keeps user MCP servers in ~/.claude.json,"
+                " which SkillSinc does not edit yet",
+            )
+        converters: dict[Kind, Callable[[Customization], Rendering]] = {
+            Kind.SKILL: self.copy_skill,
+            Kind.INSTRUCTION: self._rule,
+            Kind.AGENT: self._agent,
+            Kind.PROMPT: self._command,
+            Kind.RESOURCE: self._resource,
+            Kind.HOOK: self._hooks,
+        }
+        return converters[item.kind](item)
 
     # Conversions
 
@@ -128,6 +128,19 @@ class ClaudeProfile(Profile):
             for event, groups in sorted(converted.events.items())
         )
         return Rendering(entries=entries, losses=tuple(converted.losses))
+
+    @staticmethod
+    def _resource(item: Customization) -> Rendering:
+        """Copy a resource to ``resources/`` and import it from ``CLAUDE.md``.
+
+        Claude Code resolves ``@`` imports relative to the importing file, so the
+        managed block in ``CLAUDE.md`` loads the copy in every session.
+        """
+        path = f"resources/{item.name}.md"
+        return Rendering(
+            files=(FileOutput(path, item.document.raw),),
+            blocks=(BlockOutput("CLAUDE.md", f"@{path}"),),
+        )
 
     def _single(
         self,

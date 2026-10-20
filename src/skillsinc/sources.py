@@ -64,6 +64,8 @@ class SourceReader:
                     items.extend(
                         self._json_items(source, kind, directory, self._check_hooks)
                     )
+                elif kind is Kind.RESOURCE:
+                    items.extend(self._resources(source, directory))
                 else:
                     items.extend(self._documents(source, kind, directory))
         except (OSError, FrontmatterError) as err:
@@ -140,6 +142,23 @@ class SourceReader:
             check(value, path)
             document = Document(frontmatter=value, body="", raw=raw)
             items.append(Customization(kind, name, source.name, document, path.name))
+        return items
+
+    def _resources(self, source: SourceConfig, directory: Path) -> list[Customization]:
+        """Read reference files (``<name>.md``), kept byte for byte."""
+        items: list[Customization] = []
+        for path in sorted(directory.iterdir()):
+            if (
+                not path.is_file()
+                or self._excluded(source, path.name)
+                or path.suffix != ".md"
+            ):
+                continue
+            name = self._name(path.stem, path)
+            document = Document(frontmatter={}, body="", raw=path.read_bytes())
+            items.append(
+                Customization(Kind.RESOURCE, name, source.name, document, path.name)
+            )
         return items
 
     # Internals

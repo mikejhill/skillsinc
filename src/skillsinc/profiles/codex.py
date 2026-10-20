@@ -34,6 +34,7 @@ class CodexProfile(Profile):
         Kind.PROMPT: Support.UNSUPPORTED,
         Kind.MCP: Support.UNSUPPORTED,
         Kind.HOOK: Support.UNSUPPORTED,
+        Kind.RESOURCE: Support.UNSUPPORTED,
     }
 
     @override
@@ -53,6 +54,10 @@ class CodexProfile(Profile):
                 item,
                 "Codex reads MCP servers from config.toml, which SkillSinc does"
                 " not edit yet",
+            )
+        if item.kind is Kind.RESOURCE:
+            return self.refuse_kind(
+                item, "route resources to a claude or copilot destination"
             )
         if item.kind is not Kind.INSTRUCTION:
             return self.refuse_kind(item)

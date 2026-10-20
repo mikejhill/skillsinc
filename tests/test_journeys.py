@@ -417,6 +417,44 @@ class TestApplication:
             f"Expected adopted server replaced, got {adopted!r}"
         )
 
+    def test_claude_resource_imports_lifecycle_preserves_user_memory(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Copy resources, import them from CLAUDE.md, then remove both cleanly."""
+        sandbox.configure("claude", allow_lossy=True)
+        memory = sandbox.root / "CLAUDE.md"
+        memory.parent.mkdir(parents=True)
+        memory.write_text("My own memory.\n", encoding="utf-8")
+        resources = sandbox.library / "resources"
+        resources.mkdir()
+        (resources / "style.md").write_text("Style guide.\n", encoding="utf-8")
+        (resources / "api.md").write_text("API notes.\n", encoding="utf-8")
+
+        first_status, first = sandbox.run("sync")
+        imported = memory.read_text(encoding="utf-8")
+        copied = (sandbox.root / "resources/style.md").read_text(encoding="utf-8")
+        shutil.rmtree(resources)
+        remove_status, removed = sandbox.run("sync")
+        final_status, final = sandbox.run("plan")
+
+        assert (first_status, remove_status, final_status) == (0, 0, 0), (
+            f"Expected three successful runs, got {first!r}, {removed!r}"
+        )
+        assert imported.startswith("My own memory.\n"), (
+            f"Expected user memory kept above the block, got {imported!r}"
+        )
+        assert imported.index("@resources/api.md") < imported.index(
+            "@resources/style.md"
+        ), f"Expected imports in name order, got {imported!r}"
+        assert copied == "Style guide.\n", f"Expected verbatim copy, got {copied!r}"
+        assert memory.read_text(encoding="utf-8") == "My own memory.\n", (
+            f"Expected user memory restored exactly, got {memory.read_text()!r}"
+        )
+        assert not (sandbox.root / "resources").exists(), (
+            f"Expected resources folder pruned, got {removed!r}"
+        )
+        assert "up to date" in final, f"Expected convergence, got {final!r}"
+
     def test_claude_hooks_lifecycle_preserves_user_settings(
         self, sandbox: Sandbox
     ) -> None:

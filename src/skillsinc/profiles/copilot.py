@@ -4,11 +4,34 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import ClassVar, assert_never, override
+from typing import ClassVar, Final, assert_never, override
 
 from skillsinc.models import Customization, EntryOutput, Kind, Rendering, Support
 from skillsinc.paths import Environment
 from skillsinc.profiles.base import Profile
+
+COPY_PATHS: Final = {
+    Kind.AGENT: "agents/{name}.agent.md",
+    Kind.RESOURCE: "resources/{name}.md",
+    Kind.HOOK: "hooks/{name}.json",
+}
+VSCODE_SUFFIXES: Final = {
+    Kind.INSTRUCTION: ".instructions.md",
+    Kind.AGENT: ".agent.md",
+    Kind.PROMPT: ".prompt.md",
+}
+VSCODE_REFUSALS: Final = {
+    Kind.SKILL: "VS Code reads skills from copilot or agents destinations",
+    Kind.MCP: (
+        "VS Code keeps user MCP servers in User/mcp.json, outside the"
+        " prompts folder, which SkillSinc does not edit yet"
+    ),
+    Kind.RESOURCE: "route resources to a claude or copilot destination",
+    Kind.HOOK: (
+        "VS Code reads user hooks from Copilot CLI and Claude Code"
+        " locations; route hooks to a copilot or claude destination"
+    ),
+}
 
 
 class CopilotProfile(Profile):
@@ -16,7 +39,8 @@ class CopilotProfile(Profile):
 
     name: ClassVar[str] = "copilot"
     summary: ClassVar[str] = (
-        "Copilot CLI: skills/, instructions/, agents/, hooks/, mcp-config.json"
+        "Copilot CLI: skills/, instructions/, agents/, resources/, hooks/,"
+        " mcp-config.json"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
@@ -25,6 +49,7 @@ class CopilotProfile(Profile):
         Kind.PROMPT: Support.UNSUPPORTED,
         Kind.MCP: Support.EXACT,
         Kind.HOOK: Support.EXACT,
+        Kind.RESOURCE: Support.EXACT,
     }
 
     @override
@@ -40,16 +65,15 @@ class CopilotProfile(Profile):
                 return self.copy_skill(item)
             case Kind.INSTRUCTION:
                 return self._instruction(item)
-            case Kind.AGENT:
-                return self.copy_file(item, f"agents/{item.name}.agent.md")
+            case Kind.AGENT | Kind.RESOURCE | Kind.HOOK:
+                path = COPY_PATHS[item.kind].format(name=item.name)
+                return self.copy_file(item, path)
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
             case Kind.MCP:
                 server = dict(item.document.frontmatter)
                 entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
                 return Rendering(entries=(entry,))
-            case Kind.HOOK:
-                return self.copy_file(item, f"hooks/{item.name}.json")
         assert_never(item.kind)
 
     def _instruction(self, item: Customization) -> Rendering:
@@ -75,6 +99,7 @@ class VSCodeProfile(Profile):
         Kind.PROMPT: Support.EXACT,
         Kind.MCP: Support.UNSUPPORTED,
         Kind.HOOK: Support.UNSUPPORTED,
+        Kind.RESOURCE: Support.UNSUPPORTED,
     }
 
     @override
@@ -92,27 +117,7 @@ class VSCodeProfile(Profile):
     @override
     def render(self, item: Customization) -> Rendering:
         """Copy ``item`` verbatim with the suffix VS Code expects."""
-        match item.kind:
-            case Kind.SKILL:
-                return self.refuse_kind(
-                    item, "VS Code reads skills from copilot or agents destinations"
-                )
-            case Kind.INSTRUCTION:
-                return self.copy_file(item, f"{item.name}.instructions.md")
-            case Kind.AGENT:
-                return self.copy_file(item, f"{item.name}.agent.md")
-            case Kind.PROMPT:
-                return self.copy_file(item, f"{item.name}.prompt.md")
-            case Kind.MCP:
-                return self.refuse_kind(
-                    item,
-                    "VS Code keeps user MCP servers in User/mcp.json, outside the"
-                    " prompts folder, which SkillSinc does not edit yet",
-                )
-            case Kind.HOOK:
-                return self.refuse_kind(
-                    item,
-                    "VS Code reads user hooks from Copilot CLI and Claude Code"
-                    " locations; route hooks to a copilot or claude destination",
-                )
-        assert_never(item.kind)
+        suffix = VSCODE_SUFFIXES.get(item.kind)
+        if suffix is None:
+            return self.refuse_kind(item, VSCODE_REFUSALS[item.kind])
+        return self.copy_file(item, f"{item.name}{suffix}")
