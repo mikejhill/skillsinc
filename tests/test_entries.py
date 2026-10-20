@@ -174,8 +174,9 @@ class TestTomlEntryFile:
         assert result == b'model = "o3"\n\n[mcp_servers.ours]\ncommand = "x"\n', (
             f"Expected an appended table, got {result!r}"
         )
-        assert document.remove("mcp_servers", "absent", prune=True) == result, (
-            "Expected removing a missing entry to change nothing"
+        unchanged = document.remove("mcp_servers", "absent", prune=True)
+        assert unchanged == result, (
+            f"Expected removing a missing entry to change nothing, got {unchanged!r}"
         )
 
     def test_inline_container_gets_inline_entries(self) -> None:
@@ -264,8 +265,10 @@ class TestTomlEntryFile:
         "raw",
         [
             b'mcp_servers.a.command = "x"\n',
-            b'[mcp_servers.a]\ncommand = "x"\n[other]\nq = 1\n'
-            b'[mcp_servers.a.env]\nK = "v"\n',
+            (
+                b'[mcp_servers.a]\ncommand = "x"\n[other]\nq = 1\n'
+                b'[mcp_servers.a.env]\nK = "v"\n'
+            ),
         ],
     )
     def test_unusual_layouts_are_edited_faithfully(self, raw: bytes) -> None:
