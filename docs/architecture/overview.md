@@ -22,21 +22,21 @@ graph LR
 
 ## Modules
 
-| Module                        | Responsibility                                                      |
-| ----------------------------- | ------------------------------------------------------------------- |
-| `config`                      | Parse and validate `config.toml` into frozen dataclasses            |
-| `sources`                     | Read a library completely or raise `SourceError`                    |
-| `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back       |
-| `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses |
-| `planner`                     | Select items per route, render, apply loss policy, detect clashes   |
-| `diff`                        | Compare desired files and blocks with disk and the manifest         |
-| `blocks`                      | Find, replace, and remove the managed block in a Markdown file      |
-| `entries`                     | Strict JSON parsing; set and remove keyed entries in a shared file  |
-| `manifest`                    | Load and atomically save per-destination ownership records          |
-| `applier`                     | Verify preconditions, write atomically, update the manifest         |
-| `lock`                        | Serialize overlapping `sync` runs                                   |
-| `report`                      | Text and versioned JSON output                                      |
-| `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                      |
+| Module                        | Responsibility                                                       |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `config`                      | Parse and validate `config.toml` into frozen dataclasses             |
+| `sources`                     | Read a library completely, expanding plugins, or raise `SourceError` |
+| `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back        |
+| `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses  |
+| `planner`                     | Select items per route, render, apply loss policy, detect clashes    |
+| `diff`                        | Compare desired files and blocks with disk and the manifest          |
+| `blocks`                      | Find, replace, and remove the managed block in a Markdown file       |
+| `entries`                     | Strict JSON parsing; set and remove keyed entries in a shared file   |
+| `manifest`                    | Load and atomically save per-destination ownership records           |
+| `applier`                     | Verify preconditions, write atomically, update the manifest          |
+| `lock`                        | Serialize overlapping `sync` runs                                    |
+| `report`                      | Text and versioned JSON output                                       |
+| `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                       |
 
 ## Ownership
 

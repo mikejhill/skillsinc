@@ -9,6 +9,20 @@ This guide lists exactly what each profile writes and which conversions lose inf
 - Library files use the GitHub Copilot formats: `applyTo` on instructions, `tools`/`model` on agents, `${input:...}` variables in prompts.
 - MCP servers are `mcp/<name>.json` files, each one server object in the `mcpServers` entry format (`type`, `command`, `args`, `env`, or `url`, `headers`). SkillSinc owns only its own keys inside a shared JSON file; see [decision 0002](../decisions/0002-mcp-server-entries.md).
 
+## Plugins
+
+Library plugins (`plugins/<plugin>/`, Claude Code layout) are expanded into skills, agents, prompts, and MCP servers before any profile sees them ([decision 0003](../decisions/0003-plugins-expand-into-kinds.md)). Each harness then receives the parts it supports, without the plugin namespace (`kit:reviewer` becomes `reviewer`).
+
+| Plugin part          | Becomes     | `claude`                         | `copilot`, `vscode`                                                          |
+| -------------------- | ----------- | -------------------------------- | ---------------------------------------------------------------------------- |
+| `skills/<name>/`     | skill       | exact                            | exact (`copilot`)                                                            |
+| `agents/<name>.md`   | agent       | exact                            | keeps `name`, `description`; other fields are losses                         |
+| `commands/<name>.md` | prompt      | exact                            | `vscode` keeps `description`, `argument-hint`; `$ARGUMENTS`, `$1` are losses |
+| `.mcp.json`          | MCP servers | refused (as for library items)   | `copilot` entries                                                            |
+| everything else      | —           | loss on every item of the plugin | loss on every item of the plugin                                             |
+
+Items that refer to `${CLAUDE_PLUGIN_ROOT}`, another `CLAUDE_PLUGIN_*` variable, or `${user_config.*}` are skipped everywhere: only an installed plugin resolves them.
+
 ## claude
 
 Default path `$CLAUDE_CONFIG_DIR` or `~/.claude`. Reference: [Claude Code memory and rules](https://code.claude.com/docs/en/memory).

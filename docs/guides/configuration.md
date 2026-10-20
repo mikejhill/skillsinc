@@ -48,13 +48,13 @@ Required. Must be `1`.
 
 ## `[sources.<name>]`
 
-| Key       | Required | Default                                                      | Meaning                                  |
-| --------- | -------- | ------------------------------------------------------------ | ---------------------------------------- |
-| `path`    | yes      | —                                                            | Library directory                        |
-| `exclude` | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]` | File and directory names never read      |
-| `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`         | Table mapping a kind to its subdirectory |
+| Key       | Required | Default                                                         | Meaning                                                 |
+| --------- | -------- | --------------------------------------------------------------- | ------------------------------------------------------- |
+| `path`    | yes      | —                                                               | Library directory                                       |
+| `exclude` | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`    | File and directory names never read                     |
+| `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `plugins` | Table mapping a kind (or `plugins`) to its subdirectory |
 
-A missing kind directory means the library has none of that kind. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, or an MCP server file that is not a JSON object with exactly one of `command` or `url` fail the whole source.
+A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0003](../decisions/0003-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, or an MCP server file that is not a JSON object with exactly one of `command` or `url` fail the whole source.
 
 ## `[destinations.<name>]`
 
@@ -75,6 +75,8 @@ Destinations may not share or nest directories. Profile defaults honour `CLAUDE_
 | `include`      | no       | `["*/*"]` | `kind/name` glob patterns to select                      |
 | `exclude`      | no       | `[]`      | `kind/name` glob patterns to drop after `include`        |
 | `allow_lossy`  | no       | `false`   | Accept conversions that drop fields or change activation |
+
+Plugin items match both `kind/name` and `plugins/<plugin>/kind/name`, so `include = ["plugins/kit/*"]` selects one whole plugin and `exclude = ["plugins/kit/*"]` drops it. Anything a plugin holds that SkillSinc does not sync (hooks, LSP servers, scripts, runtime manifest keys) is a loss on each of its items, so syncing part of a plugin needs `allow_lossy = true`.
 
 An item reaching a destination through several routes is distributed once; it is lossy-allowed if any of those routes allows it. Two items that render to the same path, or the same JSON entry, with different content block the destination.
 

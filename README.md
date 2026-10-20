@@ -66,10 +66,11 @@ my-agent-library/
 ├── instructions/<name>.instructions.md
 ├── agents/<name>.agent.md
 ├── prompts/<name>.prompt.md
-└── mcp/<name>.json                   # one MCP server definition per file
+├── mcp/<name>.json                   # one MCP server definition per file
+└── plugins/<plugin>/                 # Claude Code plugin layout, expanded into the kinds above
 ```
 
-`INTENT.md`, `*.intent.md`, and hidden files are never distributed.
+`INTENT.md`, `*.intent.md`, and hidden files are never distributed. A plugin's `skills/`, `agents/`, `commands/`, and `.mcp.json` are synced as skills, agents, prompts, and MCP servers; everything else in it (hooks, scripts, LSP servers) is reported as a loss. See [decision 0003](docs/decisions/0003-plugins-expand-into-kinds.md).
 
 ## What each harness receives
 
@@ -106,6 +107,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 - [Architecture](docs/architecture/overview.md)
 - [Decision: rebuild scope](docs/decisions/0001-rebuild-scope.md)
 - [Decision: MCP server entries](docs/decisions/0002-mcp-server-entries.md)
+- [Decision: plugins expand into kinds](docs/decisions/0003-plugins-expand-into-kinds.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License

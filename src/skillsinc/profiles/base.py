@@ -13,7 +13,9 @@ from skillsinc.models import (
     Customization,
     FileOutput,
     Frontmatter,
+    FrontmatterValue,
     Kind,
+    LossPolicy,
     Rendering,
     Support,
 )
@@ -21,6 +23,11 @@ from skillsinc.paths import Environment
 
 VSCODE_VARIABLE: Final = re.compile(r"\$\{[A-Za-z]+(?::[^}]*)?\}")
 GLOBAL_GLOBS: Final = frozenset({"**", "**/*", "*"})
+CLAUDE_ARGUMENTS: Final = re.compile(r"\$(?:ARGUMENTS\b|\d)")
+PLUGIN_AGENT_POLICY: Final = LossPolicy(carried=frozenset({"name", "description"}))
+PLUGIN_COMMAND_POLICY: Final = LossPolicy(
+    carried=frozenset({"description", "argument-hint"})
+)
 
 
 class Profile(ABC):
@@ -58,6 +65,47 @@ class Profile(ABC):
     def copy_file(item: Customization, path: str) -> Rendering:
         """Copy a single-file customization verbatim to ``path``."""
         return Rendering(files=(FileOutput(path, item.document.raw),))
+
+    def rewrite(
+        self,
+        item: Customization,
+        path: str,
+        frontmatter: dict[str, FrontmatterValue],
+        losses: list[str],
+    ) -> Rendering:
+        """Build a one-file rendering with rewritten frontmatter."""
+        content = self._codec.render(frontmatter, item.document.body)
+        return Rendering(files=(FileOutput(path, content),), losses=tuple(losses))
+
+    def agent(self, item: Customization, path: str) -> Rendering:
+        """Copy a library agent; convert a Claude Code plugin agent to ``path``.
+
+        A plugin agent keeps only its name and description.
+        """
+        if item.plugin is None:
+            return self.copy_file(item, path)
+        source = item.document.frontmatter
+        frontmatter: dict[str, FrontmatterValue] = {
+            key: source[key] for key in ("name", "description") if key in source
+        }
+        losses = PLUGIN_AGENT_POLICY.losses(source)
+        return self.rewrite(item, path, frontmatter, losses)
+
+    def prompt(self, item: Customization, path: str) -> Rendering:
+        """Copy a library prompt; convert a Claude Code plugin command to ``path``."""
+        if item.plugin is None:
+            return self.copy_file(item, path)
+        source = item.document.frontmatter
+        frontmatter: dict[str, FrontmatterValue] = {
+            key: source[key]
+            for key in ("description", "argument-hint")
+            if key in source
+        }
+        losses = PLUGIN_COMMAND_POLICY.losses(source)
+        found = sorted(set(CLAUDE_ARGUMENTS.findall(item.document.body)))
+        if found:
+            losses.append(f"uses Claude Code argument placeholders: {', '.join(found)}")
+        return self.rewrite(item, path, frontmatter, losses)
 
     @staticmethod
     def apply_to(frontmatter: Frontmatter) -> list[str] | None:

@@ -13,7 +13,7 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | MCP servers  | **gap**           | **gap**                  | yes (new)         | **gap**                | —           |
 | Hooks        | **gap**           | **gap**                  | **gap**           | **gap**                | —           |
 | Resources    | **gap**           | —                        | **gap**           | —                      | —           |
-| Plugins      | **gap**           | **gap**                  | **gap**           | **gap**                | —           |
+| Plugins      | expanded          | via `agents`             | expanded          | expanded               | skills only |
 
 ## Parity with ai-feature-sync
 
@@ -40,7 +40,7 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 4. **Claude Code MCP servers.** Target `mcpServers` in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Needs a profile to name one file outside its root, with the same link and overlap checks. Claude Code rewrites this file while running, so expect precondition conflicts; the applier already fails closed and a rerun succeeds.
 5. **VS Code MCP servers.** Target `servers` in `Code/User/mcp.json`. Same outside-root need, plus a choice between comment-preserving JSONC edits and refusing files with comments (today's behavior).
 6. **Codex MCP servers.** Target `[mcp_servers.<name>]` in `~/.codex/config.toml`. Needs a formatting-preserving TOML editor (for example `tomlkit`); adding a dependency needs a decision record. `command`, `args`, and `env` carry over; check remote `url` servers against current Codex docs.
-7. **Plugins.** Bundles of skills, agents, commands, hooks, and MCP servers with a manifest (`.claude-plugin/plugin.json` for Claude Code). Two options: expand a library plugin into its component kinds per harness (works with every profile, loses the bundle), or publish a local marketplace directory for harnesses that install plugins. Needs a decision; expanding first is cheaper and reuses everything above.
+7. ~~**Plugins.**~~ Done: library plugins expand into skills, agents, prompts, and MCP servers ([decision 0003](../decisions/0003-plugins-expand-into-kinds.md)). Hooks inside plugins wait on gap 2; an opt-in local marketplace profile stays possible behind a new decision.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
 9. **Scheduling helper.** ai-feature-sync ships a Task Scheduler registration script. SkillSinc documents scheduling but ships nothing; an example per OS (Task Scheduler, launchd, systemd timer) would close it.
 10. **Native verification.** None of the mappings, including the new Copilot MCP entries, have been confirmed by loading the harness (roadmap item 2).

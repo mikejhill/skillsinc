@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Plugins: `plugins/<plugin>/` directories in Claude Code's layout expand into skills, agents, prompts, and MCP servers for every profile; unsynced parts such as hooks are reported as losses, and items needing `${CLAUDE_PLUGIN_ROOT}` are refused ([decision 0003](docs/decisions/0003-plugins-expand-into-kinds.md)). Routes can select a whole plugin with `plugins/<plugin>/*`.
 - MCP servers: `mcp/<name>.json` library files sync into Copilot CLI's `mcp-config.json` as owned `mcpServers` entries, leaving the user's other servers and keys untouched ([decision 0002](docs/decisions/0002-mcp-server-entries.md)). Manifests move to version 2; version 1 manifests load unchanged.
 - [Gap list](docs/planning/gap-list.md) of what remains to sync skills, plugins, instructions, and MCP servers across harnesses, including parity with the earlier ai-feature-sync tool.
 - `init`, `plan`, `sync`, and `profiles` commands.

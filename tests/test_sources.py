@@ -178,3 +178,165 @@ class TestMcpServers:
 
         with pytest.raises(SourceError, match=message):
             SourceReader().read(Builder.source(tmp_path))
+
+
+class TestPluginExpansion:
+    """Plugins expand into existing kinds and name every part they cannot carry."""
+
+    @staticmethod
+    def plugin(root: Path, files: dict[str, str], *, name: str = "kit") -> Path:
+        """Write a plugin directory under ``root/plugins``."""
+        directory = root / "plugins" / name
+        for relative, content in files.items():
+            path = directory / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8", newline="\n")
+        return directory
+
+    def test_expands_components_into_kinds(self, tmp_path: Path) -> None:
+        """Skills, agents, commands, and .mcp.json servers become plugin items."""
+        self.plugin(
+            tmp_path,
+            {
+                ".claude-plugin/plugin.json": '{"name": "kit", "version": "1.0.0"}',
+                ".claude-plugin/marketplace.json": "{}",
+                "skills/deploy/SKILL.md": "---\ndescription: Deploy\n---\nGo.\n",
+                "agents/reviewer.md": "---\ndescription: Review\n---\nReview.\n",
+                "commands/status.md": "---\ndescription: Status\n---\nShow.\n",
+                ".mcp.json": '{"mcpServers": {"api": {"command": "api"}}}',
+                "README.md": "Docs.\n",
+                "LICENSE": "MIT\n",
+            },
+        )
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert [
+            (item.selector, item.plugin, item.losses, item.refusal) for item in items
+        ] == [
+            ("agents/reviewer", "kit", (), None),
+            ("mcp/api", "kit", (), None),
+            ("prompts/status", "kit", (), None),
+            ("skills/deploy", "kit", (), None),
+        ], f"Expected four lossless plugin items, got {items!r}"
+        assert items[1].document.frontmatter == {"command": "api"}, (
+            f"Expected server object, got {items[1].document!r}"
+        )
+
+    def test_bare_server_map_and_custom_layout(self, tmp_path: Path) -> None:
+        """Read a bare ``.mcp.json`` map from a renamed plugins directory."""
+        directory = tmp_path / "bundles" / "kit"
+        directory.mkdir(parents=True)
+        (directory / ".mcp.json").write_text('{"api": {"url": "https://x"}}')
+        source = replace(Builder.source(tmp_path), plugins="bundles")
+
+        items = SourceReader().read(source)
+
+        assert [item.selectors for item in items] == [
+            ("mcp/api", "plugins/kit/mcp/api")
+        ], f"Expected one server with plugin selector, got {items!r}"
+
+    def test_unsynced_parts_are_losses_on_every_item(self, tmp_path: Path) -> None:
+        """Hooks, LSP, scripts, nested folders, and runtime keys are named."""
+        self.plugin(
+            tmp_path,
+            {
+                ".claude-plugin/plugin.json": '{"userConfig": {}}',
+                "agents/reviewer.md": "---\ndescription: Review\n---\nReview.\n",
+                "agents/nested/deep.md": "Deep.\n",
+                "hooks/hooks.json": "{}",
+                ".lsp.json": "{}",
+                ".git/HEAD": "ref\n",
+                "SKILL.md": "---\ndescription: Root\n---\n",
+                "settings.json": "{}",
+            },
+        )
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert [item.losses for item in items] == [
+            (
+                "plugin 'kit' also has manifest key userConfig, .lsp.json, SKILL.md,"
+                " hooks/, settings.json, agents/nested/, which is not synced",
+            )
+        ], f"Expected one item carrying every unsynced part, got {items!r}"
+
+    def test_plugin_variables_refuse_the_item(self, tmp_path: Path) -> None:
+        """Items that need an installed plugin's variables are refused, not broken."""
+        self.plugin(
+            tmp_path,
+            {
+                ".mcp.json": (
+                    '{"api": {"command": "${CLAUDE_PLUGIN_ROOT}/api",'
+                    ' "env": {"T": "${user_config.token}"}}}'
+                ),
+                "commands/run.md": "Run $CLAUDE_PLUGIN_DATA/x.\n",
+                "agents/plain.md": "---\ndescription: Plain\n---\nCost: $5.\n",
+            },
+        )
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert [(item.selector, item.refusal) for item in items] == [
+            ("agents/plain", None),
+            (
+                "mcp/api",
+                "refers to ${CLAUDE_PLUGIN_ROOT}, ${user_config.token}, which only"
+                " an installed plugin resolves",
+            ),
+            (
+                "prompts/run",
+                "refers to $CLAUDE_PLUGIN_DATA, which only an installed plugin"
+                " resolves",
+            ),
+        ], f"Expected refusals for plugin variables only, got {items!r}"
+
+    def test_plugin_with_nothing_to_sync_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A hooks-only plugin yields no items and says so."""
+        self.plugin(tmp_path, {"hooks/hooks.json": "{}"})
+        (tmp_path / "plugins/notes.txt").write_text("ignored")
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert items == (), f"Expected no items, got {items!r}"
+        assert "nothing SkillSinc can sync" in caplog.text, (
+            f"Expected a warning, got {caplog.text!r}"
+        )
+
+    @pytest.mark.parametrize(
+        ("files", "message"),
+        [
+            ({".claude-plugin/plugin.json": "{"}, "invalid plugin manifest"),
+            ({".claude-plugin/plugin.json": '{"name": "other"}'}, "differs"),
+            (
+                {".claude-plugin/plugin.json": '{"commands": "./cmd", "skills": "."}'},
+                "move skills, commands into their default folders",
+            ),
+            ({".mcp.json": "["}, "invalid MCP server file"),
+            ({".mcp.json": '{"mcpServers": []}'}, "must be a JSON object"),
+            ({".mcp.json": '{"api": "x"}'}, "'api' must be a JSON object"),
+            ({".mcp.json": '{"api": {}}'}, "either a 'command' or a 'url'"),
+            ({".mcp.json": '{"bad name": {"command": "x"}}'}, "invalid customization"),
+        ],
+    )
+    def test_ambiguous_plugin_fails_the_source(
+        self, tmp_path: Path, files: dict[str, str], message: str
+    ) -> None:
+        """Relocated components and malformed files fail closed."""
+        self.plugin(tmp_path, files)
+
+        with pytest.raises(SourceError, match=message):
+            SourceReader().read(Builder.source(tmp_path))
+
+    def test_name_shared_with_library_fails_the_source(self, tmp_path: Path) -> None:
+        """A plugin item may not shadow a library item of the same kind and name."""
+        self.plugin(tmp_path, {"agents/reviewer.md": "Plugin.\n"})
+        (tmp_path / "agents").mkdir()
+        (tmp_path / "agents/reviewer.agent.md").write_text("Library.\n")
+
+        with pytest.raises(
+            SourceError, match="agents/reviewer is defined by plugin 'kit' and the"
+        ):
+            SourceReader().read(Builder.source(tmp_path))

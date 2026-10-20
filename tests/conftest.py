@@ -31,13 +31,16 @@ class Builder:
         frontmatter: Frontmatter | None = None,
         body: str = "Body.\n",
         assets: tuple[Asset, ...] = (),
+        plugin: str | None = None,
     ) -> Customization:
         """Build an authored item using the production Markdown codec."""
         header = frontmatter if frontmatter is not None else {"description": "Sample"}
         codec = FrontmatterCodec()
         document = codec.parse(codec.render(header, body))
         file_name = "SKILL.md" if kind is Kind.SKILL else f"{name}.md"
-        return Customization(kind, name, source, document, file_name, assets)
+        return Customization(
+            kind, name, source, document, file_name, assets, plugin=plugin
+        )
 
     @staticmethod
     def source(path: Path, *, name: str = "library") -> SourceConfig:
