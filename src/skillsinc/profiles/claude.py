@@ -37,6 +37,7 @@ class ClaudeProfile(Profile):
         Kind.INSTRUCTION: Support.CONVERTED,
         Kind.AGENT: Support.CONVERTED,
         Kind.PROMPT: Support.CONVERTED,
+        Kind.MCP: Support.UNSUPPORTED,
     }
 
     @override
@@ -56,6 +57,12 @@ class ClaudeProfile(Profile):
                 return self._agent(item)
             case Kind.PROMPT:
                 return self._command(item)
+            case Kind.MCP:
+                return self.refuse_kind(
+                    item,
+                    "Claude Code keeps user MCP servers in ~/.claude.json,"
+                    " which SkillSinc does not edit yet",
+                )
         assert_never(item.kind)
 
     # Conversions

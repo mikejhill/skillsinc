@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from tests.conftest import Builder
 
-from skillsinc.models import Kind
+from skillsinc.models import EntryOutput, JsonValue, Kind, Rendering
 from skillsinc.paths import Environment
 from skillsinc.profiles.copilot import CopilotProfile, VSCodeProfile
 
@@ -49,6 +49,21 @@ class TestCopilotProfile:
 
         assert result.unsupported is not None, f"Expected vscode hint, got {result!r}"
         assert "vscode" in result.unsupported, f"Expected vscode hint, got {result!r}"
+
+    def test_mcp_server_becomes_mcp_config_entry(self) -> None:
+        """Place the server definition under ``mcpServers`` in ``mcp-config.json``."""
+        server: dict[str, JsonValue] = {
+            "type": "local",
+            "command": "npx",
+            "args": ["server"],
+        }
+        item = Builder.item(Kind.MCP, name="github", frontmatter=server)
+
+        result = CopilotProfile().render(item)
+
+        assert result == Rendering(
+            entries=(EntryOutput("mcp-config.json", "mcpServers", "github", server),)
+        ), f"Expected one mcpServers entry, got {result!r}"
 
     def test_default_path_uses_fake_home(self, environment: Environment) -> None:
         """Default Copilot roots stay within the injected home."""

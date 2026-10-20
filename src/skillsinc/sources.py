@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Final
 
 from skillsinc.config import SourceConfig
+from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import FrontmatterError, SourceError
 from skillsinc.frontmatter import FrontmatterCodec
 from skillsinc.models import Asset, Customization, Document, Frontmatter, Kind
@@ -53,6 +54,8 @@ class SourceReader:
                     continue
                 if kind is Kind.SKILL:
                     items.extend(self._skills(source, directory))
+                elif kind is Kind.MCP:
+                    items.extend(self._servers(source, directory))
                 else:
                     items.extend(self._documents(source, kind, directory))
         except (OSError, FrontmatterError) as err:
@@ -103,6 +106,30 @@ class SourceReader:
             items[name] = Customization(kind, name, source.name, document, path.name)
         return list(items.values())
 
+    def _servers(self, source: SourceConfig, directory: Path) -> list[Customization]:
+        """Read MCP server definitions (``<name>.json``, one server per file)."""
+        items: list[Customization] = []
+        for path in sorted(directory.iterdir()):
+            if (
+                not path.is_file()
+                or self._excluded(source, path.name)
+                or path.suffix != ".json"
+            ):
+                continue
+            name = self._name(path.stem, path)
+            raw = path.read_bytes()
+            try:
+                server = JsonDocument.load(raw)
+            except (UnicodeDecodeError, ValueError) as err:
+                msg = f"{path}: invalid MCP server definition ({err})"
+                raise SourceError(msg) from err
+            self._check_server(server, path)
+            document = Document(frontmatter=server, body="", raw=raw)
+            items.append(
+                Customization(Kind.MCP, name, source.name, document, path.name)
+            )
+        return items
+
     # Internals
 
     def _parse(self, path: Path) -> Document:
@@ -143,6 +170,18 @@ class SourceReader:
         description = frontmatter.get("description")
         if not isinstance(description, str) or not description.strip():
             msg = f"{entry}: skills need a description so harnesses can discover them"
+            raise SourceError(msg)
+
+    @staticmethod
+    def _check_server(server: Frontmatter, path: Path) -> None:
+        """Require exactly one launch method: a ``command`` or a ``url``."""
+        methods = [
+            key
+            for key in ("command", "url")
+            if isinstance(server.get(key), str) and str(server[key]).strip()
+        ]
+        if len(methods) != 1:
+            msg = f"{path}: an MCP server needs either a 'command' or a 'url' string"
             raise SourceError(msg)
 
     @staticmethod

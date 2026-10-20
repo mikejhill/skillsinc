@@ -17,6 +17,7 @@ type FrontmatterValue = (
     | None
 )
 type Frontmatter = Mapping[str, FrontmatterValue]
+type JsonValue = FrontmatterValue
 
 
 class Kind(StrEnum):
@@ -26,6 +27,7 @@ class Kind(StrEnum):
     INSTRUCTION = "instructions"
     AGENT = "agents"
     PROMPT = "prompts"
+    MCP = "mcp"
 
 
 class Support(StrEnum):
@@ -56,7 +58,11 @@ class Asset:
 
 @dataclass(frozen=True, slots=True)
 class Document:
-    """A Markdown file split into YAML frontmatter and body."""
+    """A Markdown file split into YAML frontmatter and body.
+
+    An MCP server definition is a JSON file: ``frontmatter`` holds the parsed
+    object and ``body`` is empty.
+    """
 
     frontmatter: Frontmatter
     body: str
@@ -98,11 +104,27 @@ class BlockOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class EntryOutput:
+    """A keyed value a profile wants inside a container object of a shared JSON file."""
+
+    path: str
+    container: str
+    key: str
+    value: JsonValue
+
+    @property
+    def entry(self) -> str:
+        """Return the ``container/key`` identity recorded in the manifest."""
+        return f"{self.container}/{self.key}"
+
+
+@dataclass(frozen=True, slots=True)
 class Rendering:
     """A profile's translation of one customization."""
 
     files: tuple[FileOutput, ...] = ()
     blocks: tuple[BlockOutput, ...] = ()
+    entries: tuple[EntryOutput, ...] = ()
     losses: tuple[str, ...] = ()
     unsupported: str | None = None
 

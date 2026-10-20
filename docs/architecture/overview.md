@@ -31,6 +31,7 @@ graph LR
 | `planner`                     | Select items per route, render, apply loss policy, detect clashes   |
 | `diff`                        | Compare desired files and blocks with disk and the manifest         |
 | `blocks`                      | Find, replace, and remove the managed block in a Markdown file      |
+| `entries`                     | Strict JSON parsing; set and remove keyed entries in a shared file  |
 | `manifest`                    | Load and atomically save per-destination ownership records          |
 | `applier`                     | Verify preconditions, write atomically, update the manifest         |
 | `lock`                        | Serialize overlapping `sync` runs                                   |
@@ -55,7 +56,11 @@ Each destination has a manifest at `$XDG_STATE_HOME/skillsinc/manifests/<destina
 
 Harnesses that read a single instructions file (Codex's `AGENTS.md`) receive one block delimited by `<!-- skillsinc:begin -->` and `<!-- skillsinc:end -->`. Content outside the markers is never changed. Damaged markers block the destination rather than guessing.
 
-Blocks follow the same ownership rules as files. A block taken over with `--adopt` is reported as `adopt`. A block removed by hand is restored with a note. When no sections remain, an unedited block is removed (and its file deleted if SkillSinc created it and nothing else is left); an edited block is left in place and released. A path cannot be both a whole managed file and a managed block; that blocks the destination.
+Blocks follow the same ownership rules as files. A block taken over with `--adopt` is reported as `adopt`. A block removed by hand is restored with a note. When no sections remain, an unedited block is removed (and its file deleted if SkillSinc created it and nothing else is left); an edited block is left in place and released. A path wanted in more than one form (whole file, managed block, JSON entries) blocks the destination.
+
+## Managed entries
+
+Harnesses that read MCP servers from a shared JSON file (Copilot CLI's `mcp-config.json`) receive one entry per server under a container key such as `mcpServers`. The manifest records each owned `container/key` with the digest of its value (key order and whitespace ignored) and whether SkillSinc created the file. Each entry follows the ownership table above; changes to one file are chained, each expecting the bytes the previous one wrote. Other keys are never changed, an unowned key with the same name blocks until `--adopt`, and a file that is not plain JSON blocks the destination. A file SkillSinc created is deleted when its last entry goes.
 
 ## Safety checks
 

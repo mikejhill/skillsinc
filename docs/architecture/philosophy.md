@@ -33,4 +33,4 @@ When goals conflict, earlier wins:
 - Watching for changes or running as a service. A scheduler calling `skillsinc sync` covers this without a resident process.
 - Fetching sources from Git. Keep the library in a local clone and update it with Git.
 - Transformation pipelines or plugins. Write the library in the format you want; profiles do the necessary conversion.
-- Merging MCP server or hook settings into harness configuration files. These live in shared JSON/TOML documents with harness-specific semantics; see the [rebuild decision](../decisions/0001-rebuild-scope.md).
+- Merging whole configuration files. SkillSinc edits only the MCP server entries it owns inside a shared file, and refuses files it cannot parse exactly; see [decision 0002](../decisions/0002-mcp-server-entries.md).

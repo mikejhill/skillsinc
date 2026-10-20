@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar, assert_never, override
 
-from skillsinc.models import Customization, Kind, Rendering, Support
+from skillsinc.models import Customization, EntryOutput, Kind, Rendering, Support
 from skillsinc.paths import Environment
 from skillsinc.profiles.base import Profile
 
@@ -15,12 +15,15 @@ class CopilotProfile(Profile):
     """Copilot CLI user directory (``~/.copilot``), also read by VS Code for skills."""
 
     name: ClassVar[str] = "copilot"
-    summary: ClassVar[str] = "Copilot CLI: skills/, instructions/, agents/"
+    summary: ClassVar[str] = (
+        "Copilot CLI: skills/, instructions/, agents/, mcp-config.json"
+    )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
         Kind.INSTRUCTION: Support.EXACT,
         Kind.AGENT: Support.EXACT,
         Kind.PROMPT: Support.UNSUPPORTED,
+        Kind.MCP: Support.EXACT,
     }
 
     @override
@@ -46,6 +49,10 @@ class CopilotProfile(Profile):
                 return self.copy_file(item, f"agents/{item.name}.agent.md")
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
+            case Kind.MCP:
+                server = dict(item.document.frontmatter)
+                entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
+                return Rendering(entries=(entry,))
         assert_never(item.kind)
 
 
@@ -61,6 +68,7 @@ class VSCodeProfile(Profile):
         Kind.INSTRUCTION: Support.EXACT,
         Kind.AGENT: Support.EXACT,
         Kind.PROMPT: Support.EXACT,
+        Kind.MCP: Support.UNSUPPORTED,
     }
 
     @override
@@ -89,4 +97,10 @@ class VSCodeProfile(Profile):
                 return self.copy_file(item, f"{item.name}.agent.md")
             case Kind.PROMPT:
                 return self.copy_file(item, f"{item.name}.prompt.md")
+            case Kind.MCP:
+                return self.refuse_kind(
+                    item,
+                    "VS Code keeps user MCP servers in User/mcp.json, outside the"
+                    " prompts folder, which SkillSinc does not edit yet",
+                )
         assert_never(item.kind)

@@ -23,7 +23,11 @@ class Action(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Change:
-    """One preconditioned change to one destination file."""
+    """One preconditioned change to one destination file.
+
+    ``block`` marks the managed Markdown block; ``entry`` names the
+    ``container/key`` a change sets or removes inside a shared JSON file.
+    """
 
     action: Action
     path: str
@@ -31,6 +35,7 @@ class Change:
     content: bytes | None = None
     owned_digest: str | None = None
     block: bool = False
+    entry: str = ""
     created_file: bool = False
     executable: bool = False
     note: str = ""

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from skillsinc.exceptions import ConfigurationError
-from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock
+from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock, OwnedEntries
 
 
 class TestManifestStore:
@@ -49,6 +49,8 @@ class TestManifestStore:
             "{",
             "[]",
             '{"version":2}',
+            '{"version":3,"root":"x","files":{},"blocks":{}}',
+            '{"version":2,"root":"x","files":{},"blocks":{},"entries":[]}',
             '{"version":1}',
             '{"version":1,"root":"x","files":[],"blocks":{}}',
             '{"version":1,"root":"x","files":{},"blocks":{"AGENTS.md":{}}}',
@@ -73,3 +75,44 @@ class TestManifestStore:
 
         with pytest.raises(ConfigurationError, match="moved from"):
             store.load("target", tmp_path / "new")
+
+
+class TestManifestEntries:
+    """Entry ownership round-trips and older manifests upgrade in place."""
+
+    def test_entries_round_trip(self, tmp_path: Path) -> None:
+        """Persist per-key entry digests and whether SkillSinc created the file."""
+        store = ManifestStore(tmp_path / "state")
+        manifest = Manifest(
+            "target",
+            str(tmp_path),
+            entries={
+                "mcp-config.json": OwnedEntries(
+                    created_file=True, keys={"mcpServers/a": "digest"}
+                )
+            },
+        )
+
+        store.save(manifest)
+
+        assert store.load("target", tmp_path) == manifest, (
+            f"Expected entry ownership preserved, got {manifest!r}"
+        )
+
+    def test_version_one_manifest_loads_without_entries(self, tmp_path: Path) -> None:
+        """Manifests written before entries existed still load."""
+        store = ManifestStore(tmp_path)
+        path = store.path("target")
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {"version": 1, "root": str(tmp_path), "files": {"a": "d"}, "blocks": {}}
+            ),
+            encoding="utf-8",
+        )
+
+        result = store.load("target", tmp_path)
+
+        assert result == Manifest("target", str(tmp_path), {"a": "d"}), (
+            f"Expected upgraded manifest, got {result!r}"
+        )

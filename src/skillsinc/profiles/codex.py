@@ -32,6 +32,7 @@ class CodexProfile(Profile):
         Kind.INSTRUCTION: Support.CONVERTED,
         Kind.AGENT: Support.UNSUPPORTED,
         Kind.PROMPT: Support.UNSUPPORTED,
+        Kind.MCP: Support.UNSUPPORTED,
     }
 
     @override
@@ -45,6 +46,12 @@ class CodexProfile(Profile):
         if item.kind is Kind.SKILL:
             return self.refuse_kind(
                 item, "Codex reads user skills from an agents destination (~/.agents)"
+            )
+        if item.kind is Kind.MCP:
+            return self.refuse_kind(
+                item,
+                "Codex reads MCP servers from config.toml, which SkillSinc does"
+                " not edit yet",
             )
         if item.kind is not Kind.INSTRUCTION:
             return self.refuse_kind(item)

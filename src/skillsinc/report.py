@@ -137,6 +137,8 @@ class Reporter:
     def _change_suffix(change: Change) -> str:
         """Return the block marker and note shown after a change's path."""
         suffix = " [managed block]" if change.block else ""
+        if change.entry:
+            suffix = f" [{change.entry}]"
         return suffix + (f"  ({change.note})" if change.note else "")
 
     def _collapse_errors(self, errors: Sequence[str]) -> list[str]:
@@ -225,6 +227,7 @@ class Reporter:
                     "action": change.action.value,
                     "path": change.path,
                     "block": change.block,
+                    "entry": change.entry or None,
                     "note": change.note,
                 }
                 for change in plan.changes

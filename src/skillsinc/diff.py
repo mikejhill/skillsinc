@@ -8,14 +8,18 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from skillsinc.blocks import ManagedBlock
+from skillsinc.entries import EntryFile, JsonDocument
 from skillsinc.exceptions import ConflictError
 from skillsinc.manifest import Manifest, OwnedBlock
-from skillsinc.models import Digest, FileOutput
+from skillsinc.models import Digest, EntryOutput, FileOutput
 from skillsinc.plan import Action, Change
 
 UNMANAGED = "exists but is not managed by SkillSinc; review it, then rerun with --adopt"
 EDITED = "edited since SkillSinc wrote it, so it is left in place and released"
-BOTH = "wanted both as a whole file and as a managed block; route it one way"
+BOTH = (
+    "wanted in more than one form (whole file, managed block, JSON entries);"
+    " route it one way"
+)
 EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
 
@@ -34,9 +38,15 @@ class DestinationDiff:
         self,
         files: Mapping[str, FileOutput],
         blocks: Mapping[str, Sequence[tuple[str, str]]],
+        entries: Mapping[str, Sequence[EntryOutput]] | None = None,
     ) -> tuple[tuple[Change, ...], tuple[str, ...]]:
         """Return ``(changes, errors)``; any error blocks the whole destination."""
-        overlap = sorted(set(files) & set(blocks))
+        wanted = entries or {}
+        overlap = sorted(
+            (set(files) & set(blocks))
+            | (set(files) & set(wanted))
+            | (set(blocks) & set(wanted))
+        )
         if overlap:
             return (), tuple(f"{path}: {BOTH}" for path in overlap)
         for path in sorted(files):
@@ -46,6 +56,9 @@ class DestinationDiff:
         for path in sorted(set(blocks) | set(self._manifest.blocks)):
             sections = sorted(blocks.get(path, ()))
             self._guarded(path, lambda p=path, s=sections: self._block(p, s))
+        for path in sorted(set(wanted) | set(self._manifest.entries)):
+            outputs = {output.entry: output for output in wanted.get(path, ())}
+            self._guarded(path, lambda p=path, o=outputs: self._entries(p, o))
         return tuple(self._changes), tuple(self._errors)
 
     # Files
@@ -173,6 +186,103 @@ class DestinationDiff:
                 created_file=created,
                 note=note,
             )
+        )
+
+    # Entries
+
+    def _entries(self, path: str, outputs: Mapping[str, EntryOutput]) -> None:
+        """Plan keyed entries inside a shared JSON file, one change per entry.
+
+        Each change carries the digest of the file before it and the bytes
+        after it, so the applier applies them in order and stops at any drift.
+        Removals come last so an emptied file is never deleted and recreated.
+        """
+        document = EntryFile(self._read(path))
+        owned = self._manifest.entries.get(path)
+        created = owned.created_file if owned else document.raw is None
+        recorded = owned.keys if owned else {}
+        for entry in sorted(outputs):
+            change = self._desired_entry(
+                document, outputs[entry], recorded.get(entry), created=created
+            )
+            if change is not None:
+                self._changes.append(change)
+        for entry in sorted(set(recorded) - set(outputs)):
+            self._changes.append(
+                self._removed_entry(document, path, entry, created=created)
+            )
+
+    def _desired_entry(
+        self,
+        document: EntryFile,
+        output: EntryOutput,
+        owned: str | None,
+        *,
+        created: bool,
+    ) -> Change | None:
+        """Plan one entry that should hold ``output.value``."""
+        expected = Digest.of(document.raw) if document.raw is not None else None
+        found = document.digest(output.container, output.key)
+        wanted = JsonDocument.digest(output.value)
+        if found is None:
+            action = Action.CREATE
+            note = "restores a deleted managed entry" if owned is not None else ""
+        elif owned is None:
+            if not self._adopt:
+                same = " (identical content)" if found == wanted else ""
+                self._errors.append(
+                    f"{output.path}: entry {output.entry} {UNMANAGED}{same}"
+                )
+                return None
+            action = Action.TRACK if found == wanted else Action.ADOPT
+            note = ""
+        elif found != wanted:
+            action = Action.UPDATE
+            note = "overwrites local edits" if found != owned else ""
+        elif owned != wanted:
+            action, note = Action.TRACK, ""
+        else:
+            return None
+        content = (
+            None
+            if action is Action.TRACK
+            else document.set(output.container, output.key, output.value)
+        )
+        return Change(
+            action,
+            output.path,
+            expected,
+            content=content,
+            owned_digest=wanted,
+            entry=output.entry,
+            created_file=created,
+            note=note,
+        )
+
+    def _removed_entry(
+        self, document: EntryFile, path: str, entry: str, *, created: bool
+    ) -> Change:
+        """Plan an owned entry that is no longer desired."""
+        container, _, key = entry.partition("/")
+        expected = Digest.of(document.raw) if document.raw is not None else None
+        found = document.digest(container, key)
+        if found is None:
+            return Change(
+                Action.FORGET, path, expected, entry=entry, note="already gone"
+            )
+        if found != self._manifest.entries[path].keys[entry]:
+            note = (
+                "edited since SkillSinc wrote it, so it is left in place and released"
+            )
+            return Change(Action.FORGET, path, expected, entry=entry, note=note)
+        content = document.remove(container, key, prune=created)
+        return Change(
+            Action.DELETE,
+            path,
+            expected,
+            content=content,
+            entry=entry,
+            created_file=created,
         )
 
     # Internals

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from tests.conftest import Builder
 
 from skillsinc.exceptions import ConfigurationError
+from skillsinc.models import Kind, Support
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.profiles.shared import GenericProfile
 
@@ -40,3 +42,26 @@ class TestProfileRegistry:
             ConfigurationError, match=r"unknown profile 'missing'.*claude"
         ):
             ProfileRegistry().get("missing")
+
+    @pytest.mark.parametrize(
+        ("name", "hint"),
+        [
+            ("claude", "~/.claude.json"),
+            ("vscode", "User/mcp.json"),
+            ("codex", "config.toml"),
+            ("agents", ""),
+        ],
+    )
+    def test_mcp_servers_are_refused_where_unsupported(
+        self, name: str, hint: str
+    ) -> None:
+        """Profiles without an MCP location refuse servers and say where they live."""
+        profile = ProfileRegistry().get(name)
+
+        result = profile.render(Builder.item(Kind.MCP))
+
+        assert profile.support[Kind.MCP] is Support.UNSUPPORTED, (
+            f"Expected {name} to list MCP as unsupported, got {profile.support!r}"
+        )
+        assert result.unsupported is not None, f"Expected refusal, got {result!r}"
+        assert hint in result.unsupported, f"Expected hint {hint!r}, got {result!r}"

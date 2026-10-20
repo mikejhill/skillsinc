@@ -187,3 +187,41 @@ class TestPlanner:
         assert result.destinations[0].changes[0].action.value == "forget", (
             f"Expected absent owned file released, got {result!r}"
         )
+
+    @pytest.mark.parametrize("different", [False, True])
+    def test_mcp_servers_from_two_sources_deduplicate_or_block(
+        self, sandbox: Sandbox, tmp_path: Path, *, different: bool
+    ) -> None:
+        """Two sources defining one server must agree or block the destination."""
+        server = '{"command": "a"}'
+        (sandbox.library / "mcp").mkdir()
+        (sandbox.library / "mcp/tool.json").write_text(server, encoding="utf-8")
+        second = tmp_path / "second"
+        (second / "mcp").mkdir(parents=True)
+        (second / "mcp/tool.json").write_text(
+            '{"command": "b"}' if different else server, encoding="utf-8"
+        )
+        config = sandbox.configure("copilot")
+        sources = dict(config.sources)
+        sources["second"] = Builder.source(second, name="second")
+        config = replace(
+            config,
+            sources=sources,
+            routes=(
+                RouteConfig(("library", "second"), ("target",), include=("mcp/*",)),
+            ),
+        )
+
+        target = self.planner(sandbox).plan(config).destinations[0]
+
+        assert target.blocked is different, (
+            f"Expected blocking {different}, got {target!r}"
+        )
+        if different:
+            assert "entry mcpServers/tool" in target.errors[0], (
+                f"Expected entry clash explanation, got {target.errors!r}"
+            )
+        else:
+            assert [change.entry for change in target.changes] == ["mcpServers/tool"], (
+                f"Expected one deduplicated entry, got {target.changes!r}"
+            )

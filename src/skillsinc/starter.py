@@ -45,7 +45,8 @@ class StarterConfig:
         lines = [HEADER, "[sources.library]", f"path = {json.dumps(source_path)}"]
         if source is None:
             lines.append(
-                "# Replace with your library: skills/, instructions/, agents/, prompts/"
+                "# Replace with your library: skills/, instructions/, agents/,"
+                " prompts/, mcp/"
             )
 
         detected: list[str] = []

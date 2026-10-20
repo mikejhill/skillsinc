@@ -347,3 +347,72 @@ class TestApplication:
             report["applied"],
             report["destinations"][0]["applied"],
         ) == (0, True, True, 7), f"Expected seven applied files, got {output}"
+
+    def test_copilot_mcp_server_lifecycle_preserves_user_servers(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Add, update, and remove one server while the user's own keys stay intact."""
+        sandbox.configure("copilot", allow_lossy=True)
+        config_file = sandbox.root / "mcp-config.json"
+        config_file.parent.mkdir(parents=True)
+        user = {"mcpServers": {"mine": {"command": "mine"}}, "other": True}
+        config_file.write_text(json.dumps(user), encoding="utf-8")
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"type": "local", "command": "gh"}', encoding="utf-8")
+
+        first_status, first = sandbox.run("sync")
+        added = json.loads(config_file.read_text(encoding="utf-8"))
+        server.write_text('{"type": "local", "command": "gh2"}', encoding="utf-8")
+        update_status, _ = sandbox.run("sync")
+        updated = json.loads(config_file.read_text(encoding="utf-8"))
+        server.unlink()
+        remove_status, removed_output = sandbox.run("sync")
+        final_status, final = sandbox.run("plan")
+
+        assert (first_status, update_status, remove_status, final_status) == (
+            0,
+            0,
+            0,
+            0,
+        ), f"Expected four successful runs, got {first!r}, {removed_output!r}"
+        assert "+ create mcp-config.json [mcpServers/github]" in first, (
+            f"Expected entry creation in output, got {first!r}"
+        )
+        assert added["mcpServers"] == {
+            "mine": {"command": "mine"},
+            "github": {"type": "local", "command": "gh"},
+        }, f"Expected both servers after first sync, got {added!r}"
+        assert updated["mcpServers"]["github"]["command"] == "gh2", (
+            f"Expected server updated in place, got {updated!r}"
+        )
+        assert json.loads(config_file.read_text(encoding="utf-8")) == user, (
+            f"Expected user file restored exactly, got {config_file.read_text()!r}"
+        )
+        assert "up to date" in final, f"Expected convergence, got {final!r}"
+
+    def test_unmanaged_mcp_server_blocks_until_adopted(self, sandbox: Sandbox) -> None:
+        """A same-named server the user wrote is never overwritten without --adopt."""
+        sandbox.configure("copilot")
+        config_file = sandbox.root / "mcp-config.json"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            '{"mcpServers": {"github": {"command": "user"}}}', encoding="utf-8"
+        )
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"command": "gh"}', encoding="utf-8")
+
+        blocked_status, blocked = sandbox.run("sync")
+        kept = json.loads(config_file.read_text(encoding="utf-8"))
+        adopt_status, _ = sandbox.run("sync", "--adopt")
+        adopted = json.loads(config_file.read_text(encoding="utf-8"))
+
+        assert blocked_status == 1, f"Expected block, got {blocked_status}: {blocked}"
+        assert kept["mcpServers"]["github"] == {"command": "user"}, (
+            f"Expected user server untouched, got {kept!r}"
+        )
+        assert adopt_status == 0, f"Expected adoption to succeed, got {adopt_status}"
+        assert adopted["mcpServers"]["github"] == {"command": "gh"}, (
+            f"Expected adopted server replaced, got {adopted!r}"
+        )

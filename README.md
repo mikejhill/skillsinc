@@ -4,7 +4,7 @@
 [![Release](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml)
 [![License](https://img.shields.io/github/license/mikejhill/skillsinc)](LICENSE)
 
-Write your agent skills, instructions, agents, and prompts once. SkillSinc copies them into Claude Code, GitHub Copilot, VS Code, Codex, and the shared `~/.agents` folder, converting formats where it must and saying so when a conversion loses something.
+Write your agent skills, instructions, agents, prompts, and MCP servers once. SkillSinc copies them into Claude Code, GitHub Copilot, VS Code, Codex, and the shared `~/.agents` folder, converting formats where it must and saying so when a conversion loses something.
 
 It replaces hand-copying, symlinks, and per-tool sync scripts with one command that shows you every change before it makes it.
 
@@ -65,21 +65,22 @@ my-agent-library/
 ├── skills/<name>/SKILL.md            # plus any supporting files
 ├── instructions/<name>.instructions.md
 ├── agents/<name>.agent.md
-└── prompts/<name>.prompt.md
+├── prompts/<name>.prompt.md
+└── mcp/<name>.json                   # one MCP server definition per file
 ```
 
 `INTENT.md`, `*.intent.md`, and hidden files are never distributed.
 
 ## What each harness receives
 
-| Profile   | Skills    | Instructions                 | Agents             | Prompts              |
-| --------- | --------- | ---------------------------- | ------------------ | -------------------- |
-| `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md` | `commands/<name>.md` |
-| `copilot` | `skills/` | `instructions/`              | `agents/`          | —                    |
-| `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`  | `<name>.prompt.md`   |
-| `codex`   | —         | managed block in `AGENTS.md` | —                  | —                    |
-| `agents`  | `skills/` | —                            | —                  | —                    |
-| `generic` | verbatim  | verbatim                     | verbatim           | verbatim             |
+| Profile   | Skills    | Instructions                 | Agents             | Prompts              | MCP servers                    |
+| --------- | --------- | ---------------------------- | ------------------ | -------------------- | ------------------------------ |
+| `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md` | `commands/<name>.md` | —                              |
+| `copilot` | `skills/` | `instructions/`              | `agents/`          | —                    | `mcp-config.json` `mcpServers` |
+| `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`  | `<name>.prompt.md`   | —                              |
+| `codex`   | —         | managed block in `AGENTS.md` | —                  | —                    | —                              |
+| `agents`  | `skills/` | —                            | —                  | —                    | —                              |
+| `generic` | verbatim  | verbatim                     | verbatim           | verbatim             | verbatim                       |
 
 Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/harness-profiles.md) for exact conversions.
 
@@ -104,6 +105,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 - [Philosophy and goals](docs/architecture/philosophy.md)
 - [Architecture](docs/architecture/overview.md)
 - [Decision: rebuild scope](docs/decisions/0001-rebuild-scope.md)
+- [Decision: MCP server entries](docs/decisions/0002-mcp-server-entries.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License
