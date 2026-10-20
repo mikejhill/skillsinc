@@ -512,7 +512,7 @@ class TestDestinationDiffEdgeCases:
         old = (("section", "Old"),)
         new = (("section", "New"), ("another", "Added"))
         (tmp_path / "AGENTS.md").write_text(
-            "User\n\n" + ManagedBlock.build(old) + "\n", encoding="utf-8"
+            "User\n\n" + ManagedBlock.build(old) + "\n", encoding="utf-8", newline="\n"
         )
         manifest = Manifest(
             "target",
@@ -554,7 +554,7 @@ class TestDestinationDiffEdgeCases:
         """A block already on disk but recorded with an old digest is re-tracked."""
         sections = (("section", "Body"),)
         (tmp_path / "AGENTS.md").write_text(
-            ManagedBlock.build(sections) + "\n", encoding="utf-8"
+            ManagedBlock.build(sections) + "\n", encoding="utf-8", newline="\n"
         )
         manifest = Manifest(
             "target",
@@ -589,7 +589,9 @@ class TestDestinationDiffEdgeCases:
     def test_adopting_different_block_is_adopt(self, tmp_path: Path) -> None:
         """Taking over an unowned block with other content is reported as adopt."""
         (tmp_path / "AGENTS.md").write_text(
-            ManagedBlock.build((("section", "Theirs"),)) + "\n", encoding="utf-8"
+            ManagedBlock.build((("section", "Theirs"),)) + "\n",
+            encoding="utf-8",
+            newline="\n",
         )
 
         changes, _ = DestinationDiff(
