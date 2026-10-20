@@ -107,7 +107,7 @@ class BlockOutput:
 
 @dataclass(frozen=True, slots=True)
 class EntryOutput:
-    """A keyed value a profile wants inside a container object of a shared JSON file."""
+    """A keyed value a profile wants inside a container of a shared config file."""
 
     path: str
     container: str

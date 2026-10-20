@@ -57,7 +57,13 @@ Default path `$CODEX_HOME` or `~/.codex`. Instructions are combined, in name ord
 
 Losses: `applyTo` globs become an advisory sentence; files without `applyTo` become always-on.
 
-MCP servers are not written: Codex reads them from `[mcp_servers.<name>]` tables in `config.toml`, which needs a TOML editor that preserves formatting.
+| Kind         | Output                                 | Conversion |
+| ------------ | -------------------------------------- | ---------- |
+| instructions | managed block in `AGENTS.md`           | lossy      |
+| mcp          | `config.toml` → `[mcp_servers.<name>]` | converted  |
+| others       | unsupported                            | —          |
+
+MCP servers become `[mcp_servers.<name>]` tables in `config.toml`, edited in place with comments, ordering, and other tables kept ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)). Codex rejects fields it does not know, so only these are written: `command`, `args`, `env`, `cwd` for stdio servers; `url` and `headers` (as `http_headers`) for streamable HTTP servers; `tools` as `enabled_tools` unless it contains `"*"`. `type` is checked, not written: SSE servers and unknown types are refused, as are carried fields of the wrong type. Losses: any other field, and `${...}` variables, which Codex does not expand. A server with the same name that SkillSinc did not write blocks until `--adopt`; invalid TOML, or an `mcp_servers` that is not a table, blocks the destination.
 
 ## agents
 

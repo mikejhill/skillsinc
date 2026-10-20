@@ -224,7 +224,7 @@ class Planner:
     def _add_entries(
         desired: DesiredState, label: str, entries: Iterable[EntryOutput]
     ) -> None:
-        """Add rendered JSON entries, flagging items that set one key differently."""
+        """Add rendered config entries, flagging items that set one key differently."""
         for output in entries:
             found = desired.entries.setdefault(output.path, {})
             origin = f"{output.path}#{output.entry}"

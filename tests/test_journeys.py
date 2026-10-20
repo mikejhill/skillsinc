@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tomllib
 
 import pytest
 from tests.conftest import Builder, Sandbox
@@ -387,6 +388,52 @@ class TestApplication:
             f"Expected server updated in place, got {updated!r}"
         )
         assert json.loads(config_file.read_text(encoding="utf-8")) == user, (
+            f"Expected user file restored exactly, got {config_file.read_text()!r}"
+        )
+        assert "up to date" in final, f"Expected convergence, got {final!r}"
+
+    def test_codex_mcp_server_lifecycle_preserves_user_toml(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Add, update, and remove a Codex server; the user's TOML text survives."""
+        sandbox.configure("codex", allow_lossy=True)
+        config_file = sandbox.root / "config.toml"
+        config_file.parent.mkdir(parents=True)
+        user = '# mine\nmodel = "o3"  # pinned\n\n[mcp_servers.mine]\ncommand = "m"\n'
+        config_file.write_text(user, encoding="utf-8")
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text(
+            '{"type": "local", "command": "gh", "env": {"K": "v"}}', encoding="utf-8"
+        )
+
+        first_status, first = sandbox.run("sync")
+        added = config_file.read_text(encoding="utf-8")
+        server.write_text('{"type": "local", "command": "gh2"}', encoding="utf-8")
+        update_status, _ = sandbox.run("sync")
+        updated = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        server.unlink()
+        remove_status, removed_output = sandbox.run("sync")
+        final_status, final = sandbox.run("plan")
+
+        assert (first_status, update_status, remove_status, final_status) == (
+            0,
+            0,
+            0,
+            0,
+        ), f"Expected four successful runs, got {first!r}, {removed_output!r}"
+        assert "+ create config.toml [mcp_servers/github]" in first, (
+            f"Expected entry creation in output, got {first!r}"
+        )
+        assert added.startswith(user), f"Expected user text kept, got {added!r}"
+        assert tomllib.loads(added)["mcp_servers"]["github"] == {
+            "command": "gh",
+            "env": {"K": "v"},
+        }, f"Expected the server table, got {added!r}"
+        assert updated["mcp_servers"]["github"] == {"command": "gh2"}, (
+            f"Expected server updated in place, got {updated!r}"
+        )
+        assert config_file.read_text(encoding="utf-8") == user, (
             f"Expected user file restored exactly, got {config_file.read_text()!r}"
         )
         assert "up to date" in final, f"Expected convergence, got {final!r}"
