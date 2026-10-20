@@ -97,6 +97,9 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 ## Documentation
 
 - [Configuration reference](docs/guides/configuration.md)
+- [Command-line reference](docs/guides/command-line.md)
+- [Development guide](docs/guides/development.md)
+- [Roadmap](docs/planning/roadmap.md)
 - [Harness profiles](docs/guides/harness-profiles.md)
 - [Philosophy and goals](docs/architecture/philosophy.md)
 - [Architecture](docs/architecture/overview.md)

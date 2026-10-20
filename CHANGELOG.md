@@ -13,3 +13,4 @@ All notable changes to this project are documented here. The format follows [Kee
 - `init`, `plan`, `sync`, and `profiles` commands.
 - Profiles for Claude Code, Copilot CLI, VS Code, Codex, the shared `~/.agents` folder, and generic copies.
 - Ownership manifests, drift repair, `--adopt`, lossy-conversion opt-in, managed `AGENTS.md` block, and a run lock.
+- Command-line, development, and roadmap guides for contributors.

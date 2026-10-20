@@ -17,10 +17,10 @@ The XDG variables are honoured on Windows and macOS too. Relative paths in the f
 version = 1
 
 [sources.library]
-path = "~/Projects/copilot-instructions/features"
+path = "~/agent-library"
 
-[sources.jot]
-path = "~/Projects/jot/src/jot"
+[sources.team]
+path = "~/src/team-agent-library"
 
 [destinations.claude]          # profile defaults to the table name
 [destinations.copilot]
@@ -31,7 +31,7 @@ path = "~/Projects/jot/src/jot"
 enabled = false                # kept, but neither written nor cleaned
 
 [[routes]]
-sources = ["library", "jot"]
+sources = ["library", "team"]
 destinations = ["claude", "copilot", "agents"]
 include = ["skills/*", "instructions/*", "agents/*"]
 
