@@ -28,7 +28,7 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | Prompts copied to `~/.copilot/prompts`                                  | Refused on purpose: Copilot CLI documents no prompt folder    |
 | Junctions and hard links                                                | Not planned: copies plus ownership are safer (decision 0001)  |
 | Optional `--prune`                                                      | Covered: owned files are always reconciled, edits released    |
-| Windows Task Scheduler registration script                              | **Gap 9**                                                     |
+| Windows Task Scheduler registration script                              | Covered: [scheduling examples](../guides/scheduling.md)       |
 
 ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from the documented scope only.
 
@@ -42,5 +42,5 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 6. ~~**Codex MCP servers.**~~ Done: `[mcp_servers.<name>]` in `config.toml`, edited with `tomlkit` ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)).
 7. ~~**Plugins.**~~ Done: library plugins expand into skills, agents, prompts, and MCP servers ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Hooks inside plugins wait on gap 2; an opt-in local marketplace profile stays possible behind a new decision.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
-9. **Scheduling helper.** ai-feature-sync ships a Task Scheduler registration script. SkillSinc documents scheduling but ships nothing; an example per OS (Task Scheduler, launchd, systemd timer) would close it.
+9. ~~**Scheduling helper.**~~ Done: [scheduling examples](../guides/scheduling.md) for Task Scheduler, launchd, and a systemd user timer.
 10. **Native verification.** None of the mappings, including the new Copilot MCP entries, have been confirmed by loading the harness (roadmap item 2).

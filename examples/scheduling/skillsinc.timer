@@ -1,0 +1,11 @@
+# systemd user timer: runs skillsinc.service hourly and catches up after sleep.
+[Unit]
+Description=Run SkillSinc hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
