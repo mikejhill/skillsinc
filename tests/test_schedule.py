@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import plistlib
 import shlex
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
@@ -32,6 +33,7 @@ from skillsinc.schedule import (
     backend,
     command_line,
     detect,
+    disposable,
     format_interval,
     interpreter,
     parse_interval,
@@ -426,7 +428,7 @@ class TestSystemdTimer:
         job = replace(
             JOB,
             argv=("/opt/py", "sync", "--config", '/a b/100%$x"\\.json'),
-            variables={"CODEX_HOME": "/c d"},
+            variables={"CODEX_HOME": "/c d/$x/%"},
         )
 
         text = SystemdTimer(FakeRunner(), environment).definition(job)
@@ -434,7 +436,9 @@ class TestSystemdTimer:
         assert (
             'ExecStart="/opt/py" "sync" "--config" "/a b/100%%$$x\\"\\\\.json"' in text
         ), f"Expected an escaped ExecStart in {text}"
-        assert 'Environment="CODEX_HOME=/c d"' in text, f"Expected variables in {text}"
+        assert 'Environment="CODEX_HOME=/c d/$x/%%"' in text, (
+            f"Expected $ kept and % escaped in Environment=, got {text}"
+        )
         assert "OnUnitActiveSec=300s" in text, f"Expected the interval in {text}"
 
     def test_install_writes_units_and_restarts_timer(
@@ -563,14 +567,31 @@ class TestCron:
         with pytest.raises(ScheduleError, match="cron cannot run"):
             Cron(FakeRunner()).definition(replace(JOB, interval=interval))
 
-    def test_definition_prefixes_variables(self) -> None:
-        """Variables precede the command, shell-quoted."""
-        job = replace(JOB, variables={"XDG_STATE_HOME": "/a b"})
-
+    @pytest.mark.skipif(sys.platform == "win32", reason="cron runs /bin/sh")
+    def test_line_runs_under_sh_with_variables(self) -> None:
+        """The command, as cron hands it to sh, sets variables and keeps args."""
+        code = "import os, sys; print(os.environ['XDG_STATE_HOME'], sys.argv[1:])"
+        job = replace(
+            JOB,
+            argv=(sys.executable, "-c", code, "100%", "a b"),
+            variables={"XDG_STATE_HOME": "/a b/$x;%"},
+        )
         line = Cron(FakeRunner()).definition(job)
+        # cron drops the schedule and mark, then turns \% back into %
+        command = line.split(maxsplit=5)[5].removesuffix(f" {Cron.MARK}\n")
 
-        assert "*/5 * * * * 'XDG_STATE_HOME=/a b' /opt/py/bin/python" in line, (
-            f"Expected quoted variables, got {line!r}"
+        result = subprocess.run(  # noqa: S603 - fixed test command
+            ["/bin/sh", "-c", command.replace("\\%", "%")],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+        assert result.stdout == "/a b/$x;% ['100%', 'a b']\n", (
+            f"Expected the variable and arguments intact, got {result!r}"
+        )
+        assert "%" not in command.replace("\\%", ""), (
+            f"Expected every % escaped for cron, got {command!r}"
         )
 
     def test_install_replaces_own_line_only(self) -> None:
@@ -699,6 +720,21 @@ class TestSelection:
         python = tmp_path / name
 
         assert interpreter(python, platform) == python, "Expected no change"
+
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("/home/m/.cache/uv/archive-v0/abc/bin/python", True),
+            (
+                "C:/Users/M/AppData/Local/uv/cache/builds-v0/.tmp1/Scripts/pythonw.exe",
+                True,
+            ),
+            ("/home/m/.local/share/uv/tools/skillsinc/bin/python", False),
+        ],
+    )
+    def test_disposable_interpreters(self, path: str, expected: bool) -> None:  # noqa: FBT001
+        """Interpreters in uv's cache are flagged; tool installs are not."""
+        assert disposable(Path(path)) is expected, f"Expected {expected} for {path}"
 
     def test_command_line_quoting(self) -> None:
         """Display quoting follows the platform."""
@@ -880,6 +916,18 @@ class TestScheduleCommand:
         assert out.getvalue().startswith("Would register with launchd"), (
             f"Expected launchd, got {out.getvalue()}"
         )
+
+    def test_temporary_interpreter_is_refused(self, environment: Environment) -> None:
+        """Install refuses a uv cache Python; a dry run only warns."""
+        python = Path("/c/uv/archive-v0/x/bin/python")
+        command = ScheduleCommand(environment, FakeRunner(), python)
+        out = io.StringIO()
+
+        command.run(settings(dry_run=True), out)
+
+        assert "Warning:" in out.getvalue(), f"Expected a warning: {out.getvalue()}"
+        with pytest.raises(ScheduleError, match="uv tool install skillsinc"):
+            command.run(settings(), io.StringIO())
 
     def test_default_interpreter_is_this_python(self, environment: Environment) -> None:
         """Without an override the job runs the current interpreter with -P."""

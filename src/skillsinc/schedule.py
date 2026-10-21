@@ -170,6 +170,16 @@ def _check(completed: Completed, action: str) -> Completed:
     return completed
 
 
+def disposable(executable: Path) -> bool:
+    """Return True if ``executable`` lives in a uv cache environment.
+
+    ``uvx`` and ``uv run --with`` run from such environments, which uv may
+    delete at any time, so a scheduled job must not point into one.
+    """
+    parts = {part.lower() for part in executable.parts}
+    return bool(parts & {"archive-v0", "builds-v0", "environments-v2"})
+
+
 def command_line(argv: Sequence[str], platform: str) -> str:
     """Return ``argv`` as one command line in ``platform``'s quoting."""
     if platform == "win32":
@@ -479,7 +489,7 @@ class SystemdTimer:
     def _units(self, job: Job) -> dict[str, str]:
         """Return the service and timer unit text by file name."""
         environment = "".join(
-            f"Environment={self._quote(f'{key}={value}')}\n"
+            f"Environment={self._quote(f'{key}={value}', variables=False)}\n"
             for key, value in sorted(job.variables.items())
         )
         command = " ".join(self._quote(arg) for arg in job.argv)
@@ -506,10 +516,14 @@ class SystemdTimer:
         return self._runner.run(["systemctl", "--user", *argv])
 
     @staticmethod
-    def _quote(text: str) -> str:
-        """Quote one word for a unit file, escaping specifiers and variables."""
-        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-        return '"' + escaped.replace("%", "%%").replace("$", "$$") + '"'
+    def _quote(text: str, *, variables: bool = True) -> str:
+        """Quote one word for a unit file, escaping specifiers.
+
+        ``$`` is doubled only where systemd expands variables (``ExecStart``),
+        not in ``Environment=`` assignments.
+        """
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+        return '"' + (escaped.replace("$", "$$") if variables else escaped) + '"'
 
 
 class Cron:
@@ -526,10 +540,12 @@ class Cron:
     def definition(self, job: Job) -> str:
         """Return the crontab line."""
         variables = " ".join(
-            shlex.quote(f"{key}={value}")
+            f"{key}={shlex.quote(value)}"
             for key, value in sorted(job.variables.items())
         )
         command = f"{variables} {shlex.join(job.argv)}".strip()
+        # cron ends the command at an unescaped %, even inside shell quotes
+        command = command.replace("%", "\\%")
         return f"{self._expression(job.interval)} {command} {self.MARK}\n"
 
     def install(self, job: Job) -> None:

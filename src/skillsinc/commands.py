@@ -20,10 +20,12 @@ from skillsinc.schedule import (
     Backend,
     Job,
     Runner,
+    ScheduleError,
     Scheduler,
     backend,
     command_line,
     detect,
+    disposable,
     format_interval,
     interpreter,
 )
@@ -32,6 +34,12 @@ from skillsinc.sources import SourceReader
 from skillsinc.starter import StarterConfig
 
 logger = logging.getLogger(__name__)
+
+TEMPORARY_PYTHON = (
+    "{} is in a temporary uv environment (uvx or uv run --with) that uv may"
+    " delete; install SkillSinc with `uv tool install skillsinc` and run"
+    " `skillsinc schedule install` from it"
+)
 
 
 class InitCommand:
@@ -145,10 +153,15 @@ class ScheduleCommand:
     def _install(self, chosen: Backend, settings: ScheduleSettings, out: TextIO) -> int:
         """Register the job, or print its definition for ``--dry-run``."""
         job, log = self._job(chosen, settings)
+        temporary = disposable(Path(job.argv[0]))
         if settings.dry_run:
             out.write(f"Would register with {chosen.title} ({chosen.location}):\n")
             out.write(chosen.definition(job))
+            if temporary:
+                out.write(f"Warning: {TEMPORARY_PYTHON.format(job.argv[0])}\n")
             return 0
+        if temporary:
+            raise ScheduleError(TEMPORARY_PYTHON.format(job.argv[0]))
         if log is not None:
             log.parent.mkdir(parents=True, exist_ok=True)
         chosen.install(job)
