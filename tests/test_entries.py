@@ -8,8 +8,15 @@ import tomllib
 import pytest
 import tomlkit
 
-from skillsinc.entries import EntryFile, JsonDocument, JsonEntryFile, TomlEntryFile
+from skillsinc.entries import (
+    EntryFile,
+    JsoncEntryFile,
+    JsonDocument,
+    JsonEntryFile,
+    TomlEntryFile,
+)
 from skillsinc.exceptions import ConflictError
+from skillsinc.jsonc import Jsonc
 from skillsinc.models import JsonValue
 
 
@@ -290,3 +297,199 @@ class TestTomlEntryFile:
         assert tomllib.loads(result.decode())["mcp_servers"] == {
             "a": {"command": "y"}
         }, f"Expected the entry replaced, got {result!r}"
+
+
+USER_JSONC = b"""{
+  // My servers
+  "servers": {
+    "mine": {"type": "stdio", "command": "x"}, // keep me
+  },
+  /* inputs */
+  "inputs": [],
+}
+"""
+SERVER: JsonValue = {"type": "stdio", "command": "gh", "args": ["mcp"]}
+
+
+class TestJsoncEntryFile:
+    """JSONC entry edits splice text, keeping comments, commas, and layout."""
+
+    def test_open_picks_jsonc_for_vscode_mcp_json(self) -> None:
+        """Only VS Code's ``mcp.json`` is read with comments allowed."""
+        result = (
+            type(EntryFile.open("../mcp.json", None)),
+            type(EntryFile.open(".claude.json", None)),
+        )
+
+        assert result == (JsoncEntryFile, JsonEntryFile), f"Got {result!r}"
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            USER_JSONC,
+            b"{}",
+            b'{"servers": {}}',
+            b'{\n    "inputs": [] // only inputs\n}\n',
+            b'{\n\t"servers": {\n\t\t"a": {\n\t\t\t"command": "a"\n\t\t}\n\t}\n}\n',
+            b'{\r\n  "servers": {\r\n    "a": {"command": "a"}\r\n  }\r\n}\r\n',
+            b'\xef\xbb\xbf{"x": "// not /* a comment", "servers": {"a": {}}}',
+        ],
+    )
+    def test_set_update_and_remove_keep_everything_else(self, raw: bytes) -> None:
+        """Add, change, then remove one server; the user's bytes come back exactly."""
+        document = JsoncEntryFile(raw)
+
+        added = document.set("servers", "gh", SERVER)
+        changed: JsonValue = {"command": "gh2"}
+        updated = document.set("servers", "gh", changed)
+        restored = document.remove("servers", "gh", prune=False)
+
+        for result, value in ((added, SERVER), (updated, changed)):
+            parsed = JsoncEntryFile(result)
+            assert parsed.digest("servers", "gh") == JsonDocument.digest(value), (
+                f"Expected the server set, got {result!r}"
+            )
+        assert JsoncEntryFile(restored or b"{}").digest("servers", "gh") is None
+        if raw not in {b"{}", b'{\n    "inputs": [] // only inputs\n}\n'}:
+            assert restored == raw, f"Expected original bytes, got {restored!r}"
+
+    def test_added_entry_matches_sibling_layout(self) -> None:
+        """A new server follows its siblings' indentation and the file's commas."""
+        result = JsoncEntryFile(USER_JSONC).set("servers", "gh", {"command": "gh"})
+
+        assert result == USER_JSONC.replace(
+            b"// keep me\n",
+            b'// keep me\n    "gh": {\n      "command": "gh"\n    },\n',
+        ), f"Expected an indented member with a trailing comma, got {result!r}"
+
+    def test_new_container_is_added_after_comments(self) -> None:
+        """A missing container goes last, after a trailing comment."""
+        raw = b'{\n  "inputs": [] // only inputs\n}\n'
+
+        result = JsoncEntryFile(raw).set("servers", "gh", {"command": "gh"})
+
+        assert result == (
+            b'{\n  "inputs": [], // only inputs\n  "servers": {\n'
+            b'    "gh": {\n      "command": "gh"\n    }\n  }\n}\n'
+        ), f"Got {result!r}"
+
+    def test_pruning_removes_a_created_file_without_comments(self) -> None:
+        """The last server in a file SkillSinc created deletes the file."""
+        document = JsoncEntryFile(None)
+        document.set("servers", "gh", SERVER)
+
+        result = document.remove("servers", "gh", prune=True)
+
+        assert result is None, f"Expected the file to be deleted, got {result!r}"
+
+    def test_pruning_keeps_comments_the_user_added(self) -> None:
+        """A comment added to a created file keeps the file."""
+        raw = b'{\n  // mine\n  "servers": {"gh": {"command": "gh"}}\n}\n'
+
+        result = JsoncEntryFile(raw).remove("servers", "gh", prune=True)
+
+        assert result == b"{\n  // mine\n}\n", f"Got {result!r}"
+
+    def test_removing_a_missing_entry_changes_nothing(self) -> None:
+        """Absent entries leave the bytes alone."""
+        result = JsoncEntryFile(USER_JSONC).remove("servers", "gh", prune=True)
+
+        assert result == USER_JSONC, f"Got {result!r}"
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            b"{/* open",
+            b'{"a": 1, "a": 2}',
+            b"[]",
+            b'{"servers": 3}',
+            b'{"a": "open',
+            b"\xff",
+        ],
+    )
+    def test_unusable_file_is_a_conflict(self, raw: bytes) -> None:
+        """Broken JSONC and non-object containers block instead of being rewritten."""
+        with pytest.raises(ConflictError):
+            JsoncEntryFile(raw).digest("servers", "gh")
+
+    def test_edit_that_reads_back_differently_is_a_conflict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Spliced text that does not parse back to the intended data blocks."""
+        document = JsoncEntryFile(USER_JSONC)
+        monkeypatch.setattr(Jsonc, "insert", staticmethod(lambda *_: "{}"))
+
+        with pytest.raises(ConflictError, match="Fix it by hand"):
+            document.set("servers", "gh", SERVER)
+
+    def test_edit_that_does_not_parse_back_is_a_conflict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Spliced text that is not JSONC blocks."""
+        document = JsoncEntryFile(USER_JSONC)
+        monkeypatch.setattr(Jsonc, "delete", staticmethod(lambda *_: "{"))
+
+        with pytest.raises(ConflictError, match="Fix it by hand"):
+            document.remove("servers", "mine", prune=False)
+
+
+class TestJsonc:
+    """The position scanner refuses text it cannot locate members in."""
+
+    @pytest.mark.parametrize(
+        "bare",
+        [
+            "",
+            "[]",
+            "{1: 2}",
+            '{"a" 1}',
+            '{"a": }',
+            '{"a": 1',
+            '{"a": {"b" 1}}',
+            '{"a": [1, 2}',
+            '{"a": [1, 2',
+            '{"a',
+            '{"a": ',
+        ],
+    )
+    def test_malformed_objects_are_refused(self, bare: str) -> None:
+        """No member positions are reported for malformed text."""
+        with pytest.raises(ValueError, match=r"expected|unterminated"):
+            Jsonc.object_at(bare, 0)
+
+    def test_members_record_keys_values_and_commas(self) -> None:
+        """Offsets point at each key, value, and separating comma."""
+        span = Jsonc.object_at('{"a": [1, {"b": 2}], "c": "x",}', 0)
+
+        assert [(m.key, m.value_start, m.value_end, m.comma) for m in span.members] == [
+            ("a", 6, 19, 19),
+            ("c", 26, 29, 29),
+        ], f"Got {span!r}"
+
+    @pytest.mark.parametrize(
+        ("text", "key", "expected"),
+        [
+            ('{\n  "a": 1,\n  "b": 2,\n  "c": 3\n}', "b", '{\n  "a": 1,\n  "c": 3\n}'),
+            ('{\n  "a": 1, // x\n  "b": 2\n}', "b", '{\n  "a": 1 // x\n}'),
+            ('{"a": 1, "b": 2}', "a", '{"b": 2}'),
+        ],
+    )
+    def test_delete_removes_one_member_and_its_separator(
+        self, text: str, key: str, expected: str
+    ) -> None:
+        """Deleting keeps the remaining members, comments, and valid commas."""
+        span = Jsonc.object_at(Jsonc.blank_comments(text), 0)
+        member = span.find(key)
+        assert member is not None, f"Expected {key!r} in {text!r}"
+
+        result = Jsonc.delete(text, span, member)
+
+        assert result == expected, f"Got {result!r}"
+
+    def test_comments_are_blanked_without_moving_text(self) -> None:
+        """Comment characters become spaces; newlines and strings stay put."""
+        text = '{"a\\"b": 1 /* x\ny */ // z\n}'
+
+        result = Jsonc.blank_comments(text)
+
+        assert result == '{"a\\"b": 1     \n         \n}', f"Got {result!r}"

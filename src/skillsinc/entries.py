@@ -1,20 +1,26 @@
-"""Read, edit, and write keyed entries inside shared JSON and TOML config files."""
+"""Read, edit, and write keyed entries inside shared JSON, JSONC, and TOML files."""
 
 from __future__ import annotations
 
+import codecs
+import copy
 import json
 import math
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping
 from decimal import Decimal
-from typing import cast, override
+from pathlib import PurePosixPath
+from typing import Final, cast, override
 
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
 from tomlkit.items import InlineTable, Item, Table
 
 from skillsinc.exceptions import ConflictError
+from skillsinc.jsonc import Jsonc, ObjectSpan
 from skillsinc.models import Digest, JsonValue
+
+JSONC_FILES: Final = frozenset({"mcp.json"})
 
 
 class JsonDocument:
@@ -93,13 +99,18 @@ class EntryFile(ABC):
 
     @staticmethod
     def open(path: str, raw: bytes | None) -> EntryFile:
-        """Return the editor for ``path``'s format: TOML for ``.toml``, else JSON.
+        """Return the editor for ``path``'s format.
+
+        TOML for ``.toml``, JSONC for files their harness reads with comments
+        (VS Code's ``mcp.json``), and strict JSON otherwise.
 
         Raises:
             ConflictError: If the file cannot be parsed safely.
         """
         if path.endswith(".toml"):
             return TomlEntryFile(raw)
+        if PurePosixPath(path).name in JSONC_FILES:
+            return JsoncEntryFile(raw)
         return JsonEntryFile(raw)
 
     @abstractmethod
@@ -192,6 +203,144 @@ class JsonEntryFile(EntryFile):
             msg = f"'{container}' is not a JSON object; fix it by hand"
             raise ConflictError(msg)
         return values
+
+
+class JsoncEntryFile(EntryFile):
+    """One shared JSONC file edited in place, keeping comments and layout.
+
+    Comments and trailing commas are allowed. Each edit splices only the
+    affected member's text and is checked by parsing the result back, so a
+    layout the splicer cannot edit faithfully blocks instead of corrupting.
+    """
+
+    def __init__(self, raw: bytes | None) -> None:
+        """Parse the current file (None when it does not exist).
+
+        Raises:
+            ConflictError: If the file is not a JSONC object.
+        """
+        self.raw = raw
+        self._bom = raw is not None and raw.startswith(codecs.BOM_UTF8)
+        try:
+            self._text = raw.decode("utf-8-sig") if raw is not None else ""
+            self._document = self._load(self._text) if raw is not None else {}
+        except (UnicodeDecodeError, ValueError) as err:
+            msg = (
+                f"is not a JSON object, even allowing comments ({err});"
+                " SkillSinc will not rewrite it. Fix it by hand"
+            )
+            raise ConflictError(msg) from err
+
+    @override
+    def digest(self, container: str, key: str) -> str | None:
+        """Return the digest of the value at ``container.key``, or None if absent.
+
+        Raises:
+            ConflictError: If ``container`` exists but is not an object.
+        """
+        values = self._container(container)
+        if key not in values:
+            return None
+        return JsonDocument.digest(values[key])
+
+    @override
+    def set(self, container: str, key: str, value: JsonValue) -> bytes:
+        """Set ``container.key`` in place and return the new file bytes.
+
+        Raises:
+            ConflictError: If the edit does not read back as intended.
+        """
+        expected = copy.deepcopy(self._document)
+        expected[container] = {**self._container(container), key: value}
+        if self.raw is None:
+            return self._commit(JsonDocument.dump(expected).decode(), expected)
+        top = self._top()
+        holder = top.find(container)
+        if holder is None:
+            text = Jsonc.insert(self._text, top, container, {key: value})
+            return self._commit(text, expected)
+        span = Jsonc.object_at(self._bare(), holder.value_start)
+        member = span.find(key)
+        if member is None:
+            text = Jsonc.insert(self._text, span, key, value)
+        else:
+            text = Jsonc.replace(self._text, span, member, value)
+        return self._commit(text, expected)
+
+    @override
+    def remove(self, container: str, key: str, *, prune: bool) -> bytes | None:
+        """Remove ``container.key`` and return the new bytes, or None if now empty.
+
+        With ``prune``, an emptied container is dropped, and an emptied file
+        without comments is reported as None so the caller can delete it.
+
+        Raises:
+            ConflictError: If the edit does not read back as intended.
+        """
+        values = self._container(container)
+        if key not in values:
+            return self.raw
+        expected = copy.deepcopy(self._document)
+        expected[container] = {name: v for name, v in values.items() if name != key}
+        top = self._top()
+        holder = top.find(container)
+        span = Jsonc.object_at(self._bare(), holder.value_start) if holder else None
+        member = span.find(key) if span else None
+        if holder is None or span is None or member is None:
+            # Unreachable: the parsed document and the scanned text agree
+            return self.raw
+        if prune and len(span.members) == 1:
+            del expected[container]
+            text = Jsonc.delete(self._text, top, holder)
+            if not expected and not Jsonc.has_comments(text):
+                self._text, self._document, self.raw = "", {}, None
+                return None
+        else:
+            text = Jsonc.delete(self._text, span, member)
+        return self._commit(text, expected)
+
+    # Internals
+
+    @staticmethod
+    def _load(text: str) -> dict[str, JsonValue]:
+        """Parse JSONC text strictly once comments and trailing commas are blanked."""
+        plain = Jsonc.blank_trailing_commas(Jsonc.blank_comments(text))
+        return JsonDocument.load(plain.encode())
+
+    def _bare(self) -> str:
+        """Return the current text with comments blanked."""
+        return Jsonc.blank_comments(self._text)
+
+    def _top(self) -> ObjectSpan:
+        """Return the top-level object."""
+        return Jsonc.object_at(self._bare(), 0)
+
+    def _container(self, container: str) -> dict[str, JsonValue]:
+        """Return the container object (empty if absent)."""
+        if container not in self._document:
+            return {}
+        values = self._document[container]
+        if not isinstance(values, dict):
+            msg = f"'{container}' is not a JSON object; fix it by hand"
+            raise ConflictError(msg)
+        return cast("dict[str, JsonValue]", values)
+
+    def _commit(self, text: str, expected: dict[str, JsonValue]) -> bytes:
+        """Keep ``text`` if it reads back as ``expected``; otherwise refuse."""
+        try:
+            actual: object = self._load(text)
+        except ValueError as err:
+            actual = err
+        if actual != expected:
+            msg = (
+                "could not be edited without changing other settings;"
+                " SkillSinc will not rewrite it. Fix it by hand"
+            )
+            raise ConflictError(msg)
+        self._text = text
+        self._document = expected
+        self.raw = (codecs.BOM_UTF8 if self._bom else b"") + text.encode()
+        return self.raw
 
 
 class TomlEntryFile(EntryFile):

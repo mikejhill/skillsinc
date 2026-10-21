@@ -811,23 +811,29 @@ class TestApplication:
         )
         assert user_dir.is_dir(), "Expected User folder left in place"
 
-    def test_vscode_mcp_json_with_comments_blocks(self, sandbox: Sandbox) -> None:
-        """A commented ``mcp.json`` is refused, never rewritten without its comments."""
+    def test_vscode_mcp_json_keeps_comments(self, sandbox: Sandbox) -> None:
+        """A commented ``mcp.json`` is edited in place and restored exactly."""
         user_dir = sandbox.environment.home / "Code" / "User"
         sandbox.root = user_dir / "prompts"
         sandbox.configure("vscode")
         mcp_json = user_dir / "mcp.json"
         user_dir.mkdir(parents=True)
-        text = '{\n  // mine\n  "servers": {}\n}\n'
-        mcp_json.write_text(text, encoding="utf-8")
+        text = (
+            '{\n  // mine\n  "servers": {\n'
+            '    "x": {"command": "x"}, // note\n  },\n}\n'
+        )
+        mcp_json.write_text(text, encoding="utf-8", newline="")
         server = sandbox.library / "mcp/github.json"
         server.parent.mkdir()
         server.write_text('{"command": "gh"}', encoding="utf-8")
 
-        status, output = sandbox.run("sync")
+        add_status, output = sandbox.run("sync")
+        added = mcp_json.read_text(encoding="utf-8")
+        server.unlink()
+        remove_status, _ = sandbox.run("sync")
 
-        assert status == 1, f"Expected a blocked destination, got {output!r}"
-        assert "is not a plain JSON object" in output, (
-            f"Expected a plain-JSON refusal, got {output!r}"
-        )
-        assert mcp_json.read_text(encoding="utf-8") == text, "Expected file untouched"
+        assert add_status == 0, f"Expected sync to succeed, got {output!r}"
+        assert "// mine" in added, f"Expected comments kept, got {added!r}"
+        assert '"github": {' in added, f"Expected the server added, got {added!r}"
+        assert remove_status == 0, f"Expected removal to succeed, got {remove_status}"
+        assert mcp_json.read_text(encoding="utf-8") == text, "Expected file restored"

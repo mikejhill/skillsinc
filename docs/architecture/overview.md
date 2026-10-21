@@ -31,7 +31,8 @@ graph LR
 | `planner`                     | Select items per route, render, apply loss policy, detect clashes       |
 | `diff`                        | Compare desired files and blocks with disk and the manifest             |
 | `blocks`                      | Find, replace, and remove the managed block in a Markdown file          |
-| `entries`                     | Strict JSON and verified TOML editing of keyed entries in a shared file |
+| `entries`                     | Strict JSON, JSONC, and TOML editing of keyed entries in a shared file  |
+| `jsonc`                       | Locate members by position in JSONC and splice in-place edits           |
 | `manifest`                    | Load and atomically save per-destination ownership records              |
 | `applier`                     | Verify preconditions, write atomically, update the manifest             |
 | `lock`                        | Serialize overlapping `sync` runs                                       |
@@ -60,7 +61,7 @@ Blocks follow the same ownership rules as files. A block taken over with `--adop
 
 ## Managed entries
 
-Harnesses that read MCP servers from a shared JSON or TOML file (Copilot CLI's `mcp-config.json`, Codex's `config.toml`) receive one entry per server under a container key such as `mcpServers` or `mcp_servers`. The manifest records each owned `container/key` with the digest of its value (key order and whitespace ignored) and whether SkillSinc created the file. Each entry follows the ownership table above; changes to one file are chained, each expecting the bytes the previous one wrote. Other keys are never changed, an unowned key with the same name blocks until `--adopt`, and a file that is not plain JSON, or not valid TOML, blocks the destination. TOML is edited with `tomlkit`, keeping comments and layout, and every edit is parsed back and compared with the intended data before it is planned. A file SkillSinc created is deleted when its last entry goes.
+Harnesses that read MCP servers from a shared JSON or TOML file (Copilot CLI's `mcp-config.json`, Codex's `config.toml`) receive one entry per server under a container key such as `mcpServers` or `mcp_servers`. The manifest records each owned `container/key` with the digest of its value (key order and whitespace ignored) and whether SkillSinc created the file. Each entry follows the ownership table above; changes to one file are chained, each expecting the bytes the previous one wrote. Other keys are never changed, an unowned key with the same name blocks until `--adopt`, and a file that is not plain JSON, or not valid TOML, blocks the destination. TOML is edited with `tomlkit` and VS Code's JSONC `mcp.json` by splicing member text (`skillsinc.jsonc`), both keeping comments and layout, and every edit is parsed back and compared with the intended data before it is planned. A file SkillSinc created is deleted when its last entry goes.
 
 An entry may be marked mergeable (Claude Code hooks, keyed by event under `hooks` in `settings.json`). Several items may then contribute to one key: the planner concatenates their lists in item order, skipping elements already present, and the merged list is owned as one entry.
 
