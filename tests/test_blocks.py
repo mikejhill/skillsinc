@@ -26,6 +26,22 @@ class TestManagedBlock:
         )
         assert "\n\nBody\n\n" in block, f"Expected trimmed section text, got {block!r}"
 
+    @pytest.mark.parametrize("host", ["User\n", "User\r\n", ""])
+    def test_crlf_section_round_trips(self, host: str) -> None:
+        """Keep a CRLF section stable so the next plan finds no change."""
+        codec = ManagedBlock()
+        block = codec.build((("library:instructions/example", "# T\r\n\r\nBody\r\n"),))
+
+        result = codec.splice(host, block)
+
+        assert "\r\r" not in result, f"Expected no doubled CR, got {result!r}"
+        assert codec.extract(result) == block, (
+            f"Expected extract to return the built block {block!r}, got {result!r}"
+        )
+        assert codec.splice(result, block) == result, (
+            f"Expected a second splice to be a no-op, got {result!r}"
+        )
+
     def test_replaces_block_in_place(self) -> None:
         """Keep prefix and suffix byte-for-byte when updating the managed region."""
         codec = ManagedBlock()
