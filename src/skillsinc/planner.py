@@ -39,6 +39,7 @@ class DesiredState:
     blocks: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     entries: dict[str, dict[str, EntryOutput]] = field(default_factory=dict)
     origins: dict[str, str] = field(default_factory=dict)
+    contributors: dict[str, set[str]] = field(default_factory=dict)
     skipped: list[Skip] = field(default_factory=list)
     delivered: list[str] = field(default_factory=list)
     depends_on: set[str] = field(default_factory=set)
@@ -90,9 +91,18 @@ class Planner:
                 adopt=adopt,
             )
         plans = tuple(planned[name] for name in targets)
+        used = {
+            source
+            for route in config.routes
+            if any(name in route.destinations for name in targets)
+            for source in route.sources
+        }
         return Plan(
             destinations=plans,
-            source_errors=failures,
+            # Sources read only to check coverage do not fail this run
+            source_errors={
+                name: error for name, error in failures.items() if name in used
+            },
             warnings=self._duplicates(plans),
         )
 
@@ -316,8 +326,8 @@ class Planner:
         for change in changes:
             if change.block:
                 labels.update(label for label, _ in desired.blocks.get(change.path, ()))
-            elif not change.entry and change.path in desired.origins:
-                labels.add(desired.origins[change.path])
+            elif not change.entry:
+                labels.update(desired.contributors.get(change.path, ()))
         return frozenset(labels)
 
     def _at_default(self, destination: DestinationConfig) -> bool:
@@ -417,6 +427,7 @@ class Planner:
                 continue
             desired.files[output.path] = output
             desired.origins.setdefault(output.path, label)
+            desired.contributors.setdefault(output.path, set()).add(label)
 
     @staticmethod
     def _add_entries(

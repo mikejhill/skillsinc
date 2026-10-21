@@ -427,3 +427,61 @@ class TestDuplicateLoads:
         assert result == (
             "skills/s0, skills/s1, skills/s2, skills/s3, skills/s4 and 2 more"
         ), f"Got {result!r}"
+
+    def test_identical_skill_from_another_source_is_still_pending(
+        self, sandbox: Sandbox, tmp_path: Path
+    ) -> None:
+        """A cover's file deduplicated across sources is pending for every source."""
+        second = tmp_path / "second"
+        shutil.copytree(sandbox.library / "skills", second / "skills")
+        config = sandbox.configure()
+        registry = ProfileRegistry()
+        destinations = {}
+        for name in ("copilot", "agents"):
+            default = registry.get(name).default_path(sandbox.environment)
+            assert default is not None
+            destinations[name] = DestinationConfig(name, name, default)
+        config = replace(
+            config,
+            sources={**config.sources, "second": Builder.source(second, name="second")},
+            destinations=destinations,
+            routes=(
+                RouteConfig(("library", "second"), ("agents",)),
+                RouteConfig(("second",), ("copilot",)),
+            ),
+        )
+
+        plan = TestPlanner.planner(sandbox).plan(config, only=("copilot",))
+
+        assert "second:skills/sample" not in self.skipped(plan, "copilot"), (
+            f"Expected the skill kept until agents has it, got {plan!r}"
+        )
+
+    def test_cover_only_source_failure_does_not_fail_the_run(
+        self, sandbox: Sandbox, tmp_path: Path
+    ) -> None:
+        """A broken library read only to check coverage is not this run's error."""
+        config = sandbox.configure()
+        registry = ProfileRegistry()
+        destinations = {}
+        for name in ("copilot", "agents"):
+            default = registry.get(name).default_path(sandbox.environment)
+            assert default is not None
+            destinations[name] = DestinationConfig(name, name, default)
+        missing = Builder.source(tmp_path / "missing", name="other")
+        config = replace(
+            config,
+            sources={**config.sources, "other": missing},
+            destinations=destinations,
+            routes=(
+                RouteConfig(("library",), ("copilot",)),
+                RouteConfig(("other",), ("agents",)),
+            ),
+        )
+
+        plan = TestPlanner.planner(sandbox).plan(config, only=("copilot",))
+
+        assert plan.ok, f"Expected a clean copilot run, got {plan!r}"
+        assert "library:skills/sample" not in self.skipped(plan, "copilot"), (
+            f"Expected copilot to keep its skill, got {plan!r}"
+        )
