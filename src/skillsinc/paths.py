@@ -58,3 +58,16 @@ class Environment:
     def state_directory(self) -> Path:
         """Return the directory holding ownership manifests and the run lock."""
         return self.state_home / "skillsinc"
+
+
+def destination_file(root: Path, path: str) -> Path:
+    """Return the file at destination-relative ``path``.
+
+    A leading ``..`` (a file a profile declares beside its root) is taken by
+    name, because the operating system would resolve ``root/..`` through a
+    linked ``root``; nothing else in ``root`` is normalized.
+    """
+    parts = Path(path).parts
+    if parts[:1] == ("..",):
+        return root.parent.joinpath(*parts[1:])
+    return root / path

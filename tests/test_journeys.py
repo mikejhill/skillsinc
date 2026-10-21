@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import shutil
+import stat
+import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 from tests.conftest import Builder, Sandbox
@@ -667,3 +670,114 @@ class TestApplication:
 
         copied = (sandbox.root / "hooks/start.json").read_text(encoding="utf-8")
         assert (status, copied) == (0, text), f"Expected exact copy, got {output!r}"
+
+    def test_claude_mcp_servers_go_into_home_claude_json(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Servers land in ``~/.claude.json`` beside the root and keep its mode."""
+        sandbox.root = sandbox.environment.home / ".claude"
+        sandbox.configure("claude")
+        claude_json = sandbox.environment.home / ".claude.json"
+        user = {"numStartups": 3, "mcpServers": {"mine": {"command": "mine"}}}
+        claude_json.write_text(json.dumps(user), encoding="utf-8")
+        claude_json.chmod(0o600)
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"command": "gh"}', encoding="utf-8")
+
+        first_status, first = sandbox.run("sync")
+        added = json.loads(claude_json.read_text(encoding="utf-8"))
+        mode = stat.S_IMODE(claude_json.stat().st_mode)
+        server.unlink()
+        remove_status, _ = sandbox.run("sync")
+
+        assert first_status == 0, f"Expected sync to succeed, got {first!r}"
+        assert "+ create ../.claude.json [mcpServers/github]" in first, (
+            f"Expected entry creation beside the root, got {first!r}"
+        )
+        assert added == {
+            "numStartups": 3,
+            "mcpServers": {
+                "mine": {"command": "mine"},
+                "github": {"type": "stdio", "command": "gh"},
+            },
+        }, f"Expected both servers and user keys, got {added!r}"
+        if sys.platform != "win32":
+            assert mode == 0o600, f"Expected private mode kept, got {oct(mode)}"
+        assert remove_status == 0, f"Expected removal to succeed, got {remove_status}"
+        assert json.loads(claude_json.read_text(encoding="utf-8")) == user, (
+            f"Expected user file restored, got {claude_json.read_text()!r}"
+        )
+        assert not (sandbox.root / ".claude.json").exists(), (
+            "Expected nothing written inside ~/.claude"
+        )
+
+    def test_created_claude_json_is_removed_without_pruning_home(
+        self, sandbox: Sandbox
+    ) -> None:
+        """A created sibling file goes with its last entry; its folder stays."""
+        sandbox.root = sandbox.environment.home / ".claude"
+        sandbox.configure("claude")
+        claude_json = sandbox.environment.home / ".claude.json"
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"command": "gh"}', encoding="utf-8")
+
+        create_status, _ = sandbox.run("sync")
+        created = claude_json.is_file()
+        server.unlink()
+        remove_status, _ = sandbox.run("sync")
+
+        assert (create_status, remove_status, created) == (0, 0, True), (
+            "Expected the file created then removed"
+        )
+        assert not claude_json.exists(), "Expected the created file deleted"
+        assert sandbox.environment.home.is_dir(), "Expected home left in place"
+
+    def test_linked_claude_json_blocks_the_destination(self, sandbox: Sandbox) -> None:
+        """A ``~/.claude.json`` link is never written through."""
+        sandbox.root = sandbox.environment.home / ".claude"
+        sandbox.configure("claude")
+        real = sandbox.environment.home / "dotfiles.json"
+        real.write_text("{}", encoding="utf-8")
+        try:
+            (sandbox.environment.home / ".claude.json").symlink_to(real)
+        except OSError as err:
+            pytest.skip(f"Platform cannot create file symlinks: {err}")
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"command": "gh"}', encoding="utf-8")
+
+        status, output = sandbox.run("sync")
+
+        assert status == 1, f"Expected a blocked destination, got {output!r}"
+        assert "refusing to write through a link" in output, (
+            f"Expected link refusal, got {output!r}"
+        )
+        assert real.read_text(encoding="utf-8") == "{}", "Expected link target intact"
+
+    def test_linked_claude_root_keeps_claude_json_beside_it(
+        self, sandbox: Sandbox, tmp_path: Path
+    ) -> None:
+        """A linked ``~/.claude`` still puts servers in ``~/.claude.json``."""
+        target = tmp_path / "dotfiles" / "claude"
+        target.mkdir(parents=True)
+        sandbox.root = sandbox.environment.home / ".claude"
+        try:
+            sandbox.root.symlink_to(target, target_is_directory=True)
+        except OSError as err:
+            pytest.skip(f"Platform cannot create directory symlinks: {err}")
+        sandbox.configure("claude")
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"command": "gh"}', encoding="utf-8")
+
+        status, output = sandbox.run("sync")
+
+        assert status == 0, f"Expected sync to succeed, got {output!r}"
+        assert (sandbox.environment.home / ".claude.json").is_file(), (
+            "Expected ~/.claude.json written beside the link"
+        )
+        assert not (target.parent / ".claude.json").exists(), (
+            "Expected nothing beside the link target"
+        )

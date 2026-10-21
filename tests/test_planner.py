@@ -28,6 +28,7 @@ class TestPlanner:
             ProfileRegistry(),
             SourceReader(),
             ManifestStore(sandbox.environment.state_directory),
+            sandbox.environment,
         )
 
     def test_only_limits_enabled_destinations(self, sandbox: Sandbox) -> None:

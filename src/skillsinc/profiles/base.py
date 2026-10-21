@@ -11,9 +11,11 @@ from typing import ClassVar, Final
 from skillsinc.frontmatter import FrontmatterCodec
 from skillsinc.models import (
     Customization,
+    EntryOutput,
     FileOutput,
     Frontmatter,
     FrontmatterValue,
+    JsonValue,
     Kind,
     LossPolicy,
     Rendering,
@@ -29,6 +31,9 @@ PLUGIN_AGENT_POLICY: Final = LossPolicy(carried=frozenset({"name", "description"
 PLUGIN_COMMAND_POLICY: Final = LossPolicy(
     carried=frozenset({"description", "argument-hint"})
 )
+SERVER_FIELDS: Final = frozenset({"type", "command", "args", "env", "url", "headers"})
+LOCAL_TYPES: Final = frozenset({"stdio", "local"})
+REMOTE_TYPES: Final = frozenset({"http", "sse"})
 
 
 class Profile(ABC):
@@ -37,6 +42,8 @@ class Profile(ABC):
     name: ClassVar[str]
     summary: ClassVar[str]
     support: ClassVar[Mapping[Kind, Support]]
+    outside: ClassVar[frozenset[str]] = frozenset[str]()
+    """Files beside the root (``../<name>``) this profile may write entries into."""
 
     def __init__(self) -> None:
         self._codec = FrontmatterCodec()
@@ -48,6 +55,11 @@ class Profile(ABC):
     @abstractmethod
     def render(self, item: Customization) -> Rendering:
         """Translate ``item`` into this harness's native files."""
+
+    def locate(self, path: str, root: Path, environment: Environment) -> str:
+        """Return where an entry file named ``path`` lives relative to ``root``."""
+        del root, environment
+        return path
 
     # Shared conversions
 
@@ -131,6 +143,44 @@ class Profile(ABC):
         if not found:
             return []
         return [f"uses VS Code variables other harnesses ignore: {', '.join(found)}"]
+
+    @staticmethod
+    def server_entry(item: Customization, path: str, container: str) -> Rendering:
+        """Convert an MCP server into an entry with an explicit transport ``type``.
+
+        Fields outside the common ``mcpServers`` shape are dropped and reported;
+        a ``url`` server without a ``type`` is written as ``http`` and reported,
+        because it could equally be ``sse``.
+        """
+        source = item.document.frontmatter
+        transport = source.get("type")
+        if transport is not None and not isinstance(transport, str):
+            return Rendering.refuse("type must be a string")
+        losses: list[str] = []
+        if "command" in source:
+            if transport is not None and transport not in LOCAL_TYPES:
+                return Rendering.refuse(
+                    f"type '{transport}' does not fit a server with a command"
+                )
+            transport = "stdio"
+        elif transport is None:
+            transport = "http"
+            losses.append("has no type, so it is written as an http server")
+        elif transport not in REMOTE_TYPES:
+            return Rendering.refuse(
+                f"type '{transport}' is not a remote transport (http or sse)"
+            )
+        server: dict[str, JsonValue] = {"type": transport}
+        server.update(
+            (key, value)
+            for key, value in source.items()
+            if key in SERVER_FIELDS and key != "type"
+        )
+        dropped = [key for key in source if key not in SERVER_FIELDS]
+        if dropped:
+            losses.append(f"drops server fields: {', '.join(dropped)}")
+        entry = EntryOutput(path, container, item.name, server)
+        return Rendering(entries=(entry,), losses=tuple(losses))
 
     @classmethod
     def refuse_kind(cls, item: Customization, hint: str = "") -> Rendering:

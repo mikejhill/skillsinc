@@ -64,12 +64,14 @@ Harnesses that read MCP servers from a shared JSON or TOML file (Copilot CLI's `
 
 An entry may be marked mergeable (Claude Code hooks, keyed by event under `hooks` in `settings.json`). Several items may then contribute to one key: the planner concatenates their lists in item order, skipping elements already present, and the merged list is owned as one entry.
 
+A profile may also write entries into files it declares beside its root (`Profile.outside`, such as Claude Code's `../.claude.json`), placed by `Profile.locate` and resolved by name rather than through links ([decision 0007](../decisions/0007-files-beside-the-root.md)). Shared files keep their permissions when rewritten.
+
 ## Safety checks
 
 - Every change records the digest of the file it expects; the applier re-reads and refuses if the file changed after planning.
 - Writes go to a sibling temporary file, then `Path.replace` swaps it in.
 - The manifest is saved after every applied change, so an interrupted run never loses track of written files.
-- Paths that pass through a symlink or junction inside a destination are refused, so a sync can never write back into the library through a link.
+- Paths that pass through a symlink or junction inside a destination are refused, so a sync can never write back into the library through a link. A declared file beside the root must not be a link either; any other `..` path is refused.
 
 ## Adding a harness
 

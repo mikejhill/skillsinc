@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from skillsinc.paths import Environment
+from skillsinc.paths import Environment, destination_file
 
 
 class TestEnvironment:
@@ -27,3 +27,23 @@ class TestEnvironment:
         assert result == Environment(
             tmp_path, {"XDG_STATE_HOME": str(tmp_path / "state")}, "test-platform"
         ), f"Expected independent fake environment snapshot, got {result!r}"
+
+
+class TestDestinationFile:
+    """Only a declared sibling's leading ``..`` is taken by name."""
+
+    def test_sibling_is_beside_the_configured_root(self, tmp_path: Path) -> None:
+        """A leading ``..`` names the configured root's parent, not a link's."""
+        root = tmp_path / "home" / ".claude"
+
+        result = destination_file(root, "../.claude.json")
+
+        assert result == tmp_path / "home" / ".claude.json", f"Got {result}"
+
+    def test_root_is_never_normalized(self, tmp_path: Path) -> None:
+        """A ``..`` inside the configured root keeps its operating-system meaning."""
+        root = tmp_path / "link" / ".." / "claude"
+
+        result = destination_file(root, "rules/a.md")
+
+        assert result == root / "rules" / "a.md", f"Got {result}"

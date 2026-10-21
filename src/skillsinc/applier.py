@@ -10,6 +10,7 @@ from pathlib import Path
 from skillsinc.exceptions import ConflictError
 from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock, OwnedEntries
 from skillsinc.models import Digest
+from skillsinc.paths import destination_file
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class Applier:
 
     def _apply_change(self, root: Path, change: Change) -> None:
         """Verify the file is as planned, then perform the change."""
-        target = root / change.path
+        target = destination_file(root, change.path)
         self._verify(target, change.expected)
         match change.action:
             case Action.DELETE if change.content is None:
@@ -84,11 +85,17 @@ class Applier:
 
     @staticmethod
     def _write(target: Path, change: Change) -> None:
-        """Write ``change.content`` atomically via a sibling temporary file."""
+        """Write ``change.content`` atomically via a sibling temporary file.
+
+        A shared file keeps its permissions, so a private configuration file
+        holding credentials stays private.
+        """
         content = change.content or b""
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = target.with_name(f".{target.name}.skillsinc-tmp")
         staging.write_bytes(content)
+        if (change.entry or change.block) and target.is_file():
+            staging.chmod(stat.S_IMODE(target.stat().st_mode))
         if change.executable:
             mode = staging.stat().st_mode
             staging.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

@@ -78,7 +78,7 @@ my-agent-library/
 
 | Profile   | Skills    | Instructions                 | Agents               | Prompts              | MCP servers                    | Resources                             | Hooks                   |
 | --------- | --------- | ---------------------------- | -------------------- | -------------------- | ------------------------------ | ------------------------------------- | ----------------------- |
-| `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md`   | `commands/<name>.md` | —                              | `resources/` + `CLAUDE.md` `@` import | `settings.json` `hooks` |
+| `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md`   | `commands/<name>.md` | `~/.claude.json` `mcpServers`  | `resources/` + `CLAUDE.md` `@` import | `settings.json` `hooks` |
 | `copilot` | `skills/` | `instructions/`              | `agents/`            | —                    | `mcp-config.json` `mcpServers` | `resources/`                          | `hooks/`                |
 | `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`    | `<name>.prompt.md`   | —                              | —                                     | —                       |
 | `codex`   | —         | managed block in `AGENTS.md` | `agents/<name>.toml` | —                    | —                              | —                                     | —                       |
@@ -113,6 +113,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 - [Decision: resources and Claude imports](docs/decisions/0003-resources-and-claude-imports.md)
 - [Decision: TOML entries with tomlkit](docs/decisions/0004-toml-entries-with-tomlkit.md)
 - [Decision: plugins expand into kinds](docs/decisions/0005-plugins-expand-into-kinds.md)
+- [Decision: entry files beside a destination root](docs/decisions/0007-files-beside-the-root.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License

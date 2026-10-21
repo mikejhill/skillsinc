@@ -12,6 +12,7 @@ from skillsinc.entries import EntryFile, JsonDocument
 from skillsinc.exceptions import ConflictError
 from skillsinc.manifest import Manifest, OwnedBlock
 from skillsinc.models import Digest, EntryOutput, FileOutput
+from skillsinc.paths import destination_file
 from skillsinc.plan import Action, Change
 
 UNMANAGED = "exists but is not managed by SkillSinc; review it, then rerun with --adopt"
@@ -26,10 +27,18 @@ EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 class DestinationDiff:
     """Produce preconditioned changes for one destination directory."""
 
-    def __init__(self, root: Path, manifest: Manifest, *, adopt: bool) -> None:
+    def __init__(
+        self,
+        root: Path,
+        manifest: Manifest,
+        *,
+        adopt: bool,
+        outside: frozenset[str] = frozenset[str](),
+    ) -> None:
         self._root = root
         self._manifest = manifest
         self._adopt = adopt
+        self._outside = outside
         self._blocks = ManagedBlock()
         self._changes: list[Change] = []
         self._errors: list[str] = []
@@ -307,7 +316,7 @@ class DestinationDiff:
         """Return True if the file's executable flag differs from ``output``'s."""
         if sys.platform == "win32":
             return False
-        mode = (self._root / output.path).stat().st_mode
+        mode = destination_file(self._root, output.path).stat().st_mode
         return bool(mode & EXECUTABLE) != output.executable
 
     def _guarded(self, path: str, step: Callable[[], None]) -> None:
@@ -321,14 +330,19 @@ class DestinationDiff:
             self._errors.append(f"{path}: cannot read ({err})")
 
     def _check_path(self, path: str) -> None:
-        """Refuse paths that escape the root or pass through links or junctions."""
-        target = self._root / path
+        """Refuse paths that escape the root or pass through links or junctions.
+
+        The only exceptions are the profile's own files beside the root, such
+        as ``../.claude.json``, which must themselves not be links.
+        """
+        target = destination_file(self._root, path)
         relative = Path(path)
-        if relative.anchor or ".." in relative.parts:
+        beside = path in self._outside and relative.parts[:1] == ("..",)
+        if relative.anchor or (".." in relative.parts and not beside):
             msg = "path escapes the destination directory"
             raise ConflictError(msg)
-        current = self._root
-        for part in relative.parts:
+        current = self._root.parent if beside else self._root
+        for part in relative.parts[1:] if beside else relative.parts:
             current /= part
             if current.is_symlink() or current.is_junction():
                 msg = f"refusing to write through a link or junction at {current}"
@@ -339,7 +353,7 @@ class DestinationDiff:
 
     def _read(self, path: str) -> bytes | None:
         """Return the current bytes at ``path``, or None if absent."""
-        target = self._root / path
+        target = destination_file(self._root, path)
         if not target.is_file():
             return None
         return target.read_bytes()

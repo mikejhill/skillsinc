@@ -46,7 +46,6 @@ class TestProfileRegistry:
     @pytest.mark.parametrize(
         ("name", "hint"),
         [
-            ("claude", "~/.claude.json"),
             ("vscode", "User/mcp.json"),
             ("agents", ""),
         ],

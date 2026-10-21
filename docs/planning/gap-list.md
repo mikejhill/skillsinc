@@ -10,7 +10,7 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | Instructions | yes (`rules/`)    | yes (lossy, `AGENTS.md`) | yes               | yes                    | —           |
 | Agents       | yes (lossy)       | yes (lossy, TOML)        | yes               | yes                    | —           |
 | Prompts      | yes (`commands/`) | no harness format        | no harness format | yes                    | —           |
-| MCP servers  | **gap**           | yes (converted)          | yes               | **gap**                | —           |
+| MCP servers  | yes (new)         | yes (converted)          | yes               | **gap**                | —           |
 | Hooks        | yes (lossy, new)  | **gap**                  | yes (new)         | via `copilot`/`claude` | —           |
 | Resources    | yes (new)         | —                        | yes (new)         | —                      | —           |
 | Plugins      | expanded          | via `agents`             | expanded          | expanded               | skills only |
@@ -37,8 +37,8 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 1. ~~**Codex agents.**~~ Done: agents render into `~/.codex/agents/<name>.toml` with `name`, `description`, and `developer_instructions`, written with `tomlkit`; names are lowercase snake_case as in ai-feature-sync, and `tools`, `model`, and other fields are reported as losses.
 2. ~~**Hooks.**~~ Done for Copilot CLI and Claude Code ([decision 0006](../decisions/0006-hooks.md)). Remaining: Codex hooks, once its user hook location is confirmed against current Codex docs.
 3. ~~**Resources and Claude imports.**~~ Done: a `resources` kind copied to `~/.copilot/resources` and `~/.claude/resources`, with a managed `@`-import block in `~/.claude/CLAUDE.md` ([decision 0003](../decisions/0003-resources-and-claude-imports.md)).
-4. **Claude Code MCP servers.** Target `mcpServers` in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Needs a profile to name one file outside its root, with the same link and overlap checks. Claude Code rewrites this file while running, so expect precondition conflicts; the applier already fails closed and a rerun succeeds.
-5. **VS Code MCP servers.** Target `servers` in `Code/User/mcp.json`. Same outside-root need, plus a choice between comment-preserving JSONC edits and refusing files with comments (today's behavior).
+4. ~~**Claude Code MCP servers.**~~ Done: `mcpServers` in `~/.claude.json` through files declared beside the root ([decision 0007](../decisions/0007-files-beside-the-root.md)).
+5. **VS Code MCP servers.** Target `servers` in `Code/User/mcp.json`. The outside-root mechanism from decision 0007 covers the location; still needs a choice between comment-preserving JSONC edits and refusing files with comments (today's behavior).
 6. ~~**Codex MCP servers.**~~ Done: `[mcp_servers.<name>]` in `config.toml`, edited with `tomlkit` ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)).
 7. ~~**Plugins.**~~ Done: library plugins expand into skills, agents, prompts, and MCP servers ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Hooks inside plugins wait on gap 2; an opt-in local marketplace profile stays possible behind a new decision.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
