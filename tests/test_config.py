@@ -86,7 +86,7 @@ class TestConfigLoader:
         path.write_text(
             (
                 "version=1\n[sources.x]\npath='~/lib'\nexclude=[]"
-                "\n[sources.x.layout]\nskills='packages'\n[destin"
+                "\n[sources.x.layout]\nskills='packages'\nplugins='kits'\n[destin"
                 "ations.claude]\nenabled=false\n"
             ),
             encoding="utf-8",
@@ -99,6 +99,9 @@ class TestConfigLoader:
         )
         assert config.sources["x"].layout[Kind.SKILL] == "packages", (
             f"Expected packages layout, got {config.sources['x'].layout!r}"
+        )
+        assert config.sources["x"].plugins == "kits", (
+            f"Expected kits plugin folder, got {config.sources['x']!r}"
         )
         assert config.destinations["claude"].enabled is False, (
             f"Expected disabled Claude, got {config.destinations!r}"
@@ -177,6 +180,25 @@ class TestRouteConfig:
         route = RouteConfig(("library",), ("target",), include=include, exclude=exclude)
 
         result = route.selects(Builder.item(source=source))
+
+        assert result is expected, f"Expected selection {expected}, got {result}"
+
+    @pytest.mark.parametrize(
+        ("include", "exclude", "expected"),
+        [
+            (("skills/*",), (), True),
+            (("plugins/kit/*",), (), True),
+            (("plugins/other/*",), (), False),
+            (("*/*",), ("plugins/kit/*",), False),
+        ],
+    )
+    def test_plugin_items_match_by_plugin_path(
+        self, include: tuple[str, ...], exclude: tuple[str, ...], *, expected: bool
+    ) -> None:
+        """A route selects or drops a whole plugin through ``plugins/<name>/``."""
+        route = RouteConfig(("library",), ("target",), include=include, exclude=exclude)
+
+        result = route.selects(Builder.item(plugin="kit"))
 
         assert result is expected, f"Expected selection {expected}, got {result}"
 

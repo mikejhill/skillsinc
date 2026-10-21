@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tomllib
 
 import pytest
 from tests.conftest import Builder, Sandbox
@@ -391,6 +392,52 @@ class TestApplication:
         )
         assert "up to date" in final, f"Expected convergence, got {final!r}"
 
+    def test_codex_mcp_server_lifecycle_preserves_user_toml(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Add, update, and remove a Codex server; the user's TOML text survives."""
+        sandbox.configure("codex", allow_lossy=True)
+        config_file = sandbox.root / "config.toml"
+        config_file.parent.mkdir(parents=True)
+        user = '# mine\nmodel = "o3"  # pinned\n\n[mcp_servers.mine]\ncommand = "m"\n'
+        config_file.write_text(user, encoding="utf-8")
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text(
+            '{"type": "local", "command": "gh", "env": {"K": "v"}}', encoding="utf-8"
+        )
+
+        first_status, first = sandbox.run("sync")
+        added = config_file.read_text(encoding="utf-8")
+        server.write_text('{"type": "local", "command": "gh2"}', encoding="utf-8")
+        update_status, _ = sandbox.run("sync")
+        updated = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        server.unlink()
+        remove_status, removed_output = sandbox.run("sync")
+        final_status, final = sandbox.run("plan")
+
+        assert (first_status, update_status, remove_status, final_status) == (
+            0,
+            0,
+            0,
+            0,
+        ), f"Expected four successful runs, got {first!r}, {removed_output!r}"
+        assert "+ create config.toml [mcp_servers/github]" in first, (
+            f"Expected entry creation in output, got {first!r}"
+        )
+        assert added.startswith(user), f"Expected user text kept, got {added!r}"
+        assert tomllib.loads(added)["mcp_servers"]["github"] == {
+            "command": "gh",
+            "env": {"K": "v"},
+        }, f"Expected the server table, got {added!r}"
+        assert updated["mcp_servers"]["github"] == {"command": "gh2"}, (
+            f"Expected server updated in place, got {updated!r}"
+        )
+        assert config_file.read_text(encoding="utf-8") == user, (
+            f"Expected user file restored exactly, got {config_file.read_text()!r}"
+        )
+        assert "up to date" in final, f"Expected convergence, got {final!r}"
+
     def test_unmanaged_mcp_server_blocks_until_adopted(self, sandbox: Sandbox) -> None:
         """A same-named server the user wrote is never overwritten without --adopt."""
         sandbox.configure("copilot")
@@ -415,4 +462,102 @@ class TestApplication:
         assert adopt_status == 0, f"Expected adoption to succeed, got {adopt_status}"
         assert adopted["mcpServers"]["github"] == {"command": "gh"}, (
             f"Expected adopted server replaced, got {adopted!r}"
+        )
+
+    def test_claude_resource_imports_lifecycle_preserves_user_memory(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Copy resources, import them from CLAUDE.md, then remove both cleanly."""
+        sandbox.configure("claude", allow_lossy=True)
+        memory = sandbox.root / "CLAUDE.md"
+        memory.parent.mkdir(parents=True)
+        memory.write_text("My own memory.\n", encoding="utf-8")
+        resources = sandbox.library / "resources"
+        resources.mkdir()
+        (resources / "style.md").write_text("Style guide.\n", encoding="utf-8")
+        (resources / "api.md").write_text("API notes.\n", encoding="utf-8")
+
+        first_status, first = sandbox.run("sync")
+        imported = memory.read_text(encoding="utf-8")
+        copied = (sandbox.root / "resources/style.md").read_text(encoding="utf-8")
+        shutil.rmtree(resources)
+        remove_status, removed = sandbox.run("sync")
+        final_status, final = sandbox.run("plan")
+
+        assert (first_status, remove_status, final_status) == (0, 0, 0), (
+            f"Expected three successful runs, got {first!r}, {removed!r}"
+        )
+        assert imported.startswith("My own memory.\n"), (
+            f"Expected user memory kept above the block, got {imported!r}"
+        )
+        assert imported.index("@resources/api.md") < imported.index(
+            "@resources/style.md"
+        ), f"Expected imports in name order, got {imported!r}"
+        assert copied == "Style guide.\n", f"Expected verbatim copy, got {copied!r}"
+        assert memory.read_text(encoding="utf-8") == "My own memory.\n", (
+            f"Expected user memory restored exactly, got {memory.read_text()!r}"
+        )
+        assert not (sandbox.root / "resources").exists(), (
+            f"Expected resources folder pruned, got {removed!r}"
+        )
+        assert "up to date" in final, f"Expected convergence, got {final!r}"
+
+    def test_plugin_expands_into_claude_and_copilot(self, sandbox: Sandbox) -> None:
+        """A plugin syncs its parts per harness, with unsynced hooks as a loss."""
+        root = sandbox.library / "plugins/kit"
+        files = {
+            ".claude-plugin/plugin.json": '{"name": "kit"}',
+            "agents/checker.md": "---\ndescription: Check\ntools: Read\n---\nCheck.\n",
+            "commands/ship.md": "---\ndescription: Ship\n---\nShip $ARGUMENTS.\n",
+            ".mcp.json": '{"mcpServers": {"api": {"command": "api"}}}',
+            "commands/fmt.md": "Run ${CLAUDE_PLUGIN_ROOT}/fmt.sh.\n",
+            "hooks/hooks.json": "{}",
+        }
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8", newline="\n")
+        claude = sandbox.environment.home / "claude"
+        copilot = sandbox.environment.home / "copilot"
+        Builder.write_config(
+            sandbox.config_path,
+            sandbox.library,
+            (("claude", "claude", claude), ("copilot", "copilot", copilot)),
+            include=("plugins/kit/*",),
+        )
+
+        _, strict = sandbox.run("plan", "--verbose")
+        Builder.write_config(
+            sandbox.config_path,
+            sandbox.library,
+            (("claude", "claude", claude), ("copilot", "copilot", copilot)),
+            include=("plugins/kit/*",),
+            allow_lossy=True,
+        )
+        status, output = sandbox.run("sync")
+
+        assert "hooks/, which is not synced" in strict, (
+            f"Expected hooks named as a loss, got {strict!r}"
+        )
+        assert status == 0, f"Expected a successful sync, got {status}: {output}"
+        assert (claude / "agents/checker.md").read_bytes() == (
+            root / "agents/checker.md"
+        ).read_bytes(), "Expected the plugin agent copied exactly into Claude"
+        assert (claude / "commands/ship.md").is_file(), (
+            f"Expected the plugin command in Claude, got {output}"
+        )
+        assert json.loads((copilot / "mcp-config.json").read_text())["mcpServers"] == {
+            "api": {"command": "api"}
+        }, f"Expected the plugin server, got {output}"
+        assert (copilot / "agents/checker.agent.md").is_file(), (
+            f"Expected the converted agent in Copilot, got {output}"
+        )
+        assert not (claude / "commands/fmt.md").exists(), (
+            f"Expected the command needing the plugin root refused, got {output}"
+        )
+        assert "only an installed plugin resolves" in strict, (
+            f"Expected the refusal reason reported, got {strict!r}"
+        )
+        assert not (claude / "skills").exists(), (
+            f"Expected library items outside the plugin left unrouted, got {output}"
         )

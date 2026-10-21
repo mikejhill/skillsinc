@@ -28,6 +28,7 @@ class Kind(StrEnum):
     AGENT = "agents"
     PROMPT = "prompts"
     MCP = "mcp"
+    RESOURCE = "resources"
 
 
 class Support(StrEnum):
@@ -61,7 +62,8 @@ class Document:
     """A Markdown file split into YAML frontmatter and body.
 
     An MCP server definition is a JSON file: ``frontmatter`` holds the parsed
-    object and ``body`` is empty.
+    object and ``body`` is empty. A resource is copied as written, so only
+    ``raw`` is set.
     """
 
     frontmatter: Frontmatter
@@ -71,7 +73,11 @@ class Document:
 
 @dataclass(frozen=True, slots=True)
 class Customization:
-    """One authored customization read from a source library."""
+    """One authored customization read from a source library.
+
+    Items expanded from a plugin name it in ``plugin``; ``losses`` lists plugin
+    parts no kind carries, and ``refusal`` explains why no profile can use it.
+    """
 
     kind: Kind
     name: str
@@ -79,11 +85,21 @@ class Customization:
     document: Document
     file_name: str
     assets: tuple[Asset, ...] = ()
+    plugin: str | None = None
+    losses: tuple[str, ...] = ()
+    refusal: str | None = None
 
     @property
     def selector(self) -> str:
         """Return the ``kind/name`` identity used by route filters."""
         return f"{self.kind}/{self.name}"
+
+    @property
+    def selectors(self) -> tuple[str, ...]:
+        """Return every identity route filters match, including the plugin path."""
+        if self.plugin is None:
+            return (self.selector,)
+        return (self.selector, f"plugins/{self.plugin}/{self.selector}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +121,7 @@ class BlockOutput:
 
 @dataclass(frozen=True, slots=True)
 class EntryOutput:
-    """A keyed value a profile wants inside a container object of a shared JSON file."""
+    """A keyed value a profile wants inside a container of a shared config file."""
 
     path: str
     container: str

@@ -173,15 +173,18 @@ class Planner:
         selected = self._select(routes, items)
         desired = DesiredState()
         for label, (item, allow_lossy) in sorted(selected.items()):
+            if item.refusal is not None:
+                desired.skipped.append(Skip(label, item.refusal))
+                continue
             rendering = profile.render(item)
             if rendering.unsupported is not None:
                 desired.skipped.append(Skip(label, rendering.unsupported))
                 continue
-            if rendering.losses and not allow_lossy:
-                reason = "; ".join(rendering.losses)
-                desired.skipped.append(Skip(label, reason, lossy=True))
+            losses = (*rendering.losses, *item.losses)
+            if losses and not allow_lossy:
+                desired.skipped.append(Skip(label, "; ".join(losses), lossy=True))
                 continue
-            desired.notes.extend(f"{label}: {loss}" for loss in rendering.losses)
+            desired.notes.extend(f"{label}: {loss}" for loss in losses)
             self._add_files(desired, label, rendering.files)
             for block in rendering.blocks:
                 desired.blocks.setdefault(block.path, []).append((label, block.text))
@@ -224,7 +227,7 @@ class Planner:
     def _add_entries(
         desired: DesiredState, label: str, entries: Iterable[EntryOutput]
     ) -> None:
-        """Add rendered JSON entries, flagging items that set one key differently."""
+        """Add rendered config entries, flagging items that set one key differently."""
         for output in entries:
             found = desired.entries.setdefault(output.path, {})
             origin = f"{output.path}#{output.entry}"

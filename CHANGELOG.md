@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - [Scheduling examples](docs/guides/scheduling.md) for Windows Task Scheduler (registration script), macOS launchd, and a Linux systemd user timer.
+- Codex MCP servers: library servers sync into `[mcp_servers.<name>]` tables in `config.toml`, keeping the user's comments, layout, and other tables. Only fields Codex reads are written; SSE servers are refused and other fields are reported as losses. Adds the `tomlkit` dependency ([decision 0004](docs/decisions/0004-toml-entries-with-tomlkit.md)).
+- Resources: `resources/<name>.md` reference files are copied byte for byte into `~/.copilot/resources` and `~/.claude/resources`; Claude Code also gets a managed block of `@resources/<name>.md` imports in `CLAUDE.md` ([decision 0003](docs/decisions/0003-resources-and-claude-imports.md)).
+- Plugins: `plugins/<plugin>/` directories in Claude Code's layout expand into skills, agents, prompts, and MCP servers for every profile; unsynced parts such as hooks are reported as losses, and items needing `${CLAUDE_PLUGIN_ROOT}` are refused ([decision 0005](docs/decisions/0005-plugins-expand-into-kinds.md)). Routes can select a whole plugin with `plugins/<plugin>/*`.
 - MCP servers: `mcp/<name>.json` library files sync into Copilot CLI's `mcp-config.json` as owned `mcpServers` entries, leaving the user's other servers and keys untouched ([decision 0002](docs/decisions/0002-mcp-server-entries.md)). Manifests move to version 2; version 1 manifests load unchanged.
 - [Gap list](docs/planning/gap-list.md) of what remains to sync skills, plugins, instructions, and MCP servers across harnesses, including parity with the earlier ai-feature-sync tool.
 - `init`, `plan`, `sync`, and `profiles` commands.

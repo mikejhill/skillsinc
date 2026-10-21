@@ -17,7 +17,7 @@ from skillsinc.plan import Action, Change
 UNMANAGED = "exists but is not managed by SkillSinc; review it, then rerun with --adopt"
 EDITED = "edited since SkillSinc wrote it, so it is left in place and released"
 BOTH = (
-    "wanted in more than one form (whole file, managed block, JSON entries);"
+    "wanted in more than one form (whole file, managed block, config entries);"
     " route it one way"
 )
 EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
@@ -191,13 +191,13 @@ class DestinationDiff:
     # Entries
 
     def _entries(self, path: str, outputs: Mapping[str, EntryOutput]) -> None:
-        """Plan keyed entries inside a shared JSON file, one change per entry.
+        """Plan keyed entries inside a shared JSON or TOML file, one change per entry.
 
         Each change carries the digest of the file before it and the bytes
         after it, so the applier applies them in order and stops at any drift.
         Removals come last so an emptied file is never deleted and recreated.
         """
-        document = EntryFile(self._read(path))
+        document = EntryFile.open(path, self._read(path))
         owned = self._manifest.entries.get(path)
         created = owned.created_file if owned else document.raw is None
         recorded = owned.keys if owned else {}
