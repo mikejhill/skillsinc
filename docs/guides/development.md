@@ -20,7 +20,7 @@ uv run poe check
 
 CI (`.github/workflows/ci.yml`) runs the same tasks on Linux, Windows, and macOS with Python 3.12–3.14. The `CI` and `Security` aggregate jobs are required status checks on `main`.
 
-The repository's Actions policy allows only GitHub-owned actions plus `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; any other action makes the workflow fail at startup. Put extra CI logic in `scripts/` (PEP 723 scripts run with `uv run`): `junit_summary.py` writes the test report to the job summary, and `next_version.py` computes the release version from Conventional Commits.
+The repository's Actions policy allows only GitHub-owned actions plus `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; any other action makes the workflow fail at startup. Put extra CI logic in `scripts/` (PEP 723 scripts run with `uv run`): `junit_summary.py` writes the test report to the job summary. release-please runs as a pinned npm CLI in the Release workflow for the same reason.
 
 ## Code standards
 
@@ -32,7 +32,7 @@ The gate enforces most rules; the rest are conventions to keep:
 - **Typing:** every parameter and return annotated; no `Any`; untyped input (JSONC, YAML, JSON, argparse) is converted to dataclasses at the boundary (`config.Table`, `FrontmatterCodec`, `ManifestStore._parse`, `CommandLine.parse`).
 - **Docs in code:** every file, class, and method has a one-line docstring; comments are short block headers, not narration.
 - **Errors:** raise subclasses of `AppError` from `exceptions.py`. `ConfigurationError` exits 2, other `AppError`s exit 1. Diagnostics go to stderr via `logging`; command output goes to the `out` stream.
-- **Commits:** [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/); PR titles are linted and squash-merged. Add a `CHANGELOG.md` entry under `[Unreleased]`.
+- **Commits:** [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/); PR titles are linted and squash-merged, and they generate the changelog; do not edit `CHANGELOG.md` by hand.
 
 ## Tests
 
@@ -85,4 +85,4 @@ Read [architecture](../architecture/overview.md) first. Any change to `diff.py` 
 
 ## Releasing
 
-See [CONTRIBUTING](../../CONTRIBUTING.md#releasing). The **Release** workflow is manual (`workflow_dispatch` on `main`) and needs the one-time setup listed there.
+See [releasing](releasing.md). Merging the release pull request that release-please keeps open publishes the release.
