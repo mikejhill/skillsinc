@@ -781,3 +781,53 @@ class TestApplication:
         assert not (target.parent / ".claude.json").exists(), (
             "Expected nothing beside the link target"
         )
+
+    def test_vscode_mcp_servers_go_into_user_mcp_json(self, sandbox: Sandbox) -> None:
+        """Servers land in ``User/mcp.json`` beside the prompts folder."""
+        user_dir = sandbox.environment.home / "Code" / "User"
+        sandbox.root = user_dir / "prompts"
+        sandbox.configure("vscode")
+        mcp_json = user_dir / "mcp.json"
+        user_dir.mkdir(parents=True)
+        user = {"servers": {"mine": {"type": "stdio", "command": "x"}}, "inputs": []}
+        mcp_json.write_text(json.dumps(user), encoding="utf-8")
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"url": "https://x", "type": "http"}', encoding="utf-8")
+
+        first_status, first = sandbox.run("sync")
+        added = json.loads(mcp_json.read_text(encoding="utf-8"))
+        server.unlink()
+        remove_status, _ = sandbox.run("sync")
+
+        assert first_status == 0, f"Expected sync to succeed, got {first!r}"
+        assert added["servers"]["github"] == {"type": "http", "url": "https://x"}, (
+            f"Expected server under servers, got {added!r}"
+        )
+        assert added["inputs"] == [], f"Expected inputs kept, got {added!r}"
+        assert remove_status == 0, f"Expected removal to succeed, got {remove_status}"
+        assert json.loads(mcp_json.read_text(encoding="utf-8")) == user, (
+            f"Expected user file restored, got {mcp_json.read_text()!r}"
+        )
+        assert user_dir.is_dir(), "Expected User folder left in place"
+
+    def test_vscode_mcp_json_with_comments_blocks(self, sandbox: Sandbox) -> None:
+        """A commented ``mcp.json`` is refused, never rewritten without its comments."""
+        user_dir = sandbox.environment.home / "Code" / "User"
+        sandbox.root = user_dir / "prompts"
+        sandbox.configure("vscode")
+        mcp_json = user_dir / "mcp.json"
+        user_dir.mkdir(parents=True)
+        text = '{\n  // mine\n  "servers": {}\n}\n'
+        mcp_json.write_text(text, encoding="utf-8")
+        server = sandbox.library / "mcp/github.json"
+        server.parent.mkdir()
+        server.write_text('{"command": "gh"}', encoding="utf-8")
+
+        status, output = sandbox.run("sync")
+
+        assert status == 1, f"Expected a blocked destination, got {output!r}"
+        assert "is not a plain JSON object" in output, (
+            f"Expected a plain-JSON refusal, got {output!r}"
+        )
+        assert mcp_json.read_text(encoding="utf-8") == text, "Expected file untouched"

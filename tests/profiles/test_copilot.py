@@ -121,6 +121,29 @@ class TestVSCodeProfile:
             f"Expected shared skill-home hint, got {result!r}"
         )
 
+    def test_mcp_server_becomes_user_mcp_json_entry(self) -> None:
+        """Place servers under ``servers`` in ``User/mcp.json`` with a type."""
+        server: dict[str, JsonValue] = {
+            "type": "local",
+            "command": "gh",
+            "tools": ["*"],
+        }
+        item = Builder.item(Kind.MCP, name="github", frontmatter=server)
+
+        result = VSCodeProfile().render(item)
+
+        assert result == Rendering(
+            entries=(
+                EntryOutput(
+                    "../mcp.json",
+                    "servers",
+                    "github",
+                    {"type": "stdio", "command": "gh"},
+                ),
+            ),
+            losses=("drops server fields: tools",),
+        ), f"Expected one servers entry beside the root, got {result!r}"
+
     @pytest.mark.parametrize(
         ("platform", "prefix"),
         [

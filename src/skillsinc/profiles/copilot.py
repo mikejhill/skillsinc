@@ -17,10 +17,6 @@ COPY_PATHS: Final = {
 }
 VSCODE_REFUSALS: Final = {
     Kind.SKILL: "VS Code reads skills from copilot or agents destinations",
-    Kind.MCP: (
-        "VS Code keeps user MCP servers in User/mcp.json, outside the"
-        " prompts folder, which SkillSinc does not edit yet"
-    ),
     Kind.RESOURCE: "route resources to a claude or copilot destination",
     Kind.HOOK: (
         "VS Code reads user hooks from Copilot CLI and Claude Code"
@@ -88,17 +84,18 @@ class VSCodeProfile(Profile):
 
     name: ClassVar[str] = "vscode"
     summary: ClassVar[str] = (
-        "VS Code user prompts folder: *.instructions/agent/prompt.md"
+        "VS Code user prompts folder: *.instructions/agent/prompt.md, ../mcp.json"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.UNSUPPORTED,
         Kind.INSTRUCTION: Support.EXACT,
         Kind.AGENT: Support.EXACT,
         Kind.PROMPT: Support.EXACT,
-        Kind.MCP: Support.UNSUPPORTED,
+        Kind.MCP: Support.CONVERTED,
         Kind.HOOK: Support.UNSUPPORTED,
         Kind.RESOURCE: Support.UNSUPPORTED,
     }
+    outside: ClassVar[frozenset[str]] = frozenset({"../mcp.json"})
 
     @override
     def default_path(self, environment: Environment) -> Path:
@@ -122,5 +119,7 @@ class VSCodeProfile(Profile):
                 return self.agent(item, f"{item.name}.agent.md")
             case Kind.PROMPT:
                 return self.prompt(item, f"{item.name}.prompt.md")
+            case Kind.MCP:
+                return self.server_entry(item, "../mcp.json", "servers")
             case _:
                 return self.refuse_kind(item, VSCODE_REFUSALS[item.kind])
