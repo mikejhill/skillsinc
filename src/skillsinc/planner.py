@@ -6,6 +6,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import Final
 
 from skillsinc.config import Config, DestinationConfig, RouteConfig
 from skillsinc.diff import DestinationDiff
@@ -18,6 +19,8 @@ from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.sources import SourceReader
 
 logger = logging.getLogger(__name__)
+
+WARNING_SAMPLE: Final = 5
 
 
 @dataclass(slots=True)
@@ -134,7 +137,7 @@ class Planner:
         if overlap is not None:
             return DestinationPlan(destination, errors=(overlap,))
 
-        desired = self._render(destination, own_routes, items)
+        desired = self._render(config, destination, own_routes, items)
         if desired.errors:
             return DestinationPlan(destination, errors=tuple(desired.errors))
 
@@ -187,35 +190,89 @@ class Planner:
             profile = self._profiles.get(reader.destination.profile)
             if not profile.harness:
                 continue
-            seen: dict[str, list[str]] = defaultdict(list)
-            for label in reader.delivered:
-                seen[label].append(reader.destination.name)
-            for other in plans:
-                kinds = profile.also_reads.get(other.destination.profile)
-                if other is reader or kinds is None or not self._at_default(other):
-                    continue
-                for label in other.delivered:
-                    if self._kind(label) in kinds:
-                        seen[label].append(other.destination.name)
+            seen = self._loads(reader, plans)
             groups: dict[tuple[str, ...], list[str]] = defaultdict(list)
             for label, names in seen.items():
                 if len(names) > 1:
                     groups[tuple(names)].append(label.partition(":")[2])
             warnings.extend(
                 f"{profile.harness} loads {len(labels)} item(s) from both"
-                f" {' and '.join(names)}: {', '.join(sorted(labels))};"
+                f" {' and '.join(names)}: {self._sample(labels)};"
                 " exclude them from one route"
                 for names, labels in sorted(groups.items())
             )
         return tuple(warnings)
 
-    def _at_default(self, plan: DestinationPlan) -> bool:
+    def _loads(
+        self, reader: DestinationPlan, plans: Sequence[DestinationPlan]
+    ) -> dict[str, list[str]]:
+        """Map each item ``reader``'s harness loads to the destinations it is in."""
+        also_reads = self._profiles.get(reader.destination.profile).also_reads
+        seen: dict[str, list[str]] = defaultdict(list)
+        if self._at_default(reader.destination):
+            for label in reader.delivered:
+                seen[label].append(reader.destination.name)
+        for other in plans:
+            kinds = also_reads.get(other.destination.profile)
+            if other is reader or kinds is None:
+                continue
+            if not self._at_default(other.destination):
+                continue
+            for label in other.delivered:
+                if self._kind(label) in kinds:
+                    seen[label].append(other.destination.name)
+        return seen
+
+    def _covering(
+        self, config: Config, destination: DestinationConfig, item: Customization
+    ) -> str | None:
+        """Return the destination that already delivers ``item`` to this harness.
+
+        Only destinations at their profile's default directory count, on both
+        sides, and only if a route sends ``item`` there and it renders without
+        a refusal or an unaccepted loss. Every enabled destination is checked,
+        not just the planned ones, so ``--destination`` gives the same result.
+        """
+        covered_by = self._profiles.get(destination.profile).covered_by
+        if not covered_by or not self._at_default(destination):
+            return None
+        for other in config.destinations.values():
+            kinds = covered_by.get(other.profile)
+            if (
+                kinds is None
+                or item.kind not in kinds
+                or other is destination
+                or not other.enabled
+                or not self._at_default(other)
+            ):
+                continue
+            routes = [
+                route
+                for route in config.routes
+                if other.name in route.destinations and route.selects(item)
+            ]
+            if not routes:
+                continue
+            rendering = self._profiles.get(other.profile).render(item)
+            losses = (*rendering.losses, *item.losses)
+            allowed = any(route.allow_lossy for route in routes)
+            if rendering.unsupported is None and (allowed or not losses):
+                return other.name
+        return None
+
+    def _at_default(self, destination: DestinationConfig) -> bool:
         """Return True if the destination is its profile's default directory."""
-        destination = plan.destination
         default = self._profiles.get(destination.profile).default_path(
             self._environment
         )
         return default is not None and default == destination.path
+
+    @staticmethod
+    def _sample(labels: list[str]) -> str:
+        """Return up to five sorted item names, counting the rest."""
+        shown = sorted(labels)[:WARNING_SAMPLE]
+        rest = len(labels) - len(shown)
+        return ", ".join(shown) + (f" and {rest} more" if rest else "")
 
     @staticmethod
     def _kind(label: str) -> str:
@@ -224,6 +281,7 @@ class Planner:
 
     def _render(
         self,
+        config: Config,
         destination: DestinationConfig,
         routes: Sequence[RouteConfig],
         items: Mapping[str, tuple[Customization, ...]],
@@ -235,6 +293,11 @@ class Planner:
         for label, (item, allow_lossy) in sorted(selected.items()):
             if item.refusal is not None:
                 desired.skipped.append(Skip(label, item.refusal))
+                continue
+            cover = self._covering(config, destination, item)
+            if cover is not None:
+                reason = f"{profile.harness} already loads it from destination {cover}"
+                desired.skipped.append(Skip(label, reason))
                 continue
             rendering = profile.render(item)
             if rendering.unsupported is not None:

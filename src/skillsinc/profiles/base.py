@@ -67,6 +67,8 @@ class Profile(ABC):
     """The application that reads this destination, or empty for shared folders."""
     also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = dict[str, frozenset[Kind]]()
     """Kinds the harness also loads from other profiles' default directories."""
+    covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = dict[str, frozenset[Kind]]()
+    """Kinds left out when another profile's default directory receives them."""
 
     def __init__(self) -> None:
         self._codec = FrontmatterCodec()

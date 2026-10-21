@@ -33,6 +33,7 @@ class CopilotProfile(Profile):
     also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = {
         "agents": frozenset({Kind.SKILL}),
     }
+    covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = also_reads
     summary: ClassVar[str] = (
         "Copilot CLI: skills/, instructions/, agents/, resources/, hooks/,"
         " mcp-config.json"
@@ -99,6 +100,9 @@ class VSCodeProfile(Profile):
         "copilot": frozenset({Kind.SKILL, Kind.INSTRUCTION, Kind.AGENT}),
         "agents": frozenset({Kind.SKILL}),
         "claude": frozenset({Kind.SKILL}),
+    }
+    covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = {
+        "copilot": frozenset({Kind.INSTRUCTION, Kind.AGENT}),
     }
     summary: ClassVar[str] = (
         "VS Code user prompts folder: *.instructions/agent/prompt.md, ../mcp.json"

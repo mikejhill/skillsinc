@@ -13,6 +13,7 @@ from tests.conftest import Builder, Sandbox
 from skillsinc.config import Config, DestinationConfig, RouteConfig
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.manifest import Manifest, ManifestStore
+from skillsinc.plan import Plan
 from skillsinc.planner import Planner
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.sources import SourceReader
@@ -268,81 +269,119 @@ class TestPlanner:
         )
 
 
-class TestDuplicateWarnings:
+class TestDuplicateLoads:
     """A harness that reads two destinations must not load one item twice."""
 
     @staticmethod
     def plan(
-        sandbox: Sandbox, profiles: tuple[str, ...], *, at_default: bool = True
-    ) -> tuple[str, ...]:
-        """Route the sample library to ``profiles`` and return the plan warnings."""
+        sandbox: Sandbox,
+        profiles: tuple[str, ...],
+        *,
+        custom: tuple[str, ...] = (),
+        routes: tuple[RouteConfig, ...] = (),
+        only: tuple[str, ...] = (),
+    ) -> Plan:
+        """Route the sample library to ``profiles`` and return the plan.
+
+        Destinations named in ``custom`` get a path outside the harness's folder.
+        """
         config = sandbox.configure()
         registry = ProfileRegistry()
         destinations = {}
         for name in profiles:
             default = registry.get(name).default_path(sandbox.environment)
             assert default is not None
-            path = default if at_default else sandbox.environment.home / "x" / name
+            path = sandbox.environment.home / "x" / name if name in custom else default
             destinations[name] = DestinationConfig(name, name, path)
-        route = RouteConfig(
-            sources=("library",), destinations=profiles, allow_lossy=True
-        )
-        config = replace(config, destinations=destinations, routes=(route,))
-        return TestPlanner.planner(sandbox).plan(config).warnings
-
-    def test_copilot_and_agents_both_receiving_skills_warns(
-        self, sandbox: Sandbox
-    ) -> None:
-        """Copilot CLI reads ~/.agents/skills too, so one skill would load twice."""
-        warnings = self.plan(sandbox, ("copilot", "agents"))
-
-        assert warnings == (
-            "Copilot CLI loads 1 item(s) from both copilot and agents:"
-            " skills/sample; exclude them from one route",
-        ), f"Expected one skills warning, got {warnings!r}"
-
-    def test_vscode_reads_copilot_instructions_agents_and_skills(
-        self, sandbox: Sandbox
-    ) -> None:
-        """VS Code reads ~/.copilot, so its own copies duplicate them."""
-        warnings = self.plan(sandbox, ("copilot", "vscode"))
-
-        assert len(warnings) == 1, f"Expected one VS Code warning, got {warnings!r}"
-        assert warnings[0].startswith("VS Code loads 3 item(s) from both vscode"), (
-            f"Expected agent and both instructions, got {warnings!r}"
-        )
-        assert "agents/reviewer" in warnings[0], f"Got {warnings!r}"
-
-    def test_split_routes_produce_no_warning(self, sandbox: Sandbox) -> None:
-        """Excluding skills from copilot and documents from vscode is clean."""
-        config = sandbox.configure()
-        registry = ProfileRegistry()
-        names = ("copilot", "vscode", "agents")
-        destinations = {}
-        for name in names:
-            default = registry.get(name).default_path(sandbox.environment)
-            assert default is not None
-            destinations[name] = DestinationConfig(name, name, default)
-        routes = (
-            RouteConfig(("library",), ("agents",), allow_lossy=True),
-            RouteConfig(
-                ("library",), ("copilot",), exclude=("skills/*",), allow_lossy=True
-            ),
-            RouteConfig(
-                ("library",),
-                ("vscode",),
-                exclude=("instructions/*", "agents/*"),
-                allow_lossy=True,
-            ),
+        routes = routes or (
+            RouteConfig(sources=("library",), destinations=profiles, allow_lossy=True),
         )
         config = replace(config, destinations=destinations, routes=routes)
+        return TestPlanner.planner(sandbox).plan(config, only=only)
 
-        warnings = TestPlanner.planner(sandbox).plan(config).warnings
+    @staticmethod
+    def skipped(plan: Plan, destination: str) -> dict[str, str]:
+        """Return ``{item: reason}`` for the destination's skips."""
+        found = next(d for d in plan.destinations if d.destination.name == destination)
+        return {skip.item: skip.reason for skip in found.skipped}
 
-        assert warnings == (), f"Expected no duplicates, got {warnings!r}"
+    def test_copilot_leaves_skills_to_agents(self, sandbox: Sandbox) -> None:
+        """Copilot CLI reads ~/.agents/skills, so ~/.copilot gets no copy."""
+        plan = self.plan(sandbox, ("copilot", "agents"))
 
-    def test_custom_paths_are_not_read_by_the_harness(self, sandbox: Sandbox) -> None:
-        """A destination outside the default folder is not searched by the harness."""
-        warnings = self.plan(sandbox, ("copilot", "agents"), at_default=False)
+        assert self.skipped(plan, "copilot")["library:skills/sample"] == (
+            "Copilot CLI already loads it from destination agents"
+        ), f"Expected skill covered by agents, got {plan!r}"
+        assert plan.warnings == (), f"Expected no warning, got {plan.warnings!r}"
 
-        assert warnings == (), f"Expected no warning for custom paths, got {warnings!r}"
+    def test_coverage_holds_when_planning_one_destination(
+        self, sandbox: Sandbox
+    ) -> None:
+        """``--destination`` must not flip items back into a covered destination."""
+        plan = self.plan(sandbox, ("copilot", "agents"), only=("copilot",))
+
+        assert "library:skills/sample" in self.skipped(plan, "copilot"), (
+            f"Expected the skill still covered, got {plan!r}"
+        )
+
+    def test_vscode_keeps_instructions_copilot_cannot_take(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Copilot skips an unscoped instruction (lossy); VS Code keeps it."""
+        route = RouteConfig(sources=("library",), destinations=("copilot", "vscode"))
+        plan = self.plan(sandbox, ("copilot", "vscode"), routes=(route,))
+
+        vscode = self.skipped(plan, "vscode")
+        assert "library:instructions/scoped" in vscode, f"Got {vscode!r}"
+        assert "library:instructions/global" not in vscode, (
+            f"Expected the unscoped instruction written to VS Code, got {vscode!r}"
+        )
+        assert plan.warnings == (), f"Expected no warning, got {plan.warnings!r}"
+
+    def test_custom_path_destinations_neither_cover_nor_warn(
+        self, sandbox: Sandbox
+    ) -> None:
+        """A destination outside the harness's folder is invisible to the harness."""
+        plan = self.plan(sandbox, ("copilot", "agents"), custom=("copilot",))
+
+        assert "library:skills/sample" not in self.skipped(plan, "copilot"), (
+            f"Expected the skill written to the custom copilot path, got {plan!r}"
+        )
+        assert plan.warnings == (), f"Expected no warning, got {plan.warnings!r}"
+
+    def test_unavoidable_duplicate_is_warned(self, sandbox: Sandbox) -> None:
+        """VS Code reads both ~/.claude/skills and ~/.agents/skills."""
+        plan = self.plan(sandbox, ("claude", "vscode", "agents"))
+
+        assert plan.warnings == (
+            "VS Code loads 1 item(s) from both claude and agents:"
+            " skills/sample; exclude them from one route",
+        ), f"Expected one VS Code warning, got {plan.warnings!r}"
+
+    def test_unrouted_cover_does_not_skip(self, sandbox: Sandbox) -> None:
+        """An agents destination that is not sent the skill covers nothing."""
+        routes = (
+            RouteConfig(("library",), ("copilot",)),
+            RouteConfig(("library",), ("agents",), include=("instructions/*",)),
+        )
+        plan = self.plan(sandbox, ("copilot", "agents"), routes=routes)
+
+        assert "library:skills/sample" not in self.skipped(plan, "copilot"), (
+            f"Expected the skill kept in copilot, got {plan!r}"
+        )
+
+    def test_custom_path_other_is_not_read(self, sandbox: Sandbox) -> None:
+        """VS Code does not read an agents destination outside ~/.agents."""
+        plan = self.plan(sandbox, ("claude", "vscode", "agents"), custom=("agents",))
+
+        assert plan.warnings == (), f"Expected no warning, got {plan.warnings!r}"
+
+    def test_long_warning_lists_five_items(self) -> None:
+        """Warnings name five items and count the rest."""
+        labels = [f"skills/s{index}" for index in range(7)]
+
+        result = Planner._sample(labels)
+
+        assert result == (
+            "skills/s0, skills/s1, skills/s2, skills/s3, skills/s4 and 2 more"
+        ), f"Got {result!r}"

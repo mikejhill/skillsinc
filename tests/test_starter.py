@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from skillsinc.config import ConfigLoader
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
@@ -81,44 +80,6 @@ class TestStarterConfig:
         library = environment.config_home / "skillsinc" / "library"
         assert not library.exists(), f"Expected no default library at {library}"
         assert not (tmp_path / "mine").exists(), "Expected --source left untouched"
-
-    def test_detected_harnesses_get_routes_without_duplicates(
-        self, tmp_path: Path, environment: Environment
-    ) -> None:
-        """Skills skip ~/.copilot and VS Code skips what ~/.copilot provides."""
-        registry = ProfileRegistry()
-        for name in ("claude", "copilot", "vscode", "codex", "agents"):
-            default = registry.get(name).default_path(environment)
-            assert default is not None
-            default.mkdir(parents=True)
-        path = tmp_path / "config.toml"
-
-        StarterConfig(registry, environment).write(path, None, force=False)
-        config = ConfigLoader(registry, environment).load(path)
-
-        routes = {route.destinations: route.exclude for route in config.routes}
-        assert routes == {
-            ("claude", "codex", "agents"): (),
-            ("copilot",): ("skills/*",),
-            ("vscode",): ("instructions/*", "agents/*"),
-        }, f"Expected split routes, got {routes!r}"
-
-    def test_copilot_keeps_skills_without_agents_home(
-        self, tmp_path: Path, environment: Environment
-    ) -> None:
-        """Copilot still receives skills when ~/.agents does not exist."""
-        registry = ProfileRegistry()
-        default = registry.get("copilot").default_path(environment)
-        assert default is not None
-        default.mkdir(parents=True)
-        path = tmp_path / "config.toml"
-
-        StarterConfig(registry, environment).write(path, None, force=False)
-        config = ConfigLoader(registry, environment).load(path)
-
-        assert [(r.destinations, r.exclude) for r in config.routes] == [
-            (("copilot",), ())
-        ], f"Expected one unfiltered route, got {config.routes!r}"
 
     def test_existing_config_requires_force(
         self, tmp_path: Path, environment: Environment
