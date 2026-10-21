@@ -8,6 +8,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, edited, ready_for_review]
   merge_group:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -16,7 +17,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

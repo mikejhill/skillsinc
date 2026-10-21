@@ -10,11 +10,11 @@ This is the prioritized list of work after the 2026-10 rebuild, with enough cont
 | Profiles                                 | `claude`, `copilot`, `vscode`, `codex`, `agents`, `generic`                                                                      |
 | MCP servers                              | Claude Code, Copilot CLI, VS Code, Codex; see the [gap list](gap-list.md)                                                        |
 | Harness locations                        | Verified on Windows on 2026-10-21 for Claude Code, Copilot CLI, and Codex; see [harness profiles](../guides/harness-profiles.md) |
-| Releases                                 | Workflow ready; first release blocked on one-time setup (see below)                                                              |
+| Releases                                 | Automated with release-please; see [releasing](../guides/releasing.md)                                                           |
 
 ## Next
 
-1. **First release.** Complete the one-time setup in [CONTRIBUTING](../../CONTRIBUTING.md#releasing): PyPI trusted publisher, `pypi` environment, and a GitHub Actions bypass on the `Protected main` and `Immutable version tags` rulesets. Then run the Release workflow.
+1. **First release.** Complete the [one-time setup](../guides/releasing.md#one-time-setup), then merge the `chore: release 0.1.0` pull request.
 2. **Remaining native checks.** Confirm that VS Code lists synced instructions, agents, and prompts, that a Claude rule with `paths` loads only for matching files, and that Codex reads the `AGENTS.md` block. Then test on macOS and Linux. Record the results under each profile's "Verified" note in [harness profiles](../guides/harness-profiles.md).
 3. **Content diff in `plan`.** `plan --diff` printing a unified diff per changed file (and for the managed block) so users can review updates, not just paths.
 

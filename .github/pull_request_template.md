@@ -8,4 +8,4 @@ Use a Conventional Commit PR title: `type(scope): description`.
 
 - [ ] `uv run poe check` passes.
 - [ ] Documentation is updated.
-- [ ] `CHANGELOG.md` has an entry under `[Unreleased]`.
+- [ ] The PR title is a Conventional Commit that describes the change for the generated changelog.
