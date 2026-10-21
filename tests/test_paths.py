@@ -28,6 +28,27 @@ class TestEnvironment:
             tmp_path, {"XDG_STATE_HOME": str(tmp_path / "state")}, "test-platform"
         ), f"Expected independent fake environment snapshot, got {result!r}"
 
+    @pytest.mark.parametrize(
+        ("present", "expected"),
+        [
+            ((), "config.json"),
+            (("config.jsonc",), "config.jsonc"),
+            (("config.json", "config.jsonc"), "config.json"),
+        ],
+    )
+    def test_default_config_file_prefers_json_and_falls_back_to_jsonc(
+        self, environment: Environment, present: tuple[str, ...], expected: str
+    ) -> None:
+        """Default to ``config.json``; keep reading an early ``config.jsonc``."""
+        directory = environment.config_home / "skillsinc"
+        directory.mkdir(parents=True)
+        for name in present:
+            (directory / name).write_text("{}", encoding="utf-8")
+
+        result = environment.default_config_file
+
+        assert result == directory / expected, f"Expected {expected}, got {result}"
+
 
 class TestDestinationFile:
     """Only a declared sibling's leading ``..`` is taken by name."""

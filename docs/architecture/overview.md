@@ -24,7 +24,7 @@ graph LR
 
 | Module                        | Responsibility                                                          |
 | ----------------------------- | ----------------------------------------------------------------------- |
-| `config`                      | Parse and validate `config.jsonc` into frozen dataclasses               |
+| `config`                      | Parse and validate `config.json` (JSONC) into frozen dataclasses        |
 | `sources`                     | Read a library completely, expanding plugins, or raise `SourceError`    |
 | `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back           |
 | `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses     |

@@ -73,7 +73,7 @@ class TestConfigLoader:
         self, tmp_path: Path, environment: Environment, text: str, message: str
     ) -> None:
         """Reject malformed, unknown, incomplete, and overlapping configuration."""
-        path = tmp_path / "config.jsonc"
+        path = tmp_path / "config.json"
         path.write_text(text, encoding="utf-8")
 
         with pytest.raises(ConfigurationError, match=message):
@@ -94,17 +94,15 @@ class TestConfigLoader:
         legacy.write_text("version = 1\n", encoding="utf-8")
         loader = ConfigLoader(ProfileRegistry(), environment)
 
-        for path in (legacy, tmp_path / "config.jsonc"):
-            with pytest.raises(
-                ConfigurationError, match=r"rewrite it as config\.jsonc"
-            ):
+        for path in (legacy, tmp_path / "config.json"):
+            with pytest.raises(ConfigurationError, match=r"rewrite it as config\.json"):
                 loader.load(path)
 
     def test_defaults_and_custom_layout(
         self, tmp_path: Path, environment: Environment
     ) -> None:
         """Expand home paths, apply layout overrides, and default harness roots."""
-        path = tmp_path / "config.jsonc"
+        path = tmp_path / "config.json"
         path.write_text(
             """\ufeff// Comments, a byte-order mark, and trailing commas are allowed.
             {

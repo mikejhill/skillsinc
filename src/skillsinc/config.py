@@ -21,7 +21,7 @@ DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.py
 ALL_ITEMS: Final = ("*/*",)
 PLUGINS: Final = "plugins"
 TOML_RETIRED: Final = (
-    "TOML configuration is no longer read; rewrite it as config.jsonc, see"
+    "TOML configuration is no longer read; rewrite it as config.json, see"
     " https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md"
     "#migrating-from-toml"
 )
