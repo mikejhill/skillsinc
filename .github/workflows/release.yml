@@ -53,7 +53,10 @@ jobs:
         run: >-
           npx --yes "$RELEASE_PLEASE" github-release
           --token="$TOKEN" --repo-url="$GITHUB_REPOSITORY" --target-branch=main
-      - name: Detect whether this commit was released
+      # A release counts as unpublished until publish-pypi attaches its
+      # distributions, so a release whose run was superseded (the concurrency
+      # group keeps only the newest pending run) is published by a later push.
+      - name: Find the current release if it is not published yet
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,12 +64,14 @@ jobs:
           version=$(gh api "repos/$GITHUB_REPOSITORY/contents/.release-please-manifest.json?ref=$GITHUB_SHA" \
             --jq '.content' | base64 --decode | jq -r '."."')
           tag="v$version"
-          tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha' 2>/dev/null || true)
-          if [[ "$tagged" == "$GITHUB_SHA" ]]; then
-            echo "Released $tag"
+          assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets | length' 2>/dev/null || echo none)
+          if [[ "$assets" == "0" ]]; then
+            echo "Publishing $tag"
             echo "release_created=true" >> "$GITHUB_OUTPUT"
             echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
           else
+            echo "Nothing to publish ($tag assets: $assets)"
             echo "release_created=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Open or update the release pull request
@@ -170,8 +175,11 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
+      # skip-existing lets a re-run finish a release whose asset upload failed.
       - name: Publish (trusted publishing, PEP 740 attestations)
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          skip-existing: true
       - name: Attach distributions to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
