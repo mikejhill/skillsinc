@@ -76,7 +76,7 @@ def _application(root: Path, size: int) -> Callable[[str], int]:
     environment.home.mkdir(parents=True)
     library = _write_library(base / "library", size)
     destinations = tuple((name, name, environment.home / name) for name in PROFILES)
-    config = base / "config.toml"
+    config = base / "config.json"
     Builder.write_config(config, library, destinations, allow_lossy=True)
 
     def run(command: str) -> int:

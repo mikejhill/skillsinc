@@ -8,7 +8,6 @@ the module tests.
 from __future__ import annotations
 
 import json
-import re
 from typing import Final
 
 from hypothesis import given
@@ -75,7 +74,8 @@ class TestFrontmatterRoundTrip:
         actual = (document.frontmatter, document.body)
         assert actual == (header, body), f"Expected {(header, body)!r}, got {actual!r}"
 
-    @given(text.filter(lambda body: not re.match(r"\A(﻿)?---", body)))
+    # A leading "---" would start a header; a leading BOM is dropped on decode
+    @given(text.filter(lambda body: not body.startswith(("---", "\ufeff"))))
     def test_body_without_header_is_kept_verbatim(self, body: str) -> None:
         """A file with no header parses to an empty header and its exact text."""
         codec = FrontmatterCodec()

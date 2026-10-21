@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import shutil
-import tomllib
 from importlib.metadata import version
 from pathlib import Path
 
 from tests.e2e.conftest import Cli, Harnesses
+
+from skillsinc.jsonc import Jsonc
 
 
 def _files(root: Path) -> list[str]:
@@ -56,7 +57,7 @@ class TestEntryPoint:
         result = cli.run("plan")
 
         assert result.status == 2, f"Expected exit 2, got {result.status}: {result!r}"
-        assert "config.toml" in result.stderr, (
+        assert "config.json" in result.stderr, (
             f"Expected the missing file named on stderr, got {result.stderr!r}"
         )
         assert _files(cli.home) == [], (
@@ -75,7 +76,8 @@ class TestFirstRun:
 
         result = cli.run("init", "--source", str(library))
 
-        config = tomllib.loads(cli.config_file.read_text(encoding="utf-8"))
+        text = cli.config_file.read_text(encoding="utf-8")
+        config = json.loads(Jsonc.blank_trailing_commas(Jsonc.blank_comments(text)))
         routes = config["routes"][0]["destinations"]
         expected = ["claude", "copilot", "vscode", "codex", "agents"]
         assert (result.status, routes) == (0, expected), (

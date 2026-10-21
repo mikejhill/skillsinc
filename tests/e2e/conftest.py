@@ -63,7 +63,7 @@ class Cli:
     @property
     def config_file(self) -> Path:
         """Return the default configuration path the process resolves."""
-        return self.home / ".config" / "skillsinc" / "config.toml"
+        return self.home / ".config" / "skillsinc" / "config.json"
 
     @property
     def state_directory(self) -> Path:

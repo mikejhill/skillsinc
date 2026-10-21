@@ -123,7 +123,7 @@ typecheck = { cmd = "ty check", help = "Type check (strict)" }
 test = { cmd = "pytest --cov", help = "Run unit, property, integration, and e2e tests with coverage" }
 e2e = { cmd = "pytest -m e2e", help = "Run the skillsinc process against a throwaway home" }
 perf = { cmd = "pytest -m perf --durations=0 -p no:randomly", help = "Run the performance budgets" }
-mutate = { shell = "mutmut run && mutmut results --all true > mutation-results.txt && python scripts/mutation_report.py mutation-results.txt", help = "Mutation testing (POSIX only; slow)" }
+mutate = { shell = "uv run --group mutation mutmut run && uv run --group mutation mutmut results --all true > mutation-results.txt && uv run python scripts/mutation_report.py mutation-results.txt", help = "Mutation testing (POSIX only; slow)" }
 docs-lint = { cmd = "npx --yes markdownlint-cli2", help = "Lint Markdown documentation" }
 fix = { sequence = ["format", "lint-fix"], help = "Auto-fix formatting and lint" }
 check = { sequence = ["format-check", "lint", "typecheck", "test"], help = "Run every Python quality gate" }
