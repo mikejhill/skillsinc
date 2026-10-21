@@ -96,6 +96,20 @@ class TestStarterConfig:
             "Expected existing config preserved"
         )
 
+    def test_toml_path_is_refused_before_writing(
+        self, tmp_path: Path, environment: Environment
+    ) -> None:
+        """Refuse a ``.toml`` target, even with force; plan could not read it."""
+        path = tmp_path / "config.toml"
+        path.write_text("version = 1\n", encoding="utf-8")
+
+        with pytest.raises(ConfigurationError, match=r"config\.jsonc"):
+            StarterConfig(ProfileRegistry(), environment).write(path, None, force=True)
+
+        assert path.read_text(encoding="utf-8") == "version = 1\n", (
+            "Expected the TOML file left untouched"
+        )
+
     def test_force_overwrites_existing_config(
         self, tmp_path: Path, environment: Environment
     ) -> None:

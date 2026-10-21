@@ -42,6 +42,11 @@ class TestConfigLoader:
             ('{"version": 1, "destinations": {"generic": {}}}', "path is required"),
             ('{"version": 1, "destinations": {"nope": {}}}', "unknown profile"),
             ('{"version": 1, "routes": [{}]}', "at least one"),
+            ('{"version": 1, "routes": null}', "null is not allowed"),
+            (
+                '{"version": 1, "routes": [{"sources": ["a"], "include": null}]}',
+                "null is not allowed",
+            ),
             (
                 '{"version": 1, "routes": [{"sources": ["x"], "destinations": ["y"]}]}',
                 "unknown source/destination",

@@ -11,10 +11,10 @@ The configuration was TOML (`config.toml`). Mike prefers JSONC: the harness file
 
 ## Decision
 
-- **JSONC only.** The default file is `$XDG_CONFIG_HOME/skillsinc/config.jsonc`. It is parsed with the scanner from [decision 0008](0008-jsonc-edits-in-place.md): comments and trailing commas are blanked, keeping offsets so error line and column numbers point into the original text, then the strict JSON rules from [decision 0002](0002-mcp-server-entries.md) apply (duplicate keys, `NaN`, and numbers a rewrite would change are errors). A byte-order mark is accepted.
+- **JSONC only.** The default file is `$XDG_CONFIG_HOME/skillsinc/config.jsonc`. It is parsed with the scanner from [decision 0008](0008-jsonc-edits-in-place.md): comments and trailing commas are blanked, keeping offsets so error line and column numbers point into the original text, then the strict JSON rules from [decision 0002](0002-mcp-server-entries.md) apply (duplicate keys, `NaN`, and numbers a rewrite would change are errors). A byte-order mark is accepted. An explicit `null` is an error rather than a stand-in for the default, so `"routes": null` cannot silently empty the routes and delete managed files.
 - **Same keys.** `version`, `sources`, `destinations`, and `routes` keep their names and meaning; only the syntax changed. `version` stays `1`.
 - **TOML is refused, with a pointer.** A `.toml` path, or a missing `config.jsonc` with `config.toml` beside it, fails with a message linking the migration table in the configuration guide. There is no converter: TOML comments cannot be carried over automatically, and the only existing configuration was converted by hand.
-- **`init` writes JSONC** with trailing commas on every member, so commenting a line in or out never breaks the file.
+- **`init` writes JSONC** with trailing commas on every member, so commenting a line in or out never breaks the file. It refuses a `.toml` target, which `plan` could not read.
 
 ## Consequences
 

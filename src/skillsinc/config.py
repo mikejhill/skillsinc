@@ -173,8 +173,11 @@ class Table:
     # Internals
 
     def _take(self, key: str) -> object:
-        """Mark ``key`` as read and return its raw value."""
+        """Mark ``key`` as read and return its raw value, refusing an explicit null."""
         self._read.add(key)
+        if key in self._data and self._data[key] is None:
+            msg = f"{self._where}.{key}: null is not allowed; omit the key instead"
+            raise ConfigurationError(msg)
         return self._data.get(key)
 
     def _child(self, value: object, where: str) -> Table:

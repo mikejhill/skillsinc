@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Final
 
+from skillsinc.config import TOML_RETIRED
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
@@ -33,8 +34,12 @@ class StarterConfig:
         the first ``plan`` succeeds.
 
         Raises:
-            ConfigurationError: If ``path`` exists and ``force`` is not set.
+            ConfigurationError: If ``path`` is a ``.toml`` file, or exists and
+                ``force`` is not set.
         """
+        if path.suffix == ".toml":
+            msg = f"{path}: {TOML_RETIRED}"
+            raise ConfigurationError(msg)
         if path.exists() and not force:
             msg = f"{path} already exists; pass --force to overwrite it"
             raise ConfigurationError(msg)

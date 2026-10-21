@@ -2,7 +2,7 @@
 
 This guide documents every key in `config.jsonc`. `skillsinc init` writes a working starting point; edit it, then run `skillsinc plan`.
 
-The file is JSONC: JSON plus `//` and `/* */` comments and trailing commas, as in VS Code's settings ([decision 0011](../decisions/0011-jsonc-configuration.md)). Duplicate keys are errors.
+The file is JSONC: JSON plus `//` and `/* */` comments and trailing commas, as in VS Code's settings ([decision 0011](../decisions/0011-jsonc-configuration.md)). Duplicate keys and `null` values are errors; omit a key to get its default.
 
 ## Location
 
