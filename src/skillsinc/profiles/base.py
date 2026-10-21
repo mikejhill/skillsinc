@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Final
 
@@ -32,8 +33,26 @@ PLUGIN_COMMAND_POLICY: Final = LossPolicy(
     carried=frozenset({"description", "argument-hint"})
 )
 SERVER_FIELDS: Final = frozenset({"type", "command", "args", "env", "url", "headers"})
+# Harness-neutral server options SkillSinc maps per profile instead of copying
+SERVER_OPTIONS: Final = frozenset(
+    {"enabled", "startupTimeoutSec", "toolTimeoutSec", "profiles"}
+)
+SERVER_TIMEOUTS: Final = ("startupTimeoutSec", "toolTimeoutSec")
 LOCAL_TYPES: Final = frozenset({"stdio", "local"})
 REMOTE_TYPES: Final = frozenset({"http", "sse"})
+
+
+@dataclass(frozen=True, slots=True)
+class ServerParts:
+    """A library MCP server split into harness fields and SkillSinc options.
+
+    ``overrides`` is the server's ``profiles.<profile>`` object, written as-is
+    after conversion; ``losses`` names options the profile cannot express.
+    """
+
+    fields: dict[str, JsonValue]
+    overrides: dict[str, JsonValue]
+    losses: list[str]
 
 
 class Profile(ABC):
@@ -44,6 +63,12 @@ class Profile(ABC):
     support: ClassVar[Mapping[Kind, Support]]
     outside: ClassVar[frozenset[str]] = frozenset[str]()
     """Files beside the root (``../<name>``) this profile may write entries into."""
+    harness: ClassVar[str] = ""
+    """The application that reads this destination, or empty for shared folders."""
+    also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = dict[str, frozenset[Kind]]()
+    """Kinds the harness also loads from other profiles' default directories."""
+    covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = dict[str, frozenset[Kind]]()
+    """Kinds left out when another profile's default directory receives them."""
 
     def __init__(self) -> None:
         self._codec = FrontmatterCodec()
@@ -144,19 +169,53 @@ class Profile(ABC):
             return []
         return [f"uses VS Code variables other harnesses ignore: {', '.join(found)}"]
 
-    @staticmethod
-    def server_entry(item: Customization, path: str, container: str) -> Rendering:
+    def server_parts(
+        self, item: Customization, handled: frozenset[str] = frozenset()
+    ) -> ServerParts | Rendering:
+        """Split a server into fields, this profile's overrides, and option losses.
+
+        ``handled`` names options the caller maps itself. A disabled server is
+        refused where the harness has no per-server switch, so it stays off.
+        """
+        source = item.document.frontmatter
+        if source.get("enabled") is False and "enabled" not in handled:
+            harness = self.harness or self.name
+            return Rendering.refuse(
+                f"is disabled (enabled: false) and {harness} has no per-server"
+                " switch, so it is left out"
+            )
+        losses: list[str] = []
+        timeouts = [
+            key for key in SERVER_TIMEOUTS if key in source and key not in handled
+        ]
+        if timeouts:
+            losses.append(f"drops per-server timeouts: {', '.join(timeouts)}")
+        profiles = source.get("profiles")
+        own = profiles.get(self.name) if isinstance(profiles, dict) else None
+        return ServerParts(
+            fields={
+                key: value for key, value in source.items() if key not in SERVER_OPTIONS
+            },
+            overrides=dict(own) if isinstance(own, dict) else {},
+            losses=losses,
+        )
+
+    def server_entry(self, item: Customization, path: str, container: str) -> Rendering:
         """Convert an MCP server into an entry with an explicit transport ``type``.
 
         Fields outside the common ``mcpServers`` shape are dropped and reported;
         a ``url`` server without a ``type`` is written as ``http`` and reported,
-        because it could equally be ``sse``.
+        because it could equally be ``sse``. This profile's ``profiles`` entry
+        is applied last, unchecked.
         """
-        source = item.document.frontmatter
+        parts = self.server_parts(item)
+        if isinstance(parts, Rendering):
+            return parts
+        source = parts.fields
         transport = source.get("type")
         if transport is not None and not isinstance(transport, str):
             return Rendering.refuse("type must be a string")
-        losses: list[str] = []
+        losses = parts.losses
         if "command" in source:
             if transport is not None and transport not in LOCAL_TYPES:
                 return Rendering.refuse(
@@ -179,6 +238,7 @@ class Profile(ABC):
         dropped = [key for key in source if key not in SERVER_FIELDS]
         if dropped:
             losses.append(f"drops server fields: {', '.join(dropped)}")
+        server.update(parts.overrides)
         entry = EntryOutput(path, container, item.name, server)
         return Rendering(entries=(entry,), losses=tuple(losses))
 

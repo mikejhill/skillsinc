@@ -35,6 +35,7 @@ class ClaudeProfile(Profile):
     """Claude Code user directory (``~/.claude``)."""
 
     name: ClassVar[str] = "claude"
+    harness: ClassVar[str] = "Claude Code"
     summary: ClassVar[str] = (
         "Claude Code: skills/, rules/, agents/, commands/, resources/ (CLAUDE.md),"
         " settings.json hooks, .claude.json"

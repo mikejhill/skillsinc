@@ -263,3 +263,60 @@ class TestCodexServers:
 
         assert result.unsupported is not None, f"Expected refusal, got {result!r}"
         assert reason in result.unsupported, f"Expected {reason!r}, got {result!r}"
+
+
+class TestCodexServerOptions:
+    """Harness-neutral server options map to Codex keys; overrides pass through."""
+
+    def test_enabled_timeouts_and_overrides_become_codex_keys(self) -> None:
+        """One library entry carries everything Codex's own table held."""
+        server: dict[str, JsonValue] = {
+            "command": "cronometer",
+            "enabled": False,
+            "startupTimeoutSec": 60,
+            "toolTimeoutSec": 30.5,
+            "profiles": {
+                "codex": {"default_tools_approval_mode": "prompt"},
+                "claude": {"ignored": True},
+            },
+        }
+        item = Builder.item(Kind.MCP, name="cronometer", frontmatter=server)
+
+        result = CodexProfile().render(item)
+
+        assert result.entries == (
+            EntryOutput(
+                "config.toml",
+                "mcp_servers",
+                "cronometer",
+                {
+                    "command": "cronometer",
+                    "enabled": False,
+                    "startup_timeout_sec": 60,
+                    "tool_timeout_sec": 30.5,
+                    "default_tools_approval_mode": "prompt",
+                },
+            ),
+        ), f"Expected mapped options, got {result!r}"
+        assert result.losses == (), f"Expected no losses, got {result.losses!r}"
+
+    def test_enabled_true_writes_nothing(self) -> None:
+        """Codex enables servers by default, so ``enabled: true`` adds no key."""
+        item = Builder.item(Kind.MCP, frontmatter={"command": "a", "enabled": True})
+
+        result = CodexProfile().render(item)
+
+        assert result.entries[0].value == {"command": "a"}, f"Got {result!r}"
+
+    def test_null_override_is_refused(self) -> None:
+        """TOML has no null, so an override holding one cannot be written."""
+        server: dict[str, JsonValue] = {
+            "command": "a",
+            "profiles": {"codex": {"tools": {"x": [None]}}},
+        }
+        item = Builder.item(Kind.MCP, frontmatter=server)
+
+        result = CodexProfile().render(item)
+
+        assert result.unsupported is not None, f"Expected refusal, got {result!r}"
+        assert "null" in result.unsupported, f"Got {result.unsupported!r}"

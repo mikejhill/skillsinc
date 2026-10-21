@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 from skillsinc.config import DestinationConfig
 
@@ -69,6 +70,16 @@ class DestinationPlan:
     skipped: tuple[Skip, ...] = ()
     notes: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+    delivered: tuple[str, ...] = ()
+    """Labels (``source:kind/name``) of the items this destination receives."""
+    pending: frozenset[str] = frozenset()
+    """Delivered labels whose files or entries this plan still has to change."""
+    depends_on: tuple[str, ...] = ()
+    """Destinations whose delivery this plan relies on for items it skips."""
+    outputs: Mapping[str, tuple[tuple[str, str], ...]] = field(default_factory=dict)
+    """Each delivered label's files as ``(relative path, SHA-256)`` pairs."""
+    requires: tuple[tuple[Path, str], ...] = ()
+    """Files, with digests, that must exist before this plan is applied."""
 
     @property
     def blocked(self) -> bool:
@@ -86,6 +97,8 @@ class Plan:
 
     destinations: tuple[DestinationPlan, ...]
     source_errors: Mapping[str, str]
+    warnings: tuple[str, ...] = ()
+    """Problems that do not block a sync, such as a harness loading an item twice."""
 
     @property
     def ok(self) -> bool:

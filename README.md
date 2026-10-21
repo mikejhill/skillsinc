@@ -36,10 +36,10 @@ uv tool install git+https://github.com/mikejhill/skillsinc.git
 
 ## Quick start
 
-1. Point SkillSinc at your library. It enables a destination for every harness folder found on this machine:
+1. Write a configuration. It enables a destination for every harness folder found on this machine and creates an empty library at `~/.config/skillsinc/library` (`$XDG_CONFIG_HOME/skillsinc/library`). Pass `--source DIR` to use an existing library instead:
 
     ```bash
-    skillsinc init --source ~/my-agent-library
+    skillsinc init
     ```
 
 2. Preview the changes:
@@ -115,6 +115,8 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 - [Decision: plugins expand into kinds](docs/decisions/0005-plugins-expand-into-kinds.md)
 - [Decision: entry files beside a destination root](docs/decisions/0007-files-beside-the-root.md)
 - [Decision: edit VS Code's JSONC mcp.json in place](docs/decisions/0008-jsonc-edits-in-place.md)
+- [Decision: one copy of each item per harness](docs/decisions/0009-one-copy-per-harness.md)
+- [Decision: MCP server options and per-profile overrides](docs/decisions/0010-mcp-server-options.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License

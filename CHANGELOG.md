@@ -8,9 +8,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Rebuilt from scratch around a smaller scope; see [decision 0001](docs/decisions/0001-rebuild-scope.md).
 - Package metadata lists the author by name only; the personal email address is removed.
+- `skillsinc init` without `--source` now points at, and creates, a default library at `$XDG_CONFIG_HOME/skillsinc/library` (`~/.config/skillsinc/library`) instead of a `~/agent-library` placeholder.
 
 ### Added
 
+- MCP server options: library servers may set `enabled`, `startupTimeoutSec`, and `toolTimeoutSec`, mapped per profile (Codex `enabled = false`, `startup_timeout_sec`, `tool_timeout_sec`; disabled servers are left out of harnesses with no per-server switch), and `profiles.<profile>` objects merged into one profile's entry as written ([decision 0010](docs/decisions/0010-mcp-server-options.md)).
+- Duplicate-load warnings: `plan` and `sync` warn when one harness would load the same item from two destinations (for example Copilot CLI reading both `~/.copilot/skills` and `~/.agents/skills`), and destinations skip copies another destination already delivers to the same harness ([decision 0009](docs/decisions/0009-one-copy-per-harness.md)).
 - Codex agents: library agents sync to `~/.codex/agents/<name>.toml` custom agents with `name` (lowercase snake_case), `description`, and `developer_instructions`; Copilot-only fields such as `tools` and `model` are reported as losses.
 - [Scheduling examples](docs/guides/scheduling.md) for Windows Task Scheduler (registration script), macOS launchd, and a Linux systemd user timer.
 - Codex MCP servers: library servers sync into `[mcp_servers.<name>]` tables in `config.toml`, keeping the user's comments, layout, and other tables. Only fields Codex reads are written; SSE servers are refused and other fields are reported as losses. Adds the `tomlkit` dependency ([decision 0004](docs/decisions/0004-toml-entries-with-tomlkit.md)).

@@ -55,6 +55,11 @@ class Environment:
         return self.config_home / "skillsinc" / "config.toml"
 
     @property
+    def default_library(self) -> Path:
+        """Return the library written into the configuration by a bare ``init``."""
+        return self.config_home / "skillsinc" / "library"
+
+    @property
     def state_directory(self) -> Path:
         """Return the directory holding ownership manifests and the run lock."""
         return self.state_home / "skillsinc"

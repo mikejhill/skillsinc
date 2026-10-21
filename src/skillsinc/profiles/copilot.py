@@ -29,6 +29,11 @@ class CopilotProfile(Profile):
     """Copilot CLI user directory (``~/.copilot``), also read by VS Code for skills."""
 
     name: ClassVar[str] = "copilot"
+    harness: ClassVar[str] = "Copilot CLI"
+    also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = {
+        "agents": frozenset({Kind.SKILL}),
+    }
+    covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = also_reads
     summary: ClassVar[str] = (
         "Copilot CLI: skills/, instructions/, agents/, resources/, hooks/,"
         " mcp-config.json"
@@ -61,14 +66,21 @@ class CopilotProfile(Profile):
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
             case Kind.MCP:
-                server = dict(item.document.frontmatter)
-                entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
-                return Rendering(entries=(entry,))
+                return self._server(item)
             case Kind.HOOK:
                 return self.copy_file(
                     item, COPY_PATHS[item.kind].format(name=item.name)
                 )
         assert_never(item.kind)
+
+    def _server(self, item: Customization) -> Rendering:
+        """Copy a server's fields as written, then apply ``profiles.copilot``."""
+        parts = self.server_parts(item)
+        if isinstance(parts, Rendering):
+            return parts
+        server = {**parts.fields, **parts.overrides}
+        entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
+        return Rendering(entries=(entry,), losses=tuple(parts.losses))
 
     def _instruction(self, item: Customization) -> Rendering:
         """Copy an instructions file, noting that Copilot CLI needs ``applyTo``."""
@@ -83,6 +95,15 @@ class VSCodeProfile(Profile):
     """VS Code user prompts folder, holding prompt, instruction, and agent files."""
 
     name: ClassVar[str] = "vscode"
+    harness: ClassVar[str] = "VS Code"
+    also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = {
+        "copilot": frozenset({Kind.SKILL, Kind.INSTRUCTION, Kind.AGENT}),
+        "agents": frozenset({Kind.SKILL}),
+        "claude": frozenset({Kind.SKILL}),
+    }
+    covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = {
+        "copilot": frozenset({Kind.INSTRUCTION, Kind.AGENT}),
+    }
     summary: ClassVar[str] = (
         "VS Code user prompts folder: *.instructions/agent/prompt.md, ../mcp.json"
     )

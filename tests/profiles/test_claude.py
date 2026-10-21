@@ -302,3 +302,37 @@ class TestClaudeHooksRendering:
         result = ClaudeProfile().render(item)
 
         assert result.unsupported == reason, f"Expected refusal, got {result!r}"
+
+
+class TestClaudeServerOptions:
+    """Claude Code has no per-server switch or timeouts."""
+
+    def test_disabled_server_is_left_out(self) -> None:
+        """A disabled server is refused so Claude Code never starts it."""
+        item = Builder.item(Kind.MCP, frontmatter={"command": "a", "enabled": False})
+
+        result = ClaudeProfile().render(item)
+
+        assert result.unsupported is not None, f"Expected refusal, got {result!r}"
+        assert "Claude Code has no per-server switch" in result.unsupported
+
+    def test_timeouts_are_losses_and_overrides_apply(self) -> None:
+        """Timeouts are reported; ``profiles.claude`` is written as-is."""
+        server: dict[str, JsonValue] = {
+            "command": "a",
+            "enabled": True,
+            "toolTimeoutSec": 9,
+            "profiles": {"claude": {"cwd": "/w"}, "codex": {"x": 1}},
+        }
+        item = Builder.item(Kind.MCP, name="api", frontmatter=server)
+
+        result = ClaudeProfile().render(item)
+
+        assert result.entries[0].value == {
+            "type": "stdio",
+            "command": "a",
+            "cwd": "/w",
+        }, f"Expected override applied, got {result!r}"
+        assert result.losses == ("drops per-server timeouts: toolTimeoutSec",), (
+            f"Expected timeout loss only, got {result.losses!r}"
+        )

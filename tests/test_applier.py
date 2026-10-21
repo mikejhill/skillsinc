@@ -277,3 +277,30 @@ class TestApplier:
         assert actual == {
             "mcp.json": OwnedEntries(created_file=True, keys={"servers/ours": "d"})
         }, f"Expected recorded entry, got {actual!r}"
+
+
+class TestCoverRequirements:
+    """Files another destination relies on are checked before it is applied."""
+
+    def test_unreadable_requirement_counts_as_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A required file that cannot be read is treated as absent."""
+        required = tmp_path / "SKILL.md"
+        required.write_text("x", encoding="utf-8")
+
+        def fail(_self: Path) -> bytes:
+            raise PermissionError
+
+        monkeypatch.setattr(Path, "read_bytes", fail)
+
+        assert Applier._missing(((required, "digest"),)) == required
+
+    def test_matching_requirement_is_present(self, tmp_path: Path) -> None:
+        """A required file with the planned content passes."""
+        required = tmp_path / "SKILL.md"
+        required.write_bytes(b"x")
+
+        result = Applier._missing(((required, Digest.of(b"x")),))
+
+        assert result is None, f"Expected no missing file, got {result!r}"

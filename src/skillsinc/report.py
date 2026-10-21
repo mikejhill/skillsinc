@@ -40,6 +40,9 @@ class Reporter:
             lines.extend(self._destination_text(destination))
         if not plan.destinations:
             lines.append("No enabled destinations are routed. Edit the configuration.")
+        if plan.warnings:
+            lines.append("")
+            lines.extend(f"warning: {warning}" for warning in plan.warnings)
         lines.append("")
         lines.append(self._summary(plan, applied=applied))
         return "\n".join(lines) + "\n"
@@ -54,6 +57,7 @@ class Reporter:
             "ok": plan.ok and all(result.error is None for result in outcome.values()),
             "applied": results is not None,
             "source_errors": dict(plan.source_errors),
+            "warnings": list(plan.warnings),
             "destinations": [
                 self._destination_json(
                     destination, outcome.get(destination.destination.name)

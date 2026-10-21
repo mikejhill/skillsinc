@@ -4,10 +4,11 @@ This guide documents every key in `config.toml`. `skillsinc init` writes a worki
 
 ## Location
 
-| Item        | Default                                                | Override         |
-| ----------- | ------------------------------------------------------ | ---------------- |
-| Config file | `$XDG_CONFIG_HOME/skillsinc/config.toml` (`~/.config`) | `--config PATH`  |
-| State       | `$XDG_STATE_HOME/skillsinc/` (`~/.local/state`)        | `XDG_STATE_HOME` |
+| Item        | Default                                                   | Override                             |
+| ----------- | --------------------------------------------------------- | ------------------------------------ |
+| Config file | `$XDG_CONFIG_HOME/skillsinc/config.toml` (`~/.config`)    | `--config PATH`                      |
+| Library     | `$XDG_CONFIG_HOME/skillsinc/library/` (written by `init`) | `init --source DIR`, or `path` below |
+| State       | `$XDG_STATE_HOME/skillsinc/` (`~/.local/state`)           | `XDG_STATE_HOME`                     |
 
 The XDG variables are honoured on Windows and macOS too. Relative paths in the file resolve against the file's directory; `~` expands to the home directory. Unknown keys are errors, so typos never pass silently.
 
@@ -17,7 +18,7 @@ The XDG variables are honoured on Windows and macOS too. Relative paths in the f
 version = 1
 
 [sources.library]
-path = "~/agent-library"
+path = "~/.config/skillsinc/library"
 
 [sources.team]
 path = "~/src/team-agent-library"
@@ -77,6 +78,8 @@ Destinations may not share or nest directories. Profile defaults honour `CLAUDE_
 | `allow_lossy`  | no       | `false`   | Accept conversions that drop fields or change activation |
 
 Plugin items match both `kind/name` and `plugins/<plugin>/kind/name`, so `include = ["plugins/kit/*"]` selects one whole plugin and `exclude = ["plugins/kit/*"]` drops it. Anything a plugin holds that SkillSinc does not sync (hooks, LSP servers, scripts, runtime manifest keys) is a loss on each of its items, so syncing part of a plugin needs `allow_lossy = true`.
+
+Some harnesses also read another profile's folder: Copilot CLI and VS Code read `~/.agents/skills`, and VS Code also reads `~/.claude/skills` and `~/.copilot/{skills,instructions,agents}`. When both destinations are at their default paths, `copilot` skips skills an `agents` destination receives, and `vscode` skips instructions and agents a `copilot` destination receives, so each harness loads one copy. Any other item one harness would load from two destinations prints a `warning:` line in `plan` and `sync`; it does not block ([decision 0009](../decisions/0009-one-copy-per-harness.md)).
 
 An item reaching a destination through several routes is distributed once; it is lossy-allowed if any of those routes allows it. Two items that render to the same path, or the same JSON entry, with different content block the destination.
 

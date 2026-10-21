@@ -168,6 +168,11 @@ class TestMcpServers:
             ("[]", "JSON object"),
             ('{"args": []}', "either a 'command' or a 'url'"),
             ('{"command": "a", "url": "https://x"}', "either a 'command' or a 'url'"),
+            ('{"command": "a", "enabled": "no"}', "'enabled' must be true or false"),
+            ('{"command": "a", "toolTimeoutSec": 0}', "'toolTimeoutSec' must be"),
+            ('{"command": "a", "startupTimeoutSec": true}', "'startupTimeoutSec'"),
+            ('{"command": "a", "profiles": {"codex": 1}}', "'profiles' must map"),
+            ('{"command": "a", "profiles": []}', "'profiles' must map"),
         ],
     )
     def test_invalid_definition_fails_the_source(

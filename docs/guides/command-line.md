@@ -13,17 +13,17 @@ This guide lists every command, option, exit code, and the JSON report format, f
 
 Options go after the command, for example `skillsinc plan --json`.
 
-| Option                     | Commands         | Meaning                                                               |
-| -------------------------- | ---------------- | --------------------------------------------------------------------- |
-| `--config PATH`            | init, plan, sync | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.toml`) |
-| `--source DIR`             | init             | Library to write into the starter configuration                       |
-| `--force`                  | init             | Overwrite an existing configuration                                   |
-| `-d`, `--destination NAME` | plan, sync       | Limit to this destination; repeatable                                 |
-| `--adopt`                  | plan, sync       | Take ownership of existing files instead of blocking                  |
-| `--json`                   | plan, sync       | Print the JSON report instead of text                                 |
-| `-v`, `--verbose`          | plan, sync       | List unsupported items, accepted losses, and every skill file         |
-| `--log-level LEVEL`        | all              | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr           |
-| `--version`                | none             | Print the version                                                     |
+| Option                     | Commands         | Meaning                                                                                                |
+| -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `--config PATH`            | init, plan, sync | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.toml`)                                  |
+| `--source DIR`             | init             | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`) |
+| `--force`                  | init             | Overwrite an existing configuration                                                                    |
+| `-d`, `--destination NAME` | plan, sync       | Limit to this destination; repeatable                                                                  |
+| `--adopt`                  | plan, sync       | Take ownership of existing files instead of blocking                                                   |
+| `--json`                   | plan, sync       | Print the JSON report instead of text                                                                  |
+| `-v`, `--verbose`          | plan, sync       | List unsupported items, accepted losses, and every skill file                                          |
+| `--log-level LEVEL`        | all              | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                            |
+| `--version`                | none             | Print the version                                                                                      |
 
 ## Exit codes
 
