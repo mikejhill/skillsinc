@@ -758,7 +758,7 @@ class TestScheduleCommand:
         log = environment.state_directory / "sync.log"
         assert status == 0, f"Expected success, got {status}"
         assert log.parent.is_dir(), f"Expected {log.parent} created"
-        assert f"--log-file {log}" in (runner.inputs[-1] or ""), (
+        assert f"--log-file {shlex.quote(str(log))}" in (runner.inputs[-1] or ""), (
             f"Expected the log in the crontab, got {runner.inputs[-1]!r}"
         )
         assert "Registered cron crontab: sync every 5m." in out.getvalue(), (
