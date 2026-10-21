@@ -24,7 +24,7 @@ Two options:
 
 The rules:
 
-- **Library layout.** One plugin per directory under `plugins/` (`[sources.<name>.layout] plugins` renames it), in Claude Code's standard layout. The manifest `.claude-plugin/plugin.json` is optional; if it has a `name`, it must equal the directory name.
+- **Library layout.** One plugin per directory under `plugins/` (`sources.<name>.layout.plugins` renames it), in Claude Code's standard layout. The manifest `.claude-plugin/plugin.json` is optional; if it has a `name`, it must equal the directory name.
 - **Expansion.** `skills/<name>/` → skills, `agents/*.md` → agents, `commands/*.md` → prompts, `.mcp.json` (an `mcpServers` map, or the bare map) → MCP servers. Each item keeps its own name; a name that also exists in the library or another plugin fails the source, as two library files with one name already do.
 - **Format.** Plugin agents and commands are Claude Code files. The `claude` profile copies them exactly. Other profiles keep `name`, `description`, and (for prompts) `argument-hint`, and report every other field, plus `$ARGUMENTS`-style placeholders and `` !`cmd` `` shell context, as a loss.
 - **Fail closed.** A manifest that relocates components (`skills`, `agents`, `commands`, `mcpServers`) fails the source, because reading the default folders would sync the wrong files. An item whose files (skill assets included) refer to a `CLAUDE_PLUGIN_*` variable (such as `${CLAUDE_PLUGIN_ROOT}`) or to `${user_config.*}` is skipped with that reason in every destination: nothing would resolve it.

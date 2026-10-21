@@ -24,7 +24,7 @@ graph LR
 
 | Module                        | Responsibility                                                          |
 | ----------------------------- | ----------------------------------------------------------------------- |
-| `config`                      | Parse and validate `config.toml` into frozen dataclasses                |
+| `config`                      | Parse and validate `config.jsonc` into frozen dataclasses               |
 | `sources`                     | Read a library completely, expanding plugins, or raise `SourceError`    |
 | `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back           |
 | `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses     |
@@ -32,7 +32,7 @@ graph LR
 | `diff`                        | Compare desired files and blocks with disk and the manifest             |
 | `blocks`                      | Find, replace, and remove the managed block in a Markdown file          |
 | `entries`                     | Strict JSON, JSONC, and TOML editing of keyed entries in a shared file  |
-| `jsonc`                       | Locate members by position in JSONC and splice in-place edits           |
+| `jsonc`                       | Scan JSONC (config and `mcp.json`) and splice in-place edits            |
 | `manifest`                    | Load and atomically save per-destination ownership records              |
 | `applier`                     | Verify preconditions, write atomically, update the manifest             |
 | `lock`                        | Serialize overlapping `sync` runs                                       |

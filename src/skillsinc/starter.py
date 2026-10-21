@@ -11,9 +11,11 @@ from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
 
 HEADER: Final = """\
-# SkillSinc configuration. Reference: https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md
-# Preview with `skillsinc plan`; nothing is written until `skillsinc sync`.
-version = 1
+// SkillSinc configuration (JSONC: comments and trailing commas are allowed).
+// Reference: https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md
+// Preview with `skillsinc plan`; nothing is written until `skillsinc sync`.
+{
+  "version": 1,
 """
 
 
@@ -44,47 +46,52 @@ class StarterConfig:
         return text
 
     def render(self, source: Path | None) -> str:
-        """Return starter TOML, enabling destinations whose harness directory exists."""
+        """Return starter JSONC, enabling destinations whose harness folder exists."""
         source_path = self._display(source or self._environment.default_library)
-        lines = [HEADER, "[sources.library]", f"path = {json.dumps(source_path)}"]
+        lines = [HEADER.rstrip("\n"), '  "sources": {']
         if source is None:
             lines.append(
-                "# Default library. Add skills/, instructions/, agents/,"
+                "    // Default library. Add skills/, instructions/, agents/,"
                 " prompts/, mcp/, resources/, hooks/, plugins/"
             )
+        lines.extend(
+            [f'    "library": {{ "path": {json.dumps(source_path)} }},', "  },"]
+        )
 
+        lines.append('  "destinations": {')
         detected: list[str] = []
         for profile in self._profiles.profiles:
             default = profile.default_path(self._environment)
             if default is None:
                 continue
             installed = default.is_dir()
-            prefix = "" if installed else "# "
-            note = "" if installed else "  # not found on this machine"
-            lines.extend(
-                [
-                    "",
-                    f"{prefix}[destinations.{profile.name}]{note}",
-                    f"{prefix}profile = {json.dumps(profile.name)}",
-                ]
-            )
+            prefix = "" if installed else "// "
+            note = "" if installed else "  // not found on this machine"
+            name = json.dumps(profile.name)
+            lines.append(f'    {prefix}{name}: {{ "profile": {name} }},{note}')
             if installed:
                 detected.append(profile.name)
+        lines.append("  },")
 
         targets = ", ".join(json.dumps(name) for name in detected)
-        route = "" if detected else "# "
+        route = "" if detected else "// "
+        optional = "      // " if detected else "    //   "
         lines.extend(
             [
+                '  "routes": [',
+                f"    {route}{{",
+                f'    {route}  "sources": ["library"],',
+                f'    {route}  "destinations": [{targets}],',
+                f'{optional}"include": ["skills/*", "instructions/*"],',
+                f'{optional}"exclude": ["skills/experimental-*"],',
+                f'{optional}"allow_lossy": false,  // true accepts conversions'
+                " that drop fields",
+                f"    {route}}},",
+                "  ],",
+                "}",
                 "",
-                f"{route}[[routes]]",
-                f'{route}sources = ["library"]',
-                f"{route}destinations = [{targets}]",
-                '# include = ["skills/*", "instructions/*"]',
-                '# exclude = ["skills/experimental-*"]',
-                "# allow_lossy = false  # true accepts conversions that drop fields",
             ]
         )
-        lines.append("")
         return "\n".join(lines)
 
     def _display(self, path: Path) -> str:
