@@ -47,6 +47,16 @@ class TestReporter:
             {},
         )
 
+    def test_plan_warnings_appear_in_text_and_json(self, tmp_path: Path) -> None:
+        """Duplicate-load warnings reach both people and programs."""
+        plan = Plan(self.plan(tmp_path).destinations, {}, warnings=("twice",))
+
+        text = Reporter().plan_text(plan, applied=False)
+        data = json.loads(Reporter().plan_json(plan))
+
+        assert "warning: twice" in text, f"Expected warning line, got {text!r}"
+        assert data["warnings"] == ["twice"], f"Expected warnings key, got {data!r}"
+
     @pytest.mark.parametrize("verbose", [False, True])
     def test_verbose_controls_collapsing_and_unsupported_details(
         self, tmp_path: Path, *, verbose: bool

@@ -29,6 +29,7 @@ class DesiredState:
     entries: dict[str, dict[str, EntryOutput]] = field(default_factory=dict)
     origins: dict[str, str] = field(default_factory=dict)
     skipped: list[Skip] = field(default_factory=list)
+    delivered: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -69,7 +70,11 @@ class Planner:
             )
             for name in targets
         )
-        return Plan(destinations=plans, source_errors=failures)
+        return Plan(
+            destinations=plans,
+            source_errors=failures,
+            warnings=self._duplicates(plans),
+        )
 
     # Steps
 
@@ -149,6 +154,7 @@ class Planner:
             skipped=tuple(desired.skipped),
             notes=tuple(desired.notes),
             errors=errors,
+            delivered=tuple(desired.delivered),
         )
 
     @staticmethod
@@ -168,6 +174,53 @@ class Planner:
                     f" ({source}); a sync would write into the library"
                 )
         return None
+
+    def _duplicates(self, plans: Sequence[DestinationPlan]) -> tuple[str, ...]:
+        """Warn when one harness would load the same item from two destinations.
+
+        A harness reads its own destination plus the kinds its profile lists in
+        ``also_reads``, but only from destinations at that profile's default
+        directory, since harnesses search their documented folders only.
+        """
+        warnings: list[str] = []
+        for reader in plans:
+            profile = self._profiles.get(reader.destination.profile)
+            if not profile.harness:
+                continue
+            seen: dict[str, list[str]] = defaultdict(list)
+            for label in reader.delivered:
+                seen[label].append(reader.destination.name)
+            for other in plans:
+                kinds = profile.also_reads.get(other.destination.profile)
+                if other is reader or kinds is None or not self._at_default(other):
+                    continue
+                for label in other.delivered:
+                    if self._kind(label) in kinds:
+                        seen[label].append(other.destination.name)
+            groups: dict[tuple[str, ...], list[str]] = defaultdict(list)
+            for label, names in seen.items():
+                if len(names) > 1:
+                    groups[tuple(names)].append(label.partition(":")[2])
+            warnings.extend(
+                f"{profile.harness} loads {len(labels)} item(s) from both"
+                f" {' and '.join(names)}: {', '.join(sorted(labels))};"
+                " exclude them from one route"
+                for names, labels in sorted(groups.items())
+            )
+        return tuple(warnings)
+
+    def _at_default(self, plan: DestinationPlan) -> bool:
+        """Return True if the destination is its profile's default directory."""
+        destination = plan.destination
+        default = self._profiles.get(destination.profile).default_path(
+            self._environment
+        )
+        return default is not None and default == destination.path
+
+    @staticmethod
+    def _kind(label: str) -> str:
+        """Return the kind directory named in a ``source:kind/name`` label."""
+        return label.partition(":")[2].partition("/")[0]
 
     def _render(
         self,
@@ -192,6 +245,7 @@ class Planner:
                 desired.skipped.append(Skip(label, "; ".join(losses), lossy=True))
                 continue
             desired.notes.extend(f"{label}: {loss}" for loss in losses)
+            desired.delivered.append(label)
             self._add_files(desired, label, rendering.files)
             for block in rendering.blocks:
                 desired.blocks.setdefault(block.path, []).append((label, block.text))

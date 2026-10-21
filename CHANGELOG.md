@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Duplicate-load warnings: `plan` and `sync` warn when one harness would load the same item from two destinations (for example Copilot CLI reading both `~/.copilot/skills` and `~/.agents/skills`), and `skillsinc init` writes routes that avoid it ([decision 0009](docs/decisions/0009-one-copy-per-harness.md)).
 - Codex agents: library agents sync to `~/.codex/agents/<name>.toml` custom agents with `name` (lowercase snake_case), `description`, and `developer_instructions`; Copilot-only fields such as `tools` and `model` are reported as losses.
 - [Scheduling examples](docs/guides/scheduling.md) for Windows Task Scheduler (registration script), macOS launchd, and a Linux systemd user timer.
 - Codex MCP servers: library servers sync into `[mcp_servers.<name>]` tables in `config.toml`, keeping the user's comments, layout, and other tables. Only fields Codex reads are written; SSE servers are refused and other fields are reported as losses. Adds the `tomlkit` dependency ([decision 0004](docs/decisions/0004-toml-entries-with-tomlkit.md)).

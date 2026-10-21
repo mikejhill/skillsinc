@@ -43,6 +43,10 @@ class CodexProfile(Profile):
     """Codex home directory (``~/.codex``)."""
 
     name: ClassVar[str] = "codex"
+    harness: ClassVar[str] = "Codex"
+    also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = {
+        "agents": frozenset({Kind.SKILL}),
+    }
     summary: ClassVar[str] = (
         "Codex: AGENTS.md block, agents/<name>.toml, config.toml mcp_servers"
     )

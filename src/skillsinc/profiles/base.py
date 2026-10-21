@@ -44,6 +44,10 @@ class Profile(ABC):
     support: ClassVar[Mapping[Kind, Support]]
     outside: ClassVar[frozenset[str]] = frozenset[str]()
     """Files beside the root (``../<name>``) this profile may write entries into."""
+    harness: ClassVar[str] = ""
+    """The application that reads this destination, or empty for shared folders."""
+    also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = dict[str, frozenset[Kind]]()
+    """Kinds the harness also loads from other profiles' default directories."""
 
     def __init__(self) -> None:
         self._codec = FrontmatterCodec()

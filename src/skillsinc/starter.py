@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
@@ -71,21 +72,62 @@ class StarterConfig:
             if installed:
                 detected.append(profile.name)
 
-        targets = ", ".join(json.dumps(name) for name in detected)
-        route = "" if detected else "# "
-        lines.extend(
-            [
-                "",
-                f"{route}[[routes]]",
-                f'{route}sources = ["library"]',
-                f"{route}destinations = [{targets}]",
-                '# include = ["skills/*", "instructions/*"]',
-                '# exclude = ["skills/experimental-*"]',
-                "# allow_lossy = false  # true accepts conversions that drop fields",
-                "",
-            ]
-        )
+        if not detected:
+            lines.extend(["", *self._route((), (), first=True, enabled=False)])
+        for index, (excludes, names) in enumerate(self._groups(detected).items()):
+            lines.extend(["", *self._route(names, excludes, first=index == 0)])
+        lines.append("")
         return "\n".join(lines)
+
+    def _groups(self, detected: list[str]) -> dict[tuple[str, ...], list[str]]:
+        """Group detected destinations by the kinds left out to avoid duplicates.
+
+        Each item is written once per harness: skills go to ``~/.agents`` rather
+        than ``~/.copilot`` (Copilot CLI and VS Code read both), and VS Code
+        takes instructions and agents from ``~/.copilot`` rather than its
+        prompts folder.
+        """
+        groups: dict[tuple[str, ...], list[str]] = {}
+        for name in detected:
+            excludes: tuple[str, ...] = ()
+            if name == "copilot" and "agents" in detected:
+                excludes = ("skills/*",)
+            elif name == "vscode" and "copilot" in detected:
+                excludes = ("instructions/*", "agents/*")
+            groups.setdefault(excludes, []).append(name)
+        return groups
+
+    @staticmethod
+    def _route(
+        names: Sequence[str],
+        excludes: Sequence[str],
+        *,
+        first: bool,
+        enabled: bool = True,
+    ) -> list[str]:
+        """Return the lines of one ``[[routes]]`` table."""
+        prefix = "" if enabled else "# "
+        targets = ", ".join(json.dumps(name) for name in names)
+        lines = [
+            f"{prefix}[[routes]]",
+            f'{prefix}sources = ["library"]',
+            f"{prefix}destinations = [{targets}]",
+        ]
+        if excludes:
+            patterns = ", ".join(json.dumps(pattern) for pattern in excludes)
+            lines.append(f"exclude = [{patterns}]  # another destination covers these")
+        elif first:
+            lines.extend(
+                [
+                    '# include = ["skills/*", "instructions/*"]',
+                    '# exclude = ["skills/experimental-*"]',
+                ]
+            )
+        if first:
+            lines.append(
+                "# allow_lossy = false  # true accepts conversions that drop fields"
+            )
+        return lines
 
     def _display(self, path: Path) -> str:
         """Return ``path`` with forward slashes and ``~`` for the home directory."""

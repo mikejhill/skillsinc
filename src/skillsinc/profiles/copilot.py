@@ -29,6 +29,10 @@ class CopilotProfile(Profile):
     """Copilot CLI user directory (``~/.copilot``), also read by VS Code for skills."""
 
     name: ClassVar[str] = "copilot"
+    harness: ClassVar[str] = "Copilot CLI"
+    also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = {
+        "agents": frozenset({Kind.SKILL}),
+    }
     summary: ClassVar[str] = (
         "Copilot CLI: skills/, instructions/, agents/, resources/, hooks/,"
         " mcp-config.json"
@@ -83,6 +87,12 @@ class VSCodeProfile(Profile):
     """VS Code user prompts folder, holding prompt, instruction, and agent files."""
 
     name: ClassVar[str] = "vscode"
+    harness: ClassVar[str] = "VS Code"
+    also_reads: ClassVar[Mapping[str, frozenset[Kind]]] = {
+        "copilot": frozenset({Kind.SKILL, Kind.INSTRUCTION, Kind.AGENT}),
+        "agents": frozenset({Kind.SKILL}),
+        "claude": frozenset({Kind.SKILL}),
+    }
     summary: ClassVar[str] = (
         "VS Code user prompts folder: *.instructions/agent/prompt.md, ../mcp.json"
     )

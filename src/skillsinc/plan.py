@@ -69,6 +69,8 @@ class DestinationPlan:
     skipped: tuple[Skip, ...] = ()
     notes: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+    delivered: tuple[str, ...] = ()
+    """Labels (``source:kind/name``) of the items this destination receives."""
 
     @property
     def blocked(self) -> bool:
@@ -86,6 +88,8 @@ class Plan:
 
     destinations: tuple[DestinationPlan, ...]
     source_errors: Mapping[str, str]
+    warnings: tuple[str, ...] = ()
+    """Problems that do not block a sync, such as a harness loading an item twice."""
 
     @property
     def ok(self) -> bool:

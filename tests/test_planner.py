@@ -266,3 +266,83 @@ class TestPlanner:
         assert commands == ["a.sh", "b.sh"], (
             f"Expected both hooks once each, got {commands!r}"
         )
+
+
+class TestDuplicateWarnings:
+    """A harness that reads two destinations must not load one item twice."""
+
+    @staticmethod
+    def plan(
+        sandbox: Sandbox, profiles: tuple[str, ...], *, at_default: bool = True
+    ) -> tuple[str, ...]:
+        """Route the sample library to ``profiles`` and return the plan warnings."""
+        config = sandbox.configure()
+        registry = ProfileRegistry()
+        destinations = {}
+        for name in profiles:
+            default = registry.get(name).default_path(sandbox.environment)
+            assert default is not None
+            path = default if at_default else sandbox.environment.home / "x" / name
+            destinations[name] = DestinationConfig(name, name, path)
+        route = RouteConfig(
+            sources=("library",), destinations=profiles, allow_lossy=True
+        )
+        config = replace(config, destinations=destinations, routes=(route,))
+        return TestPlanner.planner(sandbox).plan(config).warnings
+
+    def test_copilot_and_agents_both_receiving_skills_warns(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Copilot CLI reads ~/.agents/skills too, so one skill would load twice."""
+        warnings = self.plan(sandbox, ("copilot", "agents"))
+
+        assert warnings == (
+            "Copilot CLI loads 1 item(s) from both copilot and agents:"
+            " skills/sample; exclude them from one route",
+        ), f"Expected one skills warning, got {warnings!r}"
+
+    def test_vscode_reads_copilot_instructions_agents_and_skills(
+        self, sandbox: Sandbox
+    ) -> None:
+        """VS Code reads ~/.copilot, so its own copies duplicate them."""
+        warnings = self.plan(sandbox, ("copilot", "vscode"))
+
+        assert len(warnings) == 1, f"Expected one VS Code warning, got {warnings!r}"
+        assert warnings[0].startswith("VS Code loads 3 item(s) from both vscode"), (
+            f"Expected agent and both instructions, got {warnings!r}"
+        )
+        assert "agents/reviewer" in warnings[0], f"Got {warnings!r}"
+
+    def test_split_routes_produce_no_warning(self, sandbox: Sandbox) -> None:
+        """Excluding skills from copilot and documents from vscode is clean."""
+        config = sandbox.configure()
+        registry = ProfileRegistry()
+        names = ("copilot", "vscode", "agents")
+        destinations = {}
+        for name in names:
+            default = registry.get(name).default_path(sandbox.environment)
+            assert default is not None
+            destinations[name] = DestinationConfig(name, name, default)
+        routes = (
+            RouteConfig(("library",), ("agents",), allow_lossy=True),
+            RouteConfig(
+                ("library",), ("copilot",), exclude=("skills/*",), allow_lossy=True
+            ),
+            RouteConfig(
+                ("library",),
+                ("vscode",),
+                exclude=("instructions/*", "agents/*"),
+                allow_lossy=True,
+            ),
+        )
+        config = replace(config, destinations=destinations, routes=routes)
+
+        warnings = TestPlanner.planner(sandbox).plan(config).warnings
+
+        assert warnings == (), f"Expected no duplicates, got {warnings!r}"
+
+    def test_custom_paths_are_not_read_by_the_harness(self, sandbox: Sandbox) -> None:
+        """A destination outside the default folder is not searched by the harness."""
+        warnings = self.plan(sandbox, ("copilot", "agents"), at_default=False)
+
+        assert warnings == (), f"Expected no warning for custom paths, got {warnings!r}"
