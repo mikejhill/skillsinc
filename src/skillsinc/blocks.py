@@ -20,10 +20,15 @@ class ManagedBlock:
 
     @staticmethod
     def build(sections: Sequence[tuple[str, str]]) -> str:
-        """Return the block text for ``(label, text)`` sections, in order."""
+        """Return the block text for ``(label, text)`` sections, in order.
+
+        Section text is normalized to LF line endings, as ``extract``
+        returns it, so a CRLF source does not read as a local edit.
+        """
         parts = [BEGIN, NOTICE]
         for label, text in sections:
-            parts.extend(["", f"<!-- skillsinc: {label} -->", "", text.strip()])
+            body = text.replace("\r\n", "\n").strip()
+            parts.extend(["", f"<!-- skillsinc: {label} -->", "", body])
         parts.extend(["", END])
         return "\n".join(parts)
 
