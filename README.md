@@ -114,6 +114,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 - [Decision: TOML entries with tomlkit](docs/decisions/0004-toml-entries-with-tomlkit.md)
 - [Decision: plugins expand into kinds](docs/decisions/0005-plugins-expand-into-kinds.md)
 - [Decision: entry files beside a destination root](docs/decisions/0007-files-beside-the-root.md)
+- [Decision: edit VS Code's JSONC mcp.json in place](docs/decisions/0008-jsonc-edits-in-place.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License

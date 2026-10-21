@@ -710,17 +710,19 @@ class TestEntryDiff:
     ) -> tuple[tuple[Change, ...], tuple[str, ...]]:
         """Write ``current`` as ``mcp.json`` and diff ``outputs`` against it."""
         if current is not None:
-            (root / "mcp.json").write_text(json.dumps(current), encoding="utf-8")
+            (root / "mcp-config.json").write_text(json.dumps(current), encoding="utf-8")
         manifest = Manifest("target", str(root))
         if owned is not None:
-            manifest.entries["mcp.json"] = OwnedEntries(created_file=False, keys=owned)
+            manifest.entries["mcp-config.json"] = OwnedEntries(
+                created_file=False, keys=owned
+            )
         return DestinationDiff(root, manifest, adopt=adopt).compare(
-            {}, {}, {"mcp.json": outputs} if outputs else {}
+            {}, {}, {"mcp-config.json": outputs} if outputs else {}
         )
 
     def output(self, value: dict[str, JsonValue] | None = None) -> EntryOutput:
         """Return the desired ``servers/ours`` entry."""
-        return EntryOutput("mcp.json", "servers", "ours", value or self.SERVER)
+        return EntryOutput("mcp-config.json", "servers", "ours", value or self.SERVER)
 
     @pytest.mark.parametrize(
         ("current", "owned", "adopt", "action", "note"),
@@ -777,7 +779,9 @@ class TestEntryDiff:
             tmp_path, current, recorded, (self.output(),), adopt=adopt
         )
 
-        raw = (tmp_path / "mcp.json").read_bytes() if current is not None else None
+        raw = (
+            (tmp_path / "mcp-config.json").read_bytes() if current is not None else None
+        )
         expected = Digest.of(raw) if raw is not None else None
         assert errors == (), f"Expected no errors, got {errors!r}"
         assert [
@@ -806,8 +810,8 @@ class TestEntryDiff:
 
         assert changes == (), f"Expected no changes, got {changes!r}"
         assert errors == (
-            "mcp.json: entry servers/ours exists but is not managed by SkillSinc;"
-            " review it, then rerun with --adopt (identical content)",
+            "mcp-config.json: entry servers/ours exists but is not managed by"
+            " SkillSinc; review it, then rerun with --adopt (identical content)",
         ), f"Expected one unmanaged-entry error, got {errors!r}"
 
     def test_up_to_date_entry_has_no_change(self, tmp_path: Path) -> None:
@@ -854,11 +858,11 @@ class TestEntryDiff:
         self, tmp_path: Path
     ) -> None:
         """A file SkillSinc created is deleted once its last entry goes."""
-        (tmp_path / "mcp.json").write_text(
+        (tmp_path / "mcp-config.json").write_text(
             json.dumps({"servers": {"ours": self.SERVER}}), encoding="utf-8"
         )
         manifest = Manifest("target", str(tmp_path))
-        manifest.entries["mcp.json"] = OwnedEntries(
+        manifest.entries["mcp-config.json"] = OwnedEntries(
             created_file=True, keys={"servers/ours": JsonDocument.digest(self.SERVER)}
         )
 
@@ -871,8 +875,8 @@ class TestEntryDiff:
     def test_sequential_changes_chain_preconditions(self, tmp_path: Path) -> None:
         """Each change expects the bytes the previous change wrote."""
         outputs = (
-            EntryOutput("mcp.json", "servers", "a", self.SERVER),
-            EntryOutput("mcp.json", "servers", "b", self.SERVER),
+            EntryOutput("mcp-config.json", "servers", "a", self.SERVER),
+            EntryOutput("mcp-config.json", "servers", "b", self.SERVER),
         )
 
         changes, _ = self.compare(tmp_path, None, None, outputs)
@@ -885,11 +889,11 @@ class TestEntryDiff:
 
     def test_invalid_json_blocks_destination(self, tmp_path: Path) -> None:
         """A file that is not plain JSON is never rewritten."""
-        (tmp_path / "mcp.json").write_text("{ // comment\n}", encoding="utf-8")
+        (tmp_path / "mcp-config.json").write_text("{ // comment\n}", encoding="utf-8")
 
         changes, errors = DestinationDiff(
             tmp_path, Manifest("target", str(tmp_path)), adopt=False
-        ).compare({}, {}, {"mcp.json": (self.output(),)})
+        ).compare({}, {}, {"mcp-config.json": (self.output(),)})
 
         assert changes == (), f"Expected no changes, got {changes!r}"
         assert "is not a plain JSON object" in errors[0], (
@@ -901,12 +905,12 @@ class TestEntryDiff:
         changes, errors = DestinationDiff(
             tmp_path, Manifest("target", str(tmp_path)), adopt=False
         ).compare(
-            {"mcp.json": FileOutput("mcp.json", b"{}")},
+            {"mcp-config.json": FileOutput("mcp-config.json", b"{}")},
             {},
-            {"mcp.json": (self.output(),)},
+            {"mcp-config.json": (self.output(),)},
         )
 
         assert changes == (), f"Expected no changes, got {changes!r}"
-        assert errors[0].startswith("mcp.json: wanted in more than one form"), (
+        assert errors[0].startswith("mcp-config.json: wanted in more than one form"), (
             f"Expected overlap refusal, got {errors!r}"
         )
