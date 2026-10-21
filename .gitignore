@@ -261,3 +261,6 @@ __marimo__/
 # Test reports written by CI
 junit.xml
 .smoke-venv/
+mutants/
+mutation-results.txt
+mutmut.log

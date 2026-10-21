@@ -11,6 +11,8 @@ import yaml
 from skillsinc.exceptions import FrontmatterError
 from skillsinc.models import Document, Frontmatter, FrontmatterValue
 
+# YAML reads these as line breaks, so they must be written escaped
+YAML_BREAKS: Final = re.compile("[\x85\u2028\u2029]")
 FENCE: Final = re.compile(
     r"\A---[ \t]*\r?\n(?P<yaml>.*?)^---[ \t]*(?:\r?\n|\Z)", re.DOTALL | re.MULTILINE
 )
@@ -48,6 +50,8 @@ class FrontmatterCodec:
         header = yaml.safe_dump(
             dict(frontmatter), sort_keys=False, allow_unicode=True, width=1000
         )
+        if YAML_BREAKS.search(header):
+            header = yaml.safe_dump(dict(frontmatter), sort_keys=False, width=1000)
         return f"---\n{header}---\n{body}".encode()
 
     # Internals

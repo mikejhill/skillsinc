@@ -95,11 +95,14 @@ jobs:
             exit 0
           fi
           branch=$(jq -r '.headRefName' <<< "$pr")
-          sha=$(jq -r '.headRefOid' <<< "$pr")
           sleep 20
+          # Read the head from the branch: the pull request's head lags a
+          # branch that release-please has just rewritten.
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha')
           for workflow in ci.yml security.yml; do
             runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$sha" \
               --json databaseId --jq 'length')
+            echo "$workflow runs on $branch@$sha: $runs"
             if [[ "$runs" == "0" ]]; then
               echo "Dispatching $workflow on $branch"
               gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$branch"

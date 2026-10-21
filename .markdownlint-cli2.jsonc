@@ -3,5 +3,6 @@
     "MD013": false,
     "MD048": { "style": "backtick" }
   },
-  "ignores": ["CHANGELOG.md", ".venv/**", "node_modules/**", ".tmp/**"]
+  "globs": ["**/*.md"],
+  "ignores": ["CHANGELOG.md", ".venv/**", "node_modules/**", ".tmp/**", "mutants/**"]
 }

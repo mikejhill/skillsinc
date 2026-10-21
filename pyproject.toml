@@ -39,12 +39,17 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.169.2",
     "poethepoet>=0.48.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pytest-randomly>=5.0.0",
     "ruff>=0.17.0",
     "ty>=0.0.86",
     "types-pyyaml>=6.0.12.20260906",
+]
+mutation = [
+    "mutmut>=3.8.0",
 ]
 
 [tool.ruff]
@@ -86,15 +91,25 @@ all = "error"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers", "--strict-config", "-ra", "--import-mode=importlib"]
+addopts = [
+    "--strict-markers", "--strict-config", "-ra", "--import-mode=importlib",
+    # Performance budgets run in their own job: `poe perf`
+    "-m", "not perf",
+]
 xfail_strict = true
+markers = [
+    "unit: one module through its public API (the default layer)",
+    "integration: user journeys through Application.run in one process",
+    "e2e: the skillsinc process run against a throwaway home directory",
+    "perf: time budgets for planning and syncing large libraries",
+]
 
 [tool.coverage.run]
 source = ["skillsinc"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 90
+fail_under = 98
 show_missing = true
 skip_covered = true
 exclude_also = ['if __name__ == .__main__.:', 'assert_never\(']
@@ -105,7 +120,21 @@ format-check = { cmd = "ruff format --check .", help = "Check formatting" }
 lint = { cmd = "ruff check .", help = "Lint code" }
 lint-fix = { cmd = "ruff check . --fix", help = "Lint and auto-fix" }
 typecheck = { cmd = "ty check", help = "Type check (strict)" }
-test = { cmd = "pytest --cov", help = "Run tests with coverage" }
+test = { cmd = "pytest --cov", help = "Run unit, property, integration, and e2e tests with coverage" }
+e2e = { cmd = "pytest -m e2e", help = "Run the skillsinc process against a throwaway home" }
+perf = { cmd = "pytest -m perf --durations=0 -p no:randomly", help = "Run the performance budgets" }
+mutate = { shell = "uv run --group mutation mutmut run && uv run --group mutation mutmut results --all true > mutation-results.txt && uv run python scripts/mutation_report.py mutation-results.txt", help = "Mutation testing (POSIX only; slow)" }
 docs-lint = { cmd = "npx --yes markdownlint-cli2", help = "Lint Markdown documentation" }
 fix = { sequence = ["format", "lint-fix"], help = "Auto-fix formatting and lint" }
 check = { sequence = ["format-check", "lint", "typecheck", "test"], help = "Run every Python quality gate" }
+
+[tool.mutmut]
+# Mutation testing: change the code in small ways and check a test fails.
+# POSIX only (it forks); run it on Linux, macOS, or WSL with `uv run poe mutate`.
+source_paths = ["src/skillsinc/"]
+pytest_add_cli_args_test_selection = ["tests/"]
+# Process tests and timing budgets run the installed code, not the mutant
+pytest_add_cli_args = ["-p", "no:randomly", "-p", "no:cacheprovider", "-m", "not e2e and not perf"]
+mutate_only_covered_lines = true
+# Files tests read beside the code
+also_copy = ["examples/"]
