@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Final, Protocol, assert_never
 
 from skillsinc.exceptions import AppError
 from skillsinc.paths import Environment
@@ -150,19 +150,15 @@ class Backend(Protocol):
 
     def definition(self, job: Job) -> str:
         """Return the text that ``install`` registers."""
-        ...
 
     def install(self, job: Job) -> None:
         """Register ``job``, replacing an earlier registration."""
-        ...
 
     def remove(self) -> bool:
         """Unregister the job; return False if none was registered."""
-        ...
 
     def status(self) -> Status:
         """Describe the registered job."""
-        ...
 
 
 def _check(completed: Completed, action: str) -> Completed:
@@ -628,6 +624,8 @@ def backend(scheduler: Scheduler, runner: Runner, environment: Environment) -> B
             return SystemdTimer(runner, environment)
         case Scheduler.CRON:
             return Cron(runner)
+        case _:
+            assert_never(scheduler)
 
 
 def interpreter(executable: Path, platform: str) -> Path:
