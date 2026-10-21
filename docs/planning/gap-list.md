@@ -17,18 +17,18 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 
 ## Parity with ai-feature-sync
 
-| ai-feature-sync feature                                                 | SkillSinc                                                     |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Skills, agents, prompts, instructions into `~/.copilot` and `~/.claude` | Covered, with format conversion instead of renaming           |
-| Codex skills                                                            | Covered through the `agents` destination (`~/.agents/skills`) |
-| Codex agents: `*.agent.md` → `~/.codex/agents/<name>.toml`              | Covered, with the same snake_case names                       |
-| Hook files (`*.json`) copied to `~/.copilot/hooks`                      | Covered, plus conversion into Claude Code `settings.json`     |
-| Resources (`*.md`) copied to `~/.copilot/resources`                     | Covered: `resources` kind (decision 0003)                     |
-| `claude_md_import`: managed `@`-import block in `CLAUDE.md`             | Covered: resources imported from `~/.claude/CLAUDE.md`        |
-| Prompts copied to `~/.copilot/prompts`                                  | Refused on purpose: Copilot CLI documents no prompt folder    |
-| Junctions and hard links                                                | Not planned: copies plus ownership are safer (decision 0001)  |
-| Optional `--prune`                                                      | Covered: owned files are always reconciled, edits released    |
-| Windows Task Scheduler registration script                              | Covered: [scheduling examples](../guides/scheduling.md)       |
+| ai-feature-sync feature                                                 | SkillSinc                                                             |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Skills, agents, prompts, instructions into `~/.copilot` and `~/.claude` | Covered, with format conversion instead of renaming                   |
+| Codex skills                                                            | Covered through the `agents` destination (`~/.agents/skills`)         |
+| Codex agents: `*.agent.md` → `~/.codex/agents/<name>.toml`              | Covered, with the same snake_case names                               |
+| Hook files (`*.json`) copied to `~/.copilot/hooks`                      | Covered, plus conversion into Claude Code `settings.json`             |
+| Resources (`*.md`) copied to `~/.copilot/resources`                     | Covered: `resources` kind (decision 0003)                             |
+| `claude_md_import`: managed `@`-import block in `CLAUDE.md`             | Covered: resources imported from `~/.claude/CLAUDE.md`                |
+| Prompts copied to `~/.copilot/prompts`                                  | Refused on purpose: Copilot CLI documents no prompt folder            |
+| Junctions and hard links                                                | Not planned: copies plus ownership are safer (decision 0001)          |
+| Optional `--prune`                                                      | Covered: owned files are always reconciled, edits released            |
+| Windows Task Scheduler registration script                              | Covered: `skillsinc schedule` ([scheduling](../guides/scheduling.md)) |
 
 ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from the documented scope only.
 
@@ -42,5 +42,5 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 6. ~~**Codex MCP servers.**~~ Done: `[mcp_servers.<name>]` in `config.toml`, edited with `tomlkit` ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)).
 7. ~~**Plugins.**~~ Done: library plugins expand into skills, agents, prompts, and MCP servers ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Hooks inside plugins wait on gap 2; an opt-in local marketplace profile stays possible behind a new decision.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
-9. ~~**Scheduling helper.**~~ Done: [scheduling examples](../guides/scheduling.md) for Task Scheduler, launchd, and a systemd user timer.
+9. ~~**Scheduling helper.**~~ Done: `skillsinc schedule install|remove|status` registers sync with Task Scheduler, launchd, a systemd user timer, or cron ([scheduling](../guides/scheduling.md)).
 10. **Native verification.** Partly done on 2026-10-21 on Windows: Claude Code, Copilot CLI, and Codex loaded a real library, including MCP servers ([harness profiles](../guides/harness-profiles.md)). Remaining: VS Code discovery, Claude path-scoped rules, the Codex `AGENTS.md` block, and macOS and Linux (roadmap item 2).

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+import logging
+import sys
+from datetime import timedelta
 
 import pytest
 from tests.conftest import Sandbox
@@ -10,7 +13,12 @@ from tests.conftest import Sandbox
 from skillsinc.__main__ import Application
 from skillsinc.cli import CommandLine
 from skillsinc.paths import Environment
-from skillsinc.settings import InitSettings, PlanSettings, ProfilesSettings
+from skillsinc.settings import (
+    InitSettings,
+    PlanSettings,
+    ProfilesSettings,
+    ScheduleSettings,
+)
 
 
 class TestCommandLine:
@@ -62,6 +70,46 @@ class TestCommandLine:
             f"Expected profile settings, got {result!r}"
         )
 
+    def test_schedule_install_settings_are_typed(
+        self, environment: Environment
+    ) -> None:
+        """Parse the interval, scheduler, absolute config path, and dry run."""
+        result = CommandLine(environment).parse(
+            [
+                "schedule",
+                "install",
+                "--interval",
+                "00:05:00",
+                "--scheduler",
+                "cron",
+                "--config",
+                "~/custom.json",
+                "--dry-run",
+            ]
+        )
+
+        assert result == ScheduleSettings(
+            action="install",
+            scheduler="cron",
+            interval=timedelta(minutes=5),
+            config_path=environment.home / "custom.json",
+            dry_run=True,
+            log_level="WARNING",
+        ), f"Expected install settings, got {result!r}"
+
+    def test_schedule_status_defaults(self, environment: Environment) -> None:
+        """Status needs no interval or config and detects the scheduler."""
+        result = CommandLine(environment).parse(["schedule", "status"])
+
+        assert result == ScheduleSettings(
+            action="status",
+            scheduler=None,
+            interval=timedelta(hours=1),
+            config_path=None,
+            dry_run=False,
+            log_level="WARNING",
+        ), f"Expected status settings, got {result!r}"
+
     @pytest.mark.parametrize(
         "argv",
         [
@@ -69,6 +117,10 @@ class TestCommandLine:
             ["unknown"],
             ["sync", "--log-level", "INVALID"],
             ["init", "--source", "missing-directory"],
+            ["schedule"],
+            ["schedule", "install", "--interval", "5"],
+            ["schedule", "install", "--interval", "30s"],
+            ["schedule", "status", "--scheduler", "at"],
         ],
     )
     def test_invalid_arguments_exit_two(
@@ -97,6 +149,45 @@ class TestCommandLine:
 
 class TestApplication:
     """Application translates process-boundary failures to documented status codes."""
+
+    def test_log_file_receives_report_and_diagnostics(self, sandbox: Sandbox) -> None:
+        """--log-file appends a header, the report, and errors; stdout stays empty."""
+        log = sandbox.environment.state_directory / "sync.log"
+
+        first = sandbox.run("plan", "--log-file", str(log))
+        sandbox.configure()
+        second = sandbox.run("sync", "--log-file", str(log))
+
+        text = log.read_text(encoding="utf-8")
+        assert (first, second) == ((2, ""), (0, "")), (
+            f"Expected nothing on stdout, got {first}, {second}"
+        )
+        assert text.count("--- ") == 2, f"Expected two run headers in {text}"
+        assert "skillsinc plan\nERROR:" in text, f"Expected the plan error in {text}"
+        assert "skillsinc sync\n" in text, f"Expected the sync header in {text}"
+        handler = logging.getLogger().handlers[0]
+        assert isinstance(handler, logging.StreamHandler), "Expected a stream handler"
+        assert handler.stream is sys.stderr, "Expected logging restored to stderr"
+
+    def test_large_log_file_is_rotated(self, sandbox: Sandbox) -> None:
+        """A log over 1 MiB moves to <name>.1 before the run appends."""
+        log = sandbox.environment.state_directory / "sync.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("x" * (1024 * 1024 + 1), encoding="utf-8")
+
+        sandbox.run("plan", "--log-file", str(log))
+
+        sizes = (log.stat().st_size, log.with_name("sync.log.1").stat().st_size)
+        assert sizes[0] < 1024 < sizes[1], f"Expected a rotated log, got {sizes}"
+
+    def test_schedule_dry_run_dispatches(self, sandbox: Sandbox) -> None:
+        """The schedule command is reachable through the application."""
+        status, output = sandbox.run(
+            "schedule", "install", "--scheduler", "cron", "--dry-run"
+        )
+
+        assert status == 0, f"Expected success, got {status}: {output}"
+        assert "0 */1 * * *" in output, f"Expected an hourly line, got {output}"
 
     def test_profiles_lists_builtin_harnesses(self, sandbox: Sandbox) -> None:
         """Expose the supported profiles without reading a configuration."""

@@ -48,7 +48,13 @@ uv tool install git+https://github.com/mikejhill/skillsinc.git
     skillsinc sync
     ```
 
-Run `skillsinc sync` again whenever the library changes, or schedule it with Task Scheduler, launchd, or a systemd timer using the [scheduling examples](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/scheduling.md). An overlapping run exits without writing.
+4. Keep destinations in sync on a schedule (Task Scheduler on Windows, launchd on macOS, a systemd user timer or cron on Linux):
+
+    ```bash
+    skillsinc schedule install --interval 5m
+    ```
+
+    Installing the package cannot register this for you; run it once per machine. `skillsinc schedule status` shows the last result and `skillsinc schedule remove` undoes it. See [scheduling](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/scheduling.md). An overlapping run exits without writing.
 
 ## Library layout
 
@@ -83,14 +89,15 @@ Run `skillsinc profiles` for the same table. See [harness profiles](https://gith
 
 ## Commands
 
-| Command              | Purpose                                            |
-| -------------------- | -------------------------------------------------- |
-| `skillsinc init`     | Write a starter configuration                      |
-| `skillsinc plan`     | Show every change a sync would make; write nothing |
-| `skillsinc sync`     | Apply the plan                                     |
-| `skillsinc profiles` | List harness profiles and what each kind becomes   |
+| Command              | Purpose                                                   |
+| -------------------- | --------------------------------------------------------- |
+| `skillsinc init`     | Write a starter configuration                             |
+| `skillsinc plan`     | Show every change a sync would make; write nothing        |
+| `skillsinc sync`     | Apply the plan                                            |
+| `skillsinc profiles` | List harness profiles and what each kind becomes          |
+| `skillsinc schedule` | `install`, `remove`, or show `status` of a scheduled sync |
 
-`plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, and `--config PATH`. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
+`plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, and `--config PATH`. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
 ## Documentation
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +29,7 @@ class PlanSettings:
     json_output: bool
     verbose: bool
     log_level: str
+    log_file: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,4 +39,16 @@ class ProfilesSettings:
     log_level: str
 
 
-type Settings = InitSettings | PlanSettings | ProfilesSettings
+@dataclass(frozen=True, slots=True)
+class ScheduleSettings:
+    """Settings for ``skillsinc schedule install|remove|status``."""
+
+    action: Literal["install", "remove", "status"]
+    scheduler: str | None
+    interval: timedelta
+    config_path: Path | None
+    dry_run: bool
+    log_level: str
+
+
+type Settings = InitSettings | PlanSettings | ProfilesSettings | ScheduleSettings
