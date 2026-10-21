@@ -14,13 +14,21 @@ from skillsinc.exceptions import ConfigurationError, SourceError
 from skillsinc.manifest import ManifestStore
 from skillsinc.models import Customization, EntryOutput, FileOutput
 from skillsinc.paths import Environment
-from skillsinc.plan import DestinationPlan, Plan, Skip
+from skillsinc.plan import Change, DestinationPlan, Plan, Skip
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.sources import SourceReader
 
 logger = logging.getLogger(__name__)
 
 WARNING_SAMPLE: Final = 5
+
+
+@dataclass(frozen=True, slots=True)
+class Covers:
+    """Plans of destinations that may cover items, and which run applies."""
+
+    plans: Mapping[str, DestinationPlan]
+    applied: frozenset[str]
 
 
 @dataclass(slots=True)
@@ -33,6 +41,7 @@ class DesiredState:
     origins: dict[str, str] = field(default_factory=dict)
     skipped: list[Skip] = field(default_factory=list)
     delivered: list[str] = field(default_factory=list)
+    depends_on: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -61,18 +70,26 @@ class Planner:
             ConfigurationError: If ``only`` names an unknown destination.
         """
         targets = self._targets(config, only)
+        order = self._covering_order(config, targets)
         routes = [
             route
             for route in config.routes
-            if any(name in route.destinations for name in targets)
+            if any(name in route.destinations for name in order)
         ]
         items, failures = self._read_sources(config, routes)
-        plans = tuple(
-            self._plan_destination(
-                config, config.destinations[name], routes, items, failures, adopt=adopt
+        planned: dict[str, DestinationPlan] = {}
+        for name in order:
+            covers = Covers(planned, applied=frozenset(targets))
+            planned[name] = self._plan_destination(
+                config,
+                config.destinations[name],
+                routes,
+                items,
+                failures,
+                covers=covers,
+                adopt=adopt,
             )
-            for name in targets
-        )
+        plans = tuple(planned[name] for name in targets)
         return Plan(
             destinations=plans,
             source_errors=failures,
@@ -109,6 +126,41 @@ class Planner:
                 failures[name] = str(err)
         return items, failures
 
+    def _covering_order(self, config: Config, targets: Sequence[str]) -> list[str]:
+        """Return ``targets`` plus the destinations that may cover their items.
+
+        Covering destinations come first, so their plans exist when a
+        destination that relies on them is planned.
+        """
+        order: list[str] = []
+
+        def visit(name: str, path: tuple[str, ...]) -> None:
+            if name in order or name in path:
+                return
+            for other in self._candidates(config, config.destinations[name]):
+                visit(other.name, (*path, name))
+            order.append(name)
+
+        for name in targets:
+            visit(name, ())
+        return order
+
+    def _candidates(
+        self, config: Config, destination: DestinationConfig
+    ) -> list[DestinationConfig]:
+        """Return enabled default-path destinations that may cover this one's items."""
+        covered_by = self._profiles.get(destination.profile).covered_by
+        if not covered_by or not self._at_default(destination):
+            return []
+        return [
+            other
+            for other in config.destinations.values()
+            if other is not destination
+            and other.enabled
+            and other.profile in covered_by
+            and self._at_default(other)
+        ]
+
     def _plan_destination(  # noqa: PLR0913 — the planning context for one destination
         self,
         config: Config,
@@ -117,6 +169,7 @@ class Planner:
         items: Mapping[str, tuple[Customization, ...]],
         failures: Mapping[str, str],
         *,
+        covers: Covers,
         adopt: bool,
     ) -> DestinationPlan:
         """Plan one destination, refusing to touch it if any of its sources failed."""
@@ -137,7 +190,7 @@ class Planner:
         if overlap is not None:
             return DestinationPlan(destination, errors=(overlap,))
 
-        desired = self._render(config, destination, own_routes, items)
+        desired = self._render(config, destination, own_routes, items, covers)
         if desired.errors:
             return DestinationPlan(destination, errors=tuple(desired.errors))
 
@@ -158,6 +211,8 @@ class Planner:
             notes=tuple(desired.notes),
             errors=errors,
             delivered=tuple(desired.delivered),
+            pending=self._pending(desired, changes),
+            depends_on=tuple(sorted(desired.depends_on)),
         )
 
     @staticmethod
@@ -224,41 +279,46 @@ class Planner:
         return seen
 
     def _covering(
-        self, config: Config, destination: DestinationConfig, item: Customization
+        self,
+        config: Config,
+        destination: DestinationConfig,
+        label: str,
+        covers: Covers,
     ) -> str | None:
-        """Return the destination that already delivers ``item`` to this harness.
+        """Return the destination that verifiably delivers ``item`` to this harness.
 
-        Only destinations at their profile's default directory count, on both
-        sides, and only if a route sends ``item`` there and it renders without
-        a refusal or an unaccepted loss. Every enabled destination is checked,
-        not just the planned ones, so ``--destination`` gives the same result.
+        The covering destination's plan must be unblocked and include the item.
+        If it is not applied in this run, the item must already be in place
+        there, so a copy is never removed before its replacement exists.
         """
-        covered_by = self._profiles.get(destination.profile).covered_by
-        if not covered_by or not self._at_default(destination):
-            return None
-        for other in config.destinations.values():
-            kinds = covered_by.get(other.profile)
+        for other in self._candidates(config, destination):
+            kinds = self._profiles.get(destination.profile).covered_by[other.profile]
+            plan = covers.plans.get(other.name)
             if (
-                kinds is None
-                or item.kind not in kinds
-                or other is destination
-                or not other.enabled
-                or not self._at_default(other)
+                plan is None
+                or plan.blocked
+                or self._kind(label) not in kinds
+                or label not in plan.delivered
             ):
                 continue
-            routes = [
-                route
-                for route in config.routes
-                if other.name in route.destinations and route.selects(item)
-            ]
-            if not routes:
-                continue
-            rendering = self._profiles.get(other.profile).render(item)
-            losses = (*rendering.losses, *item.losses)
-            allowed = any(route.allow_lossy for route in routes)
-            if rendering.unsupported is None and (allowed or not losses):
+            if other.name in covers.applied or label not in plan.pending:
                 return other.name
         return None
+
+    @staticmethod
+    def _pending(desired: DesiredState, changes: Sequence[Change]) -> frozenset[str]:
+        """Return the labels whose rendered files or blocks ``changes`` touch.
+
+        Only file and block items can cover another destination, so entry
+        changes are not traced.
+        """
+        labels: set[str] = set()
+        for change in changes:
+            if change.block:
+                labels.update(label for label, _ in desired.blocks.get(change.path, ()))
+            elif not change.entry and change.path in desired.origins:
+                labels.add(desired.origins[change.path])
+        return frozenset(labels)
 
     def _at_default(self, destination: DestinationConfig) -> bool:
         """Return True if the destination is its profile's default directory."""
@@ -285,6 +345,7 @@ class Planner:
         destination: DestinationConfig,
         routes: Sequence[RouteConfig],
         items: Mapping[str, tuple[Customization, ...]],
+        covers: Covers,
     ) -> DesiredState:
         """Render every routed item through the destination's profile."""
         profile = self._profiles.get(destination.profile)
@@ -294,10 +355,11 @@ class Planner:
             if item.refusal is not None:
                 desired.skipped.append(Skip(label, item.refusal))
                 continue
-            cover = self._covering(config, destination, item)
+            cover = self._covering(config, destination, label, covers)
             if cover is not None:
                 reason = f"{profile.harness} already loads it from destination {cover}"
                 desired.skipped.append(Skip(label, reason))
+                desired.depends_on.add(cover)
                 continue
             rendering = profile.render(item)
             if rendering.unsupported is not None:

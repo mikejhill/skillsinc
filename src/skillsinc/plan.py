@@ -71,6 +71,10 @@ class DestinationPlan:
     errors: tuple[str, ...] = ()
     delivered: tuple[str, ...] = ()
     """Labels (``source:kind/name``) of the items this destination receives."""
+    pending: frozenset[str] = frozenset()
+    """Delivered labels whose files or entries this plan still has to change."""
+    depends_on: tuple[str, ...] = ()
+    """Destinations whose delivery this plan relies on for items it skips."""
 
     @property
     def blocked(self) -> bool:

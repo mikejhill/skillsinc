@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import stat
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,12 +33,59 @@ class Applier:
         self._store = store
 
     def apply(self, plan: Plan) -> tuple[DestinationResult, ...]:
-        """Apply every unblocked destination; one failure never affects another."""
+        """Apply every unblocked destination, covering destinations first.
+
+        One failure never affects another, except that a destination relying on
+        a failed one to deliver items it skips is not applied at all.
+        """
+        results: dict[str, DestinationResult] = {}
+        for destination in self._ordered(plan.destinations):
+            if destination.blocked or not destination.changes:
+                continue
+            name = destination.destination.name
+            failed = [
+                other
+                for other in destination.depends_on
+                if other in results and results[other].error is not None
+            ]
+            if failed:
+                results[name] = DestinationResult(
+                    name,
+                    0,
+                    f"not applied: {', '.join(failed)} failed, and it skips"
+                    " items that destination was to deliver",
+                )
+            else:
+                results[name] = self._apply_destination(destination)
         return tuple(
-            self._apply_destination(destination)
+            results[destination.destination.name]
             for destination in plan.destinations
-            if not destination.blocked and destination.changes
+            if destination.destination.name in results
         )
+
+    @staticmethod
+    def _ordered(
+        destinations: Sequence[DestinationPlan],
+    ) -> list[DestinationPlan]:
+        """Return destinations with each one after those it depends on."""
+        names = {destination.destination.name for destination in destinations}
+        done: set[str] = set()
+        ordered: list[DestinationPlan] = []
+        remaining = list(destinations)
+        while remaining:
+            ready = [
+                destination
+                for destination in remaining
+                if all(
+                    other in done or other not in names
+                    for other in destination.depends_on
+                )
+            ] or remaining[:1]
+            for destination in ready:
+                ordered.append(destination)
+                done.add(destination.destination.name)
+                remaining.remove(destination)
+        return ordered
 
     # Steps
 

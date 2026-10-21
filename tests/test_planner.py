@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from tests.conftest import Builder, Sandbox
 
+from skillsinc.applier import Applier
 from skillsinc.config import Config, DestinationConfig, RouteConfig
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.manifest import Manifest, ManifestStore
@@ -314,15 +315,56 @@ class TestDuplicateLoads:
         ), f"Expected skill covered by agents, got {plan!r}"
         assert plan.warnings == (), f"Expected no warning, got {plan.warnings!r}"
 
-    def test_coverage_holds_when_planning_one_destination(
+    def test_one_destination_run_needs_the_cover_in_place(
         self, sandbox: Sandbox
     ) -> None:
-        """``--destination`` must not flip items back into a covered destination."""
-        plan = self.plan(sandbox, ("copilot", "agents"), only=("copilot",))
-
-        assert "library:skills/sample" in self.skipped(plan, "copilot"), (
-            f"Expected the skill still covered, got {plan!r}"
+        """``-d copilot`` keeps the skill until ~/.agents already holds it."""
+        before = self.plan(sandbox, ("copilot", "agents"), only=("copilot",))
+        Applier(ManifestStore(sandbox.environment.state_directory)).apply(
+            self.plan(sandbox, ("copilot", "agents"), only=("agents",))
         )
+        after = self.plan(sandbox, ("copilot", "agents"), only=("copilot",))
+
+        assert "library:skills/sample" not in self.skipped(before, "copilot"), (
+            f"Expected the skill kept while agents lacks it, got {before!r}"
+        )
+        assert "library:skills/sample" in self.skipped(after, "copilot"), (
+            f"Expected the skill covered once agents has it, got {after!r}"
+        )
+
+    def test_blocked_cover_does_not_skip(self, sandbox: Sandbox) -> None:
+        """A blocked agents destination delivers nothing, so copilot keeps it."""
+        agents = sandbox.environment.home / ".agents" / "skills" / "sample"
+        agents.mkdir(parents=True)
+        (agents / "SKILL.md").write_text("Unmanaged.\n", encoding="utf-8")
+
+        plan = self.plan(sandbox, ("copilot", "agents"))
+
+        agents_plan = next(
+            d for d in plan.destinations if d.destination.name == "agents"
+        )
+        assert agents_plan.blocked, f"Expected agents blocked, got {agents_plan!r}"
+        assert "library:skills/sample" not in self.skipped(plan, "copilot"), (
+            f"Expected the skill kept in copilot, got {plan!r}"
+        )
+
+    def test_failed_cover_stops_dependent_apply(self, sandbox: Sandbox) -> None:
+        """If the covering destination fails, its dependents are not applied."""
+        plan = self.plan(sandbox, ("copilot", "agents"))
+        copilot = next(d for d in plan.destinations if d.destination.name == "copilot")
+        assert copilot.depends_on == ("agents",), f"Got {copilot!r}"
+        blocker = sandbox.environment.home / ".agents" / "skills" / "sample"
+        blocker.mkdir(parents=True)
+        (blocker / "SKILL.md").write_text("Raced in.\n", encoding="utf-8")
+
+        results = Applier(ManifestStore(sandbox.environment.state_directory)).apply(
+            plan
+        )
+
+        by_name = {result.name: result for result in results}
+        assert by_name["agents"].error is not None, f"Got {results!r}"
+        assert by_name["copilot"].applied == 0, f"Got {results!r}"
+        assert "not applied: agents failed" in str(by_name["copilot"].error)
 
     def test_vscode_keeps_instructions_copilot_cannot_take(
         self, sandbox: Sandbox
