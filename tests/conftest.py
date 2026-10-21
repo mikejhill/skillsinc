@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import stat
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, settings
 
 from skillsinc.__main__ import Application
 from skillsinc.config import Config, ConfigLoader, SourceConfig
@@ -17,6 +19,38 @@ from skillsinc.frontmatter import FrontmatterCodec
 from skillsinc.models import Asset, Customization, Frontmatter, Kind
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
+
+# Property tests: quick by default, deeper in CI (HYPOTHESIS_PROFILE=ci).
+# mutmut reruns each test on a fresh instance, which this check reports.
+RERUNS = [HealthCheck.differing_executors]
+settings.register_profile("default", deadline=None, suppress_health_check=RERUNS)
+settings.register_profile(
+    "ci",
+    max_examples=500,
+    deadline=None,
+    print_blob=True,
+    suppress_health_check=[*RERUNS, HealthCheck.too_slow],
+)
+settings.register_profile(
+    "deep",
+    max_examples=5000,
+    deadline=None,
+    print_blob=True,
+    suppress_health_check=RERUNS,
+)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
+
+# Test layers, by location; select one with ``pytest -m <layer>``
+LAYERS = {"e2e": "e2e", "perf": "perf", "test_journeys.py": "integration"}
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark each test with its layer: unit, integration, e2e, or perf."""
+    root = Path(__file__).parent
+    for item in items:
+        parts = item.path.relative_to(root).parts
+        layer = next((LAYERS[part] for part in parts if part in LAYERS), "unit")
+        item.add_marker(getattr(pytest.mark, layer))
 
 
 class Builder:
