@@ -29,22 +29,23 @@ Items whose files (skill assets included) refer to `${CLAUDE_PLUGIN_ROOT}`, anot
 
 Default path `$CLAUDE_CONFIG_DIR` or `~/.claude`. Reference: [Claude Code memory and rules](https://code.claude.com/docs/en/memory).
 
-| Kind         | Output                            | Conversion                                             |
-| ------------ | --------------------------------- | ------------------------------------------------------ |
-| skills       | `skills/<name>/`                  | exact                                                  |
-| instructions | `rules/<name>.md`                 | `applyTo` → `paths`; `**` → no `paths` (always loaded) |
-| agents       | `agents/<name>.md`                | keeps `name`, `description`; requires a description    |
-| prompts      | `commands/<name>.md`              | keeps `description`, `argument-hint`                   |
-| resources    | `resources/<name>.md`             | exact, plus `@resources/<name>.md` in `CLAUDE.md`      |
-| hooks        | `settings.json` → `hooks.<Event>` | one matcher group per Copilot hook entry               |
+| Kind         | Output                               | Conversion                                                        |
+| ------------ | ------------------------------------ | ----------------------------------------------------------------- |
+| skills       | `skills/<name>/`                     | exact                                                             |
+| instructions | `rules/<name>.md`                    | `applyTo` → `paths`; `**` → no `paths` (always loaded)            |
+| agents       | `agents/<name>.md`                   | keeps `name`, `description`; requires a description               |
+| prompts      | `commands/<name>.md`                 | keeps `description`, `argument-hint`                              |
+| resources    | `resources/<name>.md`                | exact, plus `@resources/<name>.md` in `CLAUDE.md`                 |
+| mcp          | `.claude.json` → `mcpServers.<name>` | explicit `type`; keeps `command`, `args`, `env`, `url`, `headers` |
+| hooks        | `settings.json` → `hooks.<Event>`    | one matcher group per Copilot hook entry                          |
 
 Each resource is imported from a managed block in `CLAUDE.md`, so Claude Code loads it in every session. Text outside the block is never changed; a `CLAUDE.md` SkillSinc created is deleted when the last resource goes.
 
-MCP servers are not written: Claude Code keeps user servers in `~/.claude.json`, outside this destination, and rewrites that file while running.
+MCP servers go into `~/.claude.json` for the default `~/.claude` root, or `<root>/.claude.json` for any other root (including `$CLAUDE_CONFIG_DIR`), which is where Claude Code reads user servers ([decision 0007](../decisions/0007-files-beside-the-root.md)). Each server gets an explicit `type`: `stdio` for a `command` server (Copilot's `local` included), and `http` or `sse` for a `url` server. Other servers and keys in the file are kept; the file keeps its permissions and is rewritten with two-space indentation. `~/.claude.json` must not be a link. Claude Code rewrites the file while running, so a sync can stop with "changed since the plan was made"; run it again.
 
 Hooks are written into `hooks` in `~/.claude/settings.json` ([Claude Code hooks](https://code.claude.com/docs/en/hooks)). SkillSinc owns whole event arrays (`hooks/PreToolUse`, for example); every hook file that uses an event is merged into that one array, and the user's other events and settings are kept. An event the user already hooks by hand blocks the destination until `--adopt`, which replaces that event's array. Each Copilot hook entry becomes `{"matcher": ..., "hooks": [{"type": "command", "command": ..., "timeout": ...}]}`: `bash` (or `command`, or `exec` plus `args` joined into a quoted command) becomes `command`, and `timeoutSec` (or `timeout`, default 30) becomes `timeout`. camelCase events map to Claude events (`userPromptSubmitted` → `UserPromptSubmit`, `agentStop` → `Stop`, and so on); PascalCase events already named the Claude way pass through.
 
-Losses: instructions without `applyTo` (on demand in Copilot, always loaded in Claude); `excludeAgent`; agent `tools`, `model`, `handoffs`, and other Copilot fields; prompt `agent`, `mode`, `model`, `tools`; VS Code `${...}` variables in prompt bodies. For hooks: camelCase events (scripts receive Claude's snake_case input instead of Copilot's camelCase input); events whose output JSON Claude reads differently (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Notification`, `SubagentStart`; for example, Claude expects `permissionDecision` inside `hookSpecificOutput`); events Claude Code lacks (`errorOccurred`, `userPromptTransformed`); matchers on camelCase tool events (Claude tests them against its own tool names, such as `Bash`); `powershell`, `cwd`, `env`, and other fields; hooks with no `bash`, `command`, or `exec` (for example `powershell`-only, `http`, or `prompt` hooks). A hook file with nothing Claude Code can run, or with `"disableAllHooks": true`, is skipped.
+Losses: instructions without `applyTo` (on demand in Copilot, always loaded in Claude); `excludeAgent`; agent `tools`, `model`, `handoffs`, and other Copilot fields; prompt `agent`, `mode`, `model`, `tools`; VS Code `${...}` variables in prompt bodies; MCP server fields other than `type`, `command`, `args`, `env`, `url`, `headers` (for example Copilot's `tools`), and a `url` server without `type`, written as `http` (a server whose `type` contradicts its shape is refused). For hooks: camelCase events (scripts receive Claude's snake_case input instead of Copilot's camelCase input); events whose output JSON Claude reads differently (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Notification`, `SubagentStart`; for example, Claude expects `permissionDecision` inside `hookSpecificOutput`); events Claude Code lacks (`errorOccurred`, `userPromptTransformed`); matchers on camelCase tool events (Claude tests them against its own tool names, such as `Bash`); `powershell`, `cwd`, `env`, and other fields; hooks with no `bash`, `command`, or `exec` (for example `powershell`-only, `http`, or `prompt` hooks). A hook file with nothing Claude Code can run, or with `"disableAllHooks": true`, is skipped.
 
 ## copilot
 

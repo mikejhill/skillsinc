@@ -12,6 +12,7 @@ from skillsinc.diff import DestinationDiff
 from skillsinc.exceptions import ConfigurationError, SourceError
 from skillsinc.manifest import ManifestStore
 from skillsinc.models import Customization, EntryOutput, FileOutput
+from skillsinc.paths import Environment
 from skillsinc.plan import DestinationPlan, Plan, Skip
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.sources import SourceReader
@@ -36,11 +37,16 @@ class Planner:
     """Turn configuration plus current disk state into a ``Plan``."""
 
     def __init__(
-        self, profiles: ProfileRegistry, reader: SourceReader, store: ManifestStore
+        self,
+        profiles: ProfileRegistry,
+        reader: SourceReader,
+        store: ManifestStore,
+        environment: Environment,
     ) -> None:
         self._profiles = profiles
         self._reader = reader
         self._store = store
+        self._environment = environment
 
     def plan(
         self, config: Config, *, only: Sequence[str] = (), adopt: bool = False
@@ -131,7 +137,8 @@ class Planner:
             manifest = self._store.load(destination.name, destination.path)
         except ConfigurationError as err:
             return DestinationPlan(destination, errors=(str(err),))
-        diff = DestinationDiff(destination.path, manifest, adopt=adopt)
+        outside = self._profiles.get(destination.profile).outside
+        diff = DestinationDiff(destination.path, manifest, adopt=adopt, outside=outside)
         entries = {
             path: tuple(found.values()) for path, found in desired.entries.items()
         }
@@ -188,7 +195,16 @@ class Planner:
             self._add_files(desired, label, rendering.files)
             for block in rendering.blocks:
                 desired.blocks.setdefault(block.path, []).append((label, block.text))
-            self._add_entries(desired, label, rendering.entries)
+            entries = (
+                replace(
+                    entry,
+                    path=profile.locate(
+                        entry.path, destination.path, self._environment
+                    ),
+                )
+                for entry in rendering.entries
+            )
+            self._add_entries(desired, label, entries)
         return desired
 
     @staticmethod

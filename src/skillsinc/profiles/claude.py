@@ -21,6 +21,7 @@ from skillsinc.paths import Environment
 from skillsinc.profiles.base import Profile
 from skillsinc.profiles.hooks import ClaudeHooks
 
+CLAUDE_JSON: Final = ".claude.json"
 INSTRUCTION_POLICY: Final = LossPolicy(
     carried=frozenset({"applyTo"}), ignored=frozenset({"name", "description"})
 )
@@ -36,17 +37,18 @@ class ClaudeProfile(Profile):
     name: ClassVar[str] = "claude"
     summary: ClassVar[str] = (
         "Claude Code: skills/, rules/, agents/, commands/, resources/ (CLAUDE.md),"
-        " settings.json hooks"
+        " settings.json hooks, .claude.json"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
         Kind.INSTRUCTION: Support.CONVERTED,
         Kind.AGENT: Support.CONVERTED,
         Kind.PROMPT: Support.CONVERTED,
-        Kind.MCP: Support.UNSUPPORTED,
+        Kind.MCP: Support.CONVERTED,
         Kind.HOOK: Support.CONVERTED,
         Kind.RESOURCE: Support.EXACT,
     }
+    outside: ClassVar[frozenset[str]] = frozenset({"../.claude.json"})
 
     @override
     def default_path(self, environment: Environment) -> Path:
@@ -57,11 +59,7 @@ class ClaudeProfile(Profile):
     def render(self, item: Customization) -> Rendering:
         """Translate ``item`` into Claude Code's native layout."""
         if item.kind is Kind.MCP:
-            return self.refuse_kind(
-                item,
-                "Claude Code keeps user MCP servers in ~/.claude.json,"
-                " which SkillSinc does not edit yet",
-            )
+            return self.server_entry(item, CLAUDE_JSON, "mcpServers")
         converters: dict[Kind, Callable[[Customization], Rendering]] = {
             Kind.SKILL: self.copy_skill,
             Kind.INSTRUCTION: self._rule,
@@ -71,6 +69,20 @@ class ClaudeProfile(Profile):
             Kind.HOOK: self._hooks,
         }
         return converters[item.kind](item)
+
+    @override
+    def locate(self, path: str, root: Path, environment: Environment) -> str:
+        """Place ``.claude.json`` where Claude Code reads it for this root.
+
+        Claude Code keeps it in ``$CLAUDE_CONFIG_DIR`` when that is set, and
+        beside the default ``~/.claude`` directory (``~/.claude.json``) otherwise.
+        """
+        if path != CLAUDE_JSON:
+            return path
+        configured = environment.directory("CLAUDE_CONFIG_DIR", Path())
+        if configured.is_absolute() or root != environment.home / ".claude":
+            return path
+        return f"../{CLAUDE_JSON}"
 
     # Conversions
 

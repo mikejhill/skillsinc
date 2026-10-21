@@ -150,6 +150,98 @@ class TestClaudeProfile:
         ], f"Expected exact copy at {path}, got {result!r}"
         assert result.losses == (), f"Expected no losses, got {result.losses!r}"
 
+    @pytest.mark.parametrize(
+        ("server", "expected", "losses"),
+        [
+            ({"command": "gh"}, {"type": "stdio", "command": "gh"}, ()),
+            (
+                {"type": "local", "command": "gh", "args": ["mcp"], "env": {"A": "1"}},
+                {"type": "stdio", "command": "gh", "args": ["mcp"], "env": {"A": "1"}},
+                (),
+            ),
+            (
+                {"type": "sse", "url": "https://x", "headers": {"A": "1"}},
+                {"type": "sse", "url": "https://x", "headers": {"A": "1"}},
+                (),
+            ),
+            (
+                {"url": "https://x"},
+                {"type": "http", "url": "https://x"},
+                ("has no type, so it is written as an http server",),
+            ),
+            (
+                {"command": "gh", "tools": ["*"]},
+                {"type": "stdio", "command": "gh"},
+                ("drops server fields: tools",),
+            ),
+        ],
+    )
+    def test_mcp_server_becomes_claude_json_entry(
+        self,
+        server: dict[str, JsonValue],
+        expected: dict[str, JsonValue],
+        losses: tuple[str, ...],
+    ) -> None:
+        """Servers get an explicit transport type and lose non-Claude fields."""
+        item = Builder.item(Kind.MCP, name="github", frontmatter=server)
+
+        result = ClaudeProfile().render(item)
+
+        assert result.entries == (
+            EntryOutput(".claude.json", "mcpServers", "github", expected),
+        ), f"Expected one mcpServers entry, got {result!r}"
+        assert result.losses == losses, f"Expected {losses!r}, got {result.losses!r}"
+
+    @pytest.mark.parametrize(
+        ("server", "reason"),
+        [
+            ({"type": "http", "command": "gh"}, "does not fit a server with a command"),
+            ({"type": "stdio", "url": "https://x"}, "is not a remote transport"),
+            ({"type": [], "command": "gh"}, "type must be a string"),
+        ],
+    )
+    def test_mcp_server_with_mismatched_type_is_refused(
+        self, server: dict[str, JsonValue], reason: str
+    ) -> None:
+        """A transport type that contradicts the server's shape is never guessed at."""
+        result = ClaudeProfile().render(Builder.item(Kind.MCP, frontmatter=server))
+
+        assert result.unsupported is not None, f"Expected refusal, got {result!r}"
+        assert reason in result.unsupported, f"Expected {reason!r}, got {result!r}"
+
+    def test_claude_json_sits_beside_the_default_root(
+        self, environment: Environment
+    ) -> None:
+        """The default ``~/.claude`` root keeps its servers in ``~/.claude.json``."""
+        root = environment.home / ".claude"
+
+        result = ClaudeProfile().locate(".claude.json", root, environment)
+
+        assert result == "../.claude.json", f"Expected sibling file, got {result!r}"
+
+    @pytest.mark.parametrize("configured", [True, False])
+    def test_claude_json_stays_inside_a_config_dir(
+        self, environment: Environment, *, configured: bool
+    ) -> None:
+        """``$CLAUDE_CONFIG_DIR`` or a custom root holds its own ``.claude.json``."""
+        root = environment.home / (".claude" if configured else "custom")
+        variables = dict(environment.variables)
+        if configured:
+            variables["CLAUDE_CONFIG_DIR"] = str(root)
+        custom = Environment(environment.home, variables, environment.platform)
+
+        result = ClaudeProfile().locate(".claude.json", root, custom)
+
+        assert result == ".claude.json", f"Expected file in root, got {result!r}"
+
+    def test_other_files_are_not_relocated(self, environment: Environment) -> None:
+        """Only ``.claude.json`` moves beside the root."""
+        root = environment.home / ".claude"
+
+        result = ClaudeProfile().locate("settings.json", root, environment)
+
+        assert result == "settings.json", f"Expected unchanged path, got {result!r}"
+
 
 class TestClaudeHooksRendering:
     """Hook files become mergeable ``hooks`` entries in ``settings.json``."""

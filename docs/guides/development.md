@@ -68,7 +68,7 @@ Before running `sync` against real folders, point destinations at scratch direct
 ### Add a harness profile
 
 1. Create a `Profile` subclass in `src/skillsinc/profiles/` with `name`, `summary`, `support`, `default_path`, and `render`. Use `copy_skill`, `copy_file`, `apply_to`, and `variable_losses` from the base class.
-2. Report every dropped field: a `LossPolicy` for frontmatter, plus explicit messages for activation or body changes.
+2. Report every dropped field: a `LossPolicy` for frontmatter, plus explicit messages for activation or body changes. Convert MCP servers with `server_entry`. A configuration file beside the root goes in `outside` and is placed by `locate` ([decision 0007](../decisions/0007-files-beside-the-root.md)).
 3. Register it in `ProfileRegistry`.
 4. Add `tests/profiles/test_<module>.py` and at least one journey test.
 5. Document outputs, losses, and the vendor reference in [harness profiles](harness-profiles.md), and confirm the folder locations against current vendor documentation.

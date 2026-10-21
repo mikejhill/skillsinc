@@ -49,7 +49,7 @@ class PlanCommand:
             settings.config_path
         )
         store = ManifestStore(self._environment.state_directory)
-        planner = Planner(self._profiles, SourceReader(), store)
+        planner = Planner(self._profiles, SourceReader(), store, self._environment)
         reporter = Reporter(verbose=settings.verbose)
 
         if not settings.apply:
