@@ -6,7 +6,14 @@ import pytest
 from tests.conftest import Builder
 
 from skillsinc.frontmatter import FrontmatterCodec
-from skillsinc.models import BlockOutput, Frontmatter, Kind
+from skillsinc.models import (
+    BlockOutput,
+    EntryOutput,
+    Frontmatter,
+    JsonValue,
+    Kind,
+    Rendering,
+)
 from skillsinc.paths import Environment
 from skillsinc.profiles.claude import ClaudeProfile
 
@@ -142,3 +149,64 @@ class TestClaudeProfile:
             (path, item.document.raw)
         ], f"Expected exact copy at {path}, got {result!r}"
         assert result.losses == (), f"Expected no losses, got {result.losses!r}"
+
+
+class TestClaudeHooksRendering:
+    """Hook files become mergeable ``hooks`` entries in ``settings.json``."""
+
+    def test_hook_file_becomes_one_entry_per_event(self) -> None:
+        """Emit sorted, mergeable entries keyed by Claude event."""
+        item = Builder.item(
+            Kind.HOOK,
+            frontmatter={
+                "version": 1,
+                "hooks": {
+                    "Stop": [{"bash": "b.sh"}],
+                    "SessionEnd": [{"bash": "a.sh"}],
+                },
+            },
+        )
+
+        result = ClaudeProfile().render(item)
+
+        def group(command: str) -> list[JsonValue]:
+            handler = {"type": "command", "command": command, "timeout": 30}
+            return [{"hooks": [handler]}]
+
+        assert result == Rendering(
+            entries=(
+                EntryOutput(
+                    "settings.json", "hooks", "SessionEnd", group("a.sh"), merge=True
+                ),
+                EntryOutput(
+                    "settings.json", "hooks", "Stop", group("b.sh"), merge=True
+                ),
+            )
+        ), f"Expected two settings.json entries, got {result!r}"
+
+    @pytest.mark.parametrize(
+        ("header", "reason"),
+        [
+            (
+                {"version": 1, "hooks": {"errorOccurred": [{"bash": "a"}]}},
+                "has no hooks Claude Code can run",
+            ),
+            (
+                {
+                    "version": 1,
+                    "disableAllHooks": True,
+                    "hooks": {"Stop": [{"bash": "a"}]},
+                },
+                "sets disableAllHooks, so none of its hooks run",
+            ),
+        ],
+    )
+    def test_hook_file_without_runnable_hooks_is_refused(
+        self, header: Frontmatter, reason: str
+    ) -> None:
+        """Refuse a file whose hooks all fall outside Claude Code or are disabled."""
+        item = Builder.item(Kind.HOOK, frontmatter=header)
+
+        result = ClaudeProfile().render(item)
+
+        assert result.unsupported == reason, f"Expected refusal, got {result!r}"

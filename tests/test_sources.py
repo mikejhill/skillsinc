@@ -377,3 +377,46 @@ class TestPluginExpansion:
             SourceError, match="agents/reviewer is defined by plugin 'kit' and the"
         ):
             SourceReader().read(Builder.source(tmp_path))
+
+
+class TestHookFiles:
+    """Hook files are Copilot CLI hook configurations, checked before any sync."""
+
+    @staticmethod
+    def write(root: Path, name: str, text: str) -> Path:
+        """Write ``hooks/<name>`` under ``root``."""
+        path = root / "hooks" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_reads_hook_files(self, tmp_path: Path) -> None:
+        """Each ``<name>.json`` becomes one ``hooks/<name>`` item."""
+        text = '{"version": 1, "hooks": {"sessionStart": [{"bash": "a.sh"}]}}'
+        self.write(tmp_path, "start.json", text)
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert [(item.selector, item.document.raw) for item in items] == [
+            ("hooks/start", text.encode())
+        ], f"Expected one hook file, got {items!r}"
+
+    @pytest.mark.parametrize(
+        ("text", "message"),
+        [
+            ("{", "invalid hook file"),
+            ('{"hooks": {}}', "version"),
+            ('{"version": true, "hooks": {}}', "version"),
+            ('{"version": 1, "hooks": []}', "version"),
+            ('{"version": 1, "hooks": {"x": {}}}', "event 'x' must be an array"),
+            ('{"version": 1, "hooks": {"x": [1]}}', "event 'x' must be an array"),
+        ],
+    )
+    def test_invalid_hook_file_fails_the_source(
+        self, tmp_path: Path, text: str, message: str
+    ) -> None:
+        """Malformed hook files fail the whole source."""
+        self.write(tmp_path, "bad.json", text)
+
+        with pytest.raises(SourceError, match=message):
+            SourceReader().read(Builder.source(tmp_path))

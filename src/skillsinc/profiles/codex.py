@@ -45,6 +45,7 @@ class CodexProfile(Profile):
         Kind.AGENT: Support.UNSUPPORTED,
         Kind.PROMPT: Support.UNSUPPORTED,
         Kind.MCP: Support.CONVERTED,
+        Kind.HOOK: Support.UNSUPPORTED,
         Kind.RESOURCE: Support.UNSUPPORTED,
     }
 

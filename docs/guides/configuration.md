@@ -48,13 +48,13 @@ Required. Must be `1`.
 
 ## `[sources.<name>]`
 
-| Key       | Required | Default                                                                      | Meaning                                                 |
-| --------- | -------- | ---------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `path`    | yes      | —                                                                            | Library directory                                       |
-| `exclude` | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                 | File and directory names never read                     |
-| `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `plugins` | Table mapping a kind (or `plugins`) to its subdirectory |
+| Key       | Required | Default                                                                               | Meaning                                                 |
+| --------- | -------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `path`    | yes      | —                                                                                     | Library directory                                       |
+| `exclude` | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                     |
+| `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Table mapping a kind (or `plugins`) to its subdirectory |
 
-A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, or an MCP server file that is not a JSON object with exactly one of `command` or `url` fail the whole source.
+A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays fail the whole source.
 
 ## `[destinations.<name>]`
 

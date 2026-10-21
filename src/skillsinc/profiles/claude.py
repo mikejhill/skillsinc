@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import ClassVar, Final, assert_never, override
+from typing import ClassVar, Final, override
 
 from skillsinc.models import (
     BlockOutput,
     Customization,
+    EntryOutput,
     FileOutput,
     FrontmatterValue,
     Kind,
@@ -18,6 +19,7 @@ from skillsinc.models import (
 )
 from skillsinc.paths import Environment
 from skillsinc.profiles.base import Profile
+from skillsinc.profiles.hooks import ClaudeHooks
 
 INSTRUCTION_POLICY: Final = LossPolicy(
     carried=frozenset({"applyTo"}), ignored=frozenset({"name", "description"})
@@ -33,7 +35,8 @@ class ClaudeProfile(Profile):
 
     name: ClassVar[str] = "claude"
     summary: ClassVar[str] = (
-        "Claude Code: skills/, rules/, agents/, commands/, resources/ (CLAUDE.md)"
+        "Claude Code: skills/, rules/, agents/, commands/, resources/ (CLAUDE.md),"
+        " settings.json hooks"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
@@ -41,6 +44,7 @@ class ClaudeProfile(Profile):
         Kind.AGENT: Support.CONVERTED,
         Kind.PROMPT: Support.CONVERTED,
         Kind.MCP: Support.UNSUPPORTED,
+        Kind.HOOK: Support.CONVERTED,
         Kind.RESOURCE: Support.EXACT,
     }
 
@@ -52,24 +56,21 @@ class ClaudeProfile(Profile):
     @override
     def render(self, item: Customization) -> Rendering:
         """Translate ``item`` into Claude Code's native layout."""
-        match item.kind:
-            case Kind.SKILL:
-                return self.copy_skill(item)
-            case Kind.INSTRUCTION:
-                return self._rule(item)
-            case Kind.AGENT:
-                return self._agent(item)
-            case Kind.PROMPT:
-                return self._command(item)
-            case Kind.MCP:
-                return self.refuse_kind(
-                    item,
-                    "Claude Code keeps user MCP servers in ~/.claude.json,"
-                    " which SkillSinc does not edit yet",
-                )
-            case Kind.RESOURCE:
-                return self._resource(item)
-        assert_never(item.kind)
+        if item.kind is Kind.MCP:
+            return self.refuse_kind(
+                item,
+                "Claude Code keeps user MCP servers in ~/.claude.json,"
+                " which SkillSinc does not edit yet",
+            )
+        converters: dict[Kind, Callable[[Customization], Rendering]] = {
+            Kind.SKILL: self.copy_skill,
+            Kind.INSTRUCTION: self._rule,
+            Kind.AGENT: self._agent,
+            Kind.PROMPT: self._command,
+            Kind.RESOURCE: self._resource,
+            Kind.HOOK: self._hooks,
+        }
+        return converters[item.kind](item)
 
     # Conversions
 
@@ -122,6 +123,21 @@ class ClaudeProfile(Profile):
         losses = PROMPT_POLICY.losses(source)
         losses.extend(self.variable_losses(item.document.body))
         return self.rewrite(item, f"commands/{item.name}.md", frontmatter, losses)
+
+    @staticmethod
+    def _hooks(item: Customization) -> Rendering:
+        """Convert a Copilot hook file into ``settings.json`` hook groups per event."""
+        if item.document.frontmatter.get("disableAllHooks") is True:
+            return Rendering.refuse("sets disableAllHooks, so none of its hooks run")
+        hooks = item.document.frontmatter.get("hooks")
+        converted = ClaudeHooks.convert(hooks if isinstance(hooks, dict) else {})
+        if not converted.events:
+            return Rendering.refuse("has no hooks Claude Code can run")
+        entries = tuple(
+            EntryOutput("settings.json", "hooks", event, groups, merge=True)
+            for event, groups in sorted(converted.events.items())
+        )
+        return Rendering(entries=entries, losses=tuple(converted.losses))
 
     @staticmethod
     def _resource(item: Customization) -> Rendering:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -225,3 +227,41 @@ class TestPlanner:
             assert [change.entry for change in target.changes] == ["mcpServers/tool"], (
                 f"Expected one deduplicated entry, got {target.changes!r}"
             )
+
+    def test_hook_files_sharing_an_event_merge_into_one_entry(
+        self, sandbox: Sandbox, tmp_path: Path
+    ) -> None:
+        """Two hook files for one Claude event combine; identical groups dedupe."""
+        hooks = sandbox.library / "hooks"
+        hooks.mkdir()
+        (hooks / "a.json").write_text(
+            '{"version": 1, "hooks": {"Stop": [{"bash": "a.sh"}]}}',
+            encoding="utf-8",
+        )
+        (hooks / "b.json").write_text(
+            '{"version": 1, "hooks": {"Stop": [{"bash": "b.sh"}]}}',
+            encoding="utf-8",
+        )
+        second = tmp_path / "second"
+        shutil.copytree(hooks, second / "hooks")
+        config = sandbox.configure("claude")
+        sources = dict(config.sources)
+        sources["second"] = Builder.source(second, name="second")
+        config = replace(
+            config,
+            sources=sources,
+            routes=(
+                RouteConfig(("library", "second"), ("target",), include=("hooks/*",)),
+            ),
+        )
+
+        target = self.planner(sandbox).plan(config).destinations[0]
+
+        assert [change.entry for change in target.changes] == ["hooks/Stop"], (
+            f"Expected one merged entry, got {target!r}"
+        )
+        written = json.loads(target.changes[0].content or b"{}")
+        commands = [group["hooks"][0]["command"] for group in written["hooks"]["Stop"]]
+        assert commands == ["a.sh", "b.sh"], (
+            f"Expected both hooks once each, got {commands!r}"
+        )

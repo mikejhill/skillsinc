@@ -75,7 +75,7 @@ Before running `sync` against real folders, point destinations at scratch direct
 
 ### Add a customization kind
 
-1. Add the member to `Kind` in `models.py`, and a suffix in `sources.SUFFIXES` if it is a single-file Markdown kind (MCP servers and resources have their own readers).
+1. Add the member to `Kind` in `models.py`, and a suffix in `sources.SUFFIXES` if it is a single-file Markdown kind (MCP servers and hooks are JSON files read by `_json_items` with a per-kind check; resources have their own reader).
 2. Give every profile a `support` entry and a `render` branch (refuse it where unsupported).
 3. Update the README table, [configuration](configuration.md), and [harness profiles](harness-profiles.md).
 

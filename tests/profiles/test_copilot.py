@@ -67,6 +67,16 @@ class TestCopilotProfile:
             entries=(EntryOutput("mcp-config.json", "mcpServers", "github", server),)
         ), f"Expected one mcpServers entry, got {result!r}"
 
+    def test_hook_file_is_copied_into_hooks(self) -> None:
+        """Copy the authored hook file to ``hooks/<name>.json``."""
+        item = Builder.item(Kind.HOOK, name="guard", frontmatter={"version": 1})
+
+        result = CopilotProfile().render(item)
+
+        assert [(f.path, f.content) for f in result.files] == [
+            ("hooks/guard.json", item.document.raw)
+        ], f"Expected verbatim hook copy, got {result!r}"
+
     def test_default_path_uses_fake_home(self, environment: Environment) -> None:
         """Default Copilot roots stay within the injected home."""
         result = CopilotProfile().default_path(environment)
