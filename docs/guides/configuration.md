@@ -1,18 +1,26 @@
 # Configuration reference
 
-This guide documents every key in `config.jsonc`. `skillsinc init` writes a working starting point; edit it, then run `skillsinc plan`.
+This guide documents every key in `config.json`. `skillsinc init` writes a working starting point; edit it, then run `skillsinc plan`.
 
-The file is JSONC: JSON plus `//` and `/* */` comments and trailing commas, as in VS Code's settings ([decision 0011](../decisions/0011-jsonc-configuration.md)). Duplicate keys and `null` values are errors; omit a key to get its default.
+The file keeps the `.json` extension but is read as JSONC: JSON plus `//` and `/* */` comments and trailing commas, as in VS Code's `settings.json` ([decision 0011](../decisions/0011-jsonc-configuration.md)). Duplicate keys and `null` values are errors; omit a key to get its default.
 
 ## Location
 
 | Item        | Default                                                   | Override                             |
 | ----------- | --------------------------------------------------------- | ------------------------------------ |
-| Config file | `$XDG_CONFIG_HOME/skillsinc/config.jsonc` (`~/.config`)   | `--config PATH`                      |
+| Config file | `$XDG_CONFIG_HOME/skillsinc/config.json` (`~/.config`)    | `--config PATH`                      |
 | Library     | `$XDG_CONFIG_HOME/skillsinc/library/` (written by `init`) | `init --source DIR`, or `path` below |
 | State       | `$XDG_STATE_HOME/skillsinc/` (`~/.local/state`)           | `XDG_STATE_HOME`                     |
 
 The XDG variables are honoured on Windows and macOS too. Relative paths in the file resolve against the file's directory; `~` expands to the home directory. Unknown keys are errors, so typos never pass silently.
+
+When `config.json` is absent but a `config.jsonc` from an early build sits beside it, that file is read instead. Any path given to `--config` is read as JSONC whatever its extension, except `.toml`.
+
+Editors treat a `.json` file as strict JSON and may flag comments. In VS Code, add this to your user settings:
+
+```jsonc
+"files.associations": { "**/skillsinc/config.json": "jsonc" }
+```
 
 ## Example
 
@@ -94,7 +102,7 @@ An item reaching a destination through several routes is distributed once; it is
 
 ## Migrating from TOML
 
-Builds before 0.1.0 read `config.toml`. SkillSinc now refuses a `.toml` file, and names it when `config.jsonc` is missing but `config.toml` sits beside it. The keys are unchanged; only the syntax moves:
+Builds before 0.1.0 read `config.toml`. SkillSinc now refuses a `.toml` file, and names it when `config.json` is missing but `config.toml` sits beside it. The keys are unchanged; only the syntax moves:
 
 | TOML                                     | JSONC                                          |
 | ---------------------------------------- | ---------------------------------------------- |
@@ -105,4 +113,4 @@ Builds before 0.1.0 read `config.toml`. SkillSinc now refuses a `.toml` file, an
 | `[[routes]]` (one per route)             | `"routes": [ { ... }, { ... } ]`               |
 | `# comment`                              | `// comment`                                   |
 
-Alternatively, run `skillsinc init` to write a fresh `config.jsonc` beside it, then copy your sources, destinations, and routes into it. Delete `config.toml` afterwards.
+Alternatively, run `skillsinc init` to write a fresh `config.json` beside it, then copy your sources, destinations, and routes into it. Delete `config.toml` afterwards.

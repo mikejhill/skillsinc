@@ -64,7 +64,7 @@ class TestStarterConfig:
     ) -> None:
         """Create the empty default library so the first plan can read it."""
         StarterConfig(ProfileRegistry(), environment).write(
-            tmp_path / "config.jsonc", None, force=False
+            tmp_path / "config.json", None, force=False
         )
 
         library = environment.config_home / "skillsinc" / "library"
@@ -75,7 +75,7 @@ class TestStarterConfig:
     ) -> None:
         """Leave the default library alone when the user names a source."""
         StarterConfig(ProfileRegistry(), environment).write(
-            tmp_path / "config.jsonc", tmp_path / "mine", force=False
+            tmp_path / "config.json", tmp_path / "mine", force=False
         )
 
         library = environment.config_home / "skillsinc" / "library"
@@ -86,7 +86,7 @@ class TestStarterConfig:
         self, tmp_path: Path, environment: Environment
     ) -> None:
         """Refuse accidental overwrite of existing user configuration."""
-        path = tmp_path / "config.jsonc"
+        path = tmp_path / "config.json"
         path.write_text("User config", encoding="utf-8")
 
         with pytest.raises(ConfigurationError, match="pass --force"):
@@ -103,7 +103,7 @@ class TestStarterConfig:
         path = tmp_path / "config.toml"
         path.write_text("version = 1\n", encoding="utf-8")
 
-        with pytest.raises(ConfigurationError, match=r"config\.jsonc"):
+        with pytest.raises(ConfigurationError, match=r"config\.json"):
             StarterConfig(ProfileRegistry(), environment).write(path, None, force=True)
 
         assert path.read_text(encoding="utf-8") == "version = 1\n", (
@@ -114,7 +114,7 @@ class TestStarterConfig:
         self, tmp_path: Path, environment: Environment
     ) -> None:
         """Explicit force persists the generated configuration."""
-        path = tmp_path / "config.jsonc"
+        path = tmp_path / "config.json"
         path.write_text("old", encoding="utf-8")
 
         result = StarterConfig(ProfileRegistry(), environment).write(
@@ -135,7 +135,7 @@ class TestStarterConfig:
         """The written JSONC loads, with or without a detected harness."""
         if installed:
             (environment.home / ".claude").mkdir(parents=True)
-        path = tmp_path / "config.jsonc"
+        path = tmp_path / "config.json"
         StarterConfig(ProfileRegistry(), environment).write(path, None, force=False)
 
         config = ConfigLoader(ProfileRegistry(), environment).load(path)

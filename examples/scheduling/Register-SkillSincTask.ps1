@@ -31,7 +31,7 @@ param(
     # skillsinc executable; defaults to the one on PATH (see `uv tool dir --bin`).
     [string] $SkillSinc,
 
-    # Extra arguments after `sync`, for example '--config C:\path\config.jsonc'.
+    # Extra arguments after `sync`, for example '--config C:\path\config.json'.
     [string] $Arguments = '',
 
     # Run without a console window, also while logged off (S4U logon). Registering
