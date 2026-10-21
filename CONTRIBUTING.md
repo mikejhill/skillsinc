@@ -13,8 +13,8 @@ uv run poe check
 
 ## Rules
 
-- Python follows the strict Astral toolchain configured in `pyproject.toml`: ruff with the broad rule set, `ty` with every rule at error, pytest with at least 90% branch coverage. Never loosen a setting to pass.
-- New behavior needs a test; user-visible behavior also needs a journey test in `tests/test_journeys.py`.
+- Python follows the strict Astral toolchain configured in `pyproject.toml`: ruff with the broad rule set, `ty` with every rule at error, pytest with at least 98% branch coverage overall and 100% on changed lines. Never loosen a setting to pass.
+- New behavior needs a test; user-visible behavior also needs a journey test in `tests/test_journeys.py`, and a new exit path or output format an e2e test in `tests/e2e/`.
 - Tests never touch the real home directory. Pass an `Environment` rooted in `tmp_path`.
 - Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`feat:`, `fix:`, `docs:` ...); PRs are squash-merged, so the title becomes the commit message and the changelog entry. Do not edit `CHANGELOG.md` by hand.
 

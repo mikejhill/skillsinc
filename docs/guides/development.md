@@ -11,16 +11,28 @@ uv sync
 uv run poe check
 ```
 
-| Task                   | Runs                                                       |
-| ---------------------- | ---------------------------------------------------------- |
-| `uv run poe fix`       | `ruff format` and `ruff check --fix`                       |
-| `uv run poe check`     | Format check, lint, `ty check`, pytest with coverage ≥ 90% |
-| `uv run poe docs-lint` | `markdownlint-cli2` over every Markdown file               |
-| `uv run skillsinc ...` | The CLI from the working tree                              |
+| Task                   | Runs                                                                      |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `uv run poe fix`       | `ruff format` and `ruff check --fix`                                      |
+| `uv run poe check`     | Format check, lint, `ty check`, every test layer but perf, coverage ≥ 98% |
+| `uv run poe e2e`       | Only the end-to-end tests (the `skillsinc` process)                       |
+| `uv run poe perf`      | The performance budgets                                                   |
+| `uv run poe mutate`    | Mutation testing with mutmut, then a score report (Linux, macOS, or WSL)  |
+| `uv run poe docs-lint` | `markdownlint-cli2` over every Markdown file                              |
+| `uv run skillsinc ...` | The CLI from the working tree                                             |
 
-CI (`.github/workflows/ci.yml`) runs the same tasks on Linux, Windows, and macOS with Python 3.12–3.14. The `CI` and `Security` aggregate jobs are required status checks on `main`.
+## Continuous integration
 
-The repository's Actions policy allows only GitHub-owned actions plus `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; any other action makes the workflow fail at startup. Put extra CI logic in `scripts/` (PEP 723 scripts run with `uv run`): `junit_summary.py` writes the test report to the job summary. release-please runs as a pinned npm CLI in the Release workflow for the same reason.
+| Workflow       | Trigger                           | Jobs                                                                                                                                                                                                                                                                               |
+| -------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`       | PRs, `main`, merge queue, Release | PR title, ruff, `ty`, unit + integration on Linux/Windows/macOS × Python 3.12–3.14 with the coverage gate, 100% diff coverage on PRs, wheel build + `twine check`, e2e against the installed wheel on every OS, perf budgets, markdownlint, actionlint + zizmor, dependency review |
+| `security.yml` | PRs, `main`, weekly               | `pip-audit` of every locked dependency, CodeQL                                                                                                                                                                                                                                     |
+| `mutation.yml` | PRs touching code, `main`, weekly | mutmut on the modules a PR changes (report only); the weekly fresh run of the whole package enforces `MUTATION_FLOOR`                                                                                                                                                              |
+| `release.yml`  | `main`                            | release-please, then CI, build, attest, publish to PyPI ([releasing](releasing.md))                                                                                                                                                                                                |
+
+The `CI` and `Security` aggregate jobs are required status checks on `main`. Every action is pinned to a commit SHA; zizmor fails the build on an unpinned action, a persisted checkout credential, or template injection. Dependabot bumps the pins weekly.
+
+The repository's Actions policy allows only GitHub-owned actions plus `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; any other action makes the workflow fail at startup. Put extra CI logic in `scripts/` (PEP 723 scripts run with `uv run`): `junit_summary.py` writes the test report to the job summary and `mutation_report.py` the mutation score. release-please runs as a pinned npm CLI in the Release workflow for the same reason.
 
 ## Code standards
 
@@ -36,18 +48,27 @@ The gate enforces most rules; the rest are conventions to keep:
 
 ## Tests
 
-| File or folder           | Covers                                                                       |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `tests/conftest.py`      | `Builder` (items, sources, config files), `Sandbox` journey driver, fixtures |
-| `tests/test_<module>.py` | One module each, through its public API                                      |
-| `tests/profiles/`        | One file per profile module                                                  |
-| `tests/test_journeys.py` | End-to-end `Application.run([...])` scenarios a user would perform           |
+Each test gets a layer marker from its location; select one with `pytest -m <layer>`.
+
+| Layer         | Where                                       | Covers                                                                                  |
+| ------------- | ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `unit`        | `tests/test_<module>.py`, `tests/profiles/` | One module each, through its public API                                                 |
+| `unit`        | `tests/test_properties.py`                  | Hypothesis properties of the codecs that edit users' files (frontmatter, blocks, JSONC) |
+| `integration` | `tests/test_journeys.py`                    | `Application.run([...])` scenarios a user would perform, in one process                 |
+| `e2e`         | `tests/e2e/`                                | The `skillsinc` process against a throwaway home: exit codes, streams, real path lookup |
+| `perf`        | `tests/perf/`                               | Time budgets and scaling for a large library; excluded unless selected with `-m perf`   |
+
+`tests/conftest.py` holds `Builder` (items, sources, config files), the `Sandbox` journey driver, and fixtures. CI runs the e2e layer against the built wheel by setting `SKILLSINC_E2E_COMMAND` to its installed `skillsinc`; locally it runs `python -m skillsinc`. Property tests run 100 examples locally and 500 in CI (`HYPOTHESIS_PROFILE=ci`); `HYPOTHESIS_PROFILE=deep` runs 5,000. pytest-randomly shuffles test order on every run, so tests must not depend on each other.
+
+Mutation testing (`poe mutate`, `mutation.yml`) changes the code in small ways and checks that a test fails for each change. A surviving mutant marks behavior no test checks: add a test that kills it. The baseline is 86.7% with a floor of 85%; raise `MUTATION_FLOOR` in `mutation.yml` as the score rises, and never lower it.
 
 Rules:
 
 - Tests never touch the real home directory. Use the `environment` fixture (fake home under `tmp_path`, absolute `XDG_CONFIG_HOME`/`XDG_STATE_HOME`) or `Sandbox`.
 - Each test checks one behavior, and every assertion carries a message with expected and actual values.
 - A bug fix starts with a failing test that reproduces it.
+- New user-visible behavior needs a journey test; a new exit path or output format also needs an e2e test.
+- Changed lines must be fully covered (the PR diff-coverage gate is 100%).
 - Symlink tests skip when the OS refuses to create links (Windows without Developer Mode).
 
 ## Trying changes against real harness folders

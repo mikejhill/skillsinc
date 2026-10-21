@@ -77,3 +77,15 @@ class TestFrontmatterCodec:
         assert (result.frontmatter, result.body) == (header, "Body\n"), (
             f"Expected {(header, 'Body')!r}, got {result!r}"
         )
+
+    @pytest.mark.parametrize("text", ["a\x85b", "a\u2028b", "a\u2029b", "\x85"])
+    def test_yaml_line_break_characters_round_trip(self, text: str) -> None:
+        """Characters YAML reads as line breaks are written escaped, not folded."""
+        codec = FrontmatterCodec()
+
+        rendered = codec.render({"description": text, "note": "café"}, "Body.\n")
+        parsed = codec.parse(rendered).frontmatter
+
+        assert parsed == {"description": text, "note": "café"}, (
+            f"Expected {text!r} and 'café' kept, got {parsed!r}"
+        )
