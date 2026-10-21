@@ -1,16 +1,20 @@
-"""OpenAI Codex profile: ``AGENTS.md`` instructions and ``config.toml`` MCP servers."""
+"""OpenAI Codex profile: ``AGENTS.md``, ``agents/*.toml``, and ``config.toml``."""
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar, Final, override
+
+import tomlkit
 
 from skillsinc.models import (
     BlockOutput,
     Customization,
     EntryOutput,
+    FileOutput,
     JsonValue,
     Kind,
     LossPolicy,
@@ -23,6 +27,9 @@ from skillsinc.profiles.base import Profile
 INSTRUCTION_POLICY: Final = LossPolicy(
     carried=frozenset({"applyTo"}), ignored=frozenset({"name", "description"})
 )
+AGENT_POLICY: Final = LossPolicy(carried=frozenset({"name", "description"}))
+AGENT_NAME_INVALID: Final = re.compile(r"[^a-z0-9]")
+LINE_END: Final = re.compile(r"\r+\n")
 
 # Library server fields Codex reads, per transport, and their Codex names
 STDIO_FIELDS: Final = {"command": "command", "args": "args", "env": "env", "cwd": "cwd"}
@@ -37,12 +44,12 @@ class CodexProfile(Profile):
 
     name: ClassVar[str] = "codex"
     summary: ClassVar[str] = (
-        "Codex: instructions merged into AGENTS.md, config.toml mcp_servers"
+        "Codex: AGENTS.md block, agents/<name>.toml, config.toml mcp_servers"
     )
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.UNSUPPORTED,
         Kind.INSTRUCTION: Support.CONVERTED,
-        Kind.AGENT: Support.UNSUPPORTED,
+        Kind.AGENT: Support.CONVERTED,
         Kind.PROMPT: Support.UNSUPPORTED,
         Kind.MCP: Support.CONVERTED,
         Kind.HOOK: Support.UNSUPPORTED,
@@ -56,7 +63,7 @@ class CodexProfile(Profile):
 
     @override
     def render(self, item: Customization) -> Rendering:
-        """Merge instructions into ``AGENTS.md`` and servers into ``config.toml``."""
+        """Merge instructions and servers into shared files; write agent files."""
         if item.kind is Kind.SKILL:
             return self.refuse_kind(
                 item, "Codex reads user skills from an agents destination (~/.agents)"
@@ -67,6 +74,8 @@ class CodexProfile(Profile):
             return self.refuse_kind(
                 item, "route resources to a claude or copilot destination"
             )
+        if item.kind is Kind.AGENT:
+            return self.custom_agent(item)
         if item.kind is not Kind.INSTRUCTION:
             return self.refuse_kind(item)
 
@@ -85,6 +94,36 @@ class CodexProfile(Profile):
             body = f"Applies when working with files matching {scope}.\n\n{body}"
             losses.append("applyTo becomes advisory text; Codex loads it every session")
         return Rendering(blocks=(BlockOutput("AGENTS.md", body),), losses=tuple(losses))
+
+    # Agents
+
+    @classmethod
+    def custom_agent(cls, item: Customization) -> Rendering:
+        """Convert an agent into an ``agents/<name>.toml`` custom agent.
+
+        Codex requires ``name``, ``description``, and ``developer_instructions``;
+        names follow its lowercase snake_case examples, as ai-feature-sync did.
+        """
+        source = item.document.frontmatter
+        description = source.get("description")
+        if not isinstance(description, str) or not description.strip():
+            return Rendering.refuse("Codex custom agents require a text description")
+        # TOML readers fold a carriage return before a newline, so drop it first
+        instructions = LINE_END.sub("\n", item.document.body).strip()
+        if not instructions:
+            return Rendering.refuse("Codex custom agents require instructions")
+        name = AGENT_NAME_INVALID.sub("_", item.name.lower())
+        document = tomlkit.document()
+        document["name"] = name
+        document["description"] = description.strip()
+        document["developer_instructions"] = tomlkit.string(
+            instructions, multiline="\n" in instructions
+        )
+        content = tomlkit.dumps(document).encode()
+        losses = AGENT_POLICY.losses(source)
+        losses.extend(cls.variable_losses(instructions))
+        path = f"agents/{name}.toml"
+        return Rendering(files=(FileOutput(path, content),), losses=tuple(losses))
 
     # MCP servers
 
