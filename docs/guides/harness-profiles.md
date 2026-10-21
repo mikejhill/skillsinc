@@ -79,10 +79,13 @@ Losses: `applyTo` globs become an advisory sentence; files without `applyTo` bec
 | Kind         | Output                                 | Conversion |
 | ------------ | -------------------------------------- | ---------- |
 | instructions | managed block in `AGENTS.md`           | lossy      |
+| agents       | `agents/<name>.toml`                   | converted  |
 | mcp          | `config.toml` → `[mcp_servers.<name>]` | converted  |
 | others       | unsupported                            | —          |
 
 MCP servers become `[mcp_servers.<name>]` tables in `config.toml`, edited in place with comments, ordering, and other tables kept ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)). Codex rejects fields it does not know, so only these are written: `command`, `args`, `env`, `cwd` for stdio servers; `url` and `headers` (as `http_headers`) for streamable HTTP servers; `tools` as `enabled_tools` unless it contains `"*"`. `type` is checked, not written: SSE servers and unknown types are refused, as are carried fields of the wrong type. Losses: any other field, and `${...}` variables, which Codex does not expand. A server with the same name that SkillSinc did not write blocks until `--adopt`; invalid TOML, or an `mcp_servers` that is not a table, blocks the destination. Hooks are not written.
+
+Agents become [custom agents](https://developers.openai.com/codex/subagents) at `agents/<name>.toml` with `name`, `description`, and the body as `developer_instructions`, the three keys Codex requires. The name is lowercased and every character other than a letter or digit becomes `_` (`Code-Review` becomes `code_review`), following Codex's examples and ai-feature-sync. Windows line endings in the body become plain newlines. An agent without a text description or with an empty body is refused. Codex's own `model`, `sandbox_mode`, and similar keys are not written; they inherit from the parent session. Losses: agent `tools`, `model`, `handoffs`, and other Copilot fields; VS Code `${...}` variables in the body.
 
 ## agents
 

@@ -1,6 +1,8 @@
-"""Test Codex instruction blocks, MCP server tables, and their losses."""
+"""Test Codex instruction blocks, TOML agents, MCP server tables, and their losses."""
 
 from __future__ import annotations
+
+import tomllib
 
 import pytest
 from tests.conftest import Builder
@@ -39,7 +41,102 @@ class TestCodexProfile:
             loss_count,
         ), f"Expected AGENTS section {text!r} with {loss_count} losses, got {result!r}"
 
-    @pytest.mark.parametrize("kind", [Kind.SKILL, Kind.AGENT, Kind.PROMPT])
+    def test_agent_becomes_custom_agent_toml(self) -> None:
+        """Write name, description, and body as developer_instructions."""
+        body = 'Review "diffs" with C:\\paths.\n\n\tThen report.\n'
+        item = Builder.item(
+            Kind.AGENT,
+            name="reviewer",
+            frontmatter={"name": "reviewer", "description": "Review: code"},
+            body=body,
+        )
+
+        result = CodexProfile().render(item)
+
+        (output,) = result.files
+        parsed = tomllib.loads(output.content.decode())
+        assert (output.path, parsed, result.losses) == (
+            "agents/reviewer.toml",
+            {
+                "name": "reviewer",
+                "description": "Review: code",
+                "developer_instructions": body.strip(),
+            },
+            (),
+        ), f"Expected a lossless reviewer.toml, got {result!r}"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            'One line with \\ and "quotes"',
+            'Triple """ quotes\n"""',
+            'Trailing quote\n"',
+            "Windows\r\nline\r\r\nends\r and a lone return",
+            "Tab\tbell\a null\x00 delete\x7f escape\x1b",
+            "Unicode é — 漢字 🙂\nsecond\u2028line",
+        ],
+    )
+    def test_agent_instructions_round_trip(self, body: str) -> None:
+        """Escape every character TOML forbids; fold CRLF line ends to LF."""
+        item = Builder.item(Kind.AGENT, body=body)
+
+        result = CodexProfile().render(item)
+
+        parsed = tomllib.loads(result.files[0].content.decode())
+        expected = body.replace("\r\r\n", "\n").replace("\r\n", "\n").strip()
+        assert parsed["developer_instructions"] == expected, (
+            f"Expected {expected!r}, got {parsed['developer_instructions']!r}"
+        )
+
+    def test_agent_name_becomes_snake_case(self) -> None:
+        """Lowercase the name and replace other characters with underscores."""
+        item = Builder.item(Kind.AGENT, name="Code-Review.v2")
+
+        result = CodexProfile().render(item)
+
+        (output,) = result.files
+        parsed = tomllib.loads(output.content.decode())
+        assert (output.path, parsed["name"]) == (
+            "agents/code_review_v2.toml",
+            "code_review_v2",
+        ), f"Expected snake_case file and name, got {output.path}, {parsed!r}"
+
+    def test_agent_reports_dropped_fields(self) -> None:
+        """Report tools, model, and VS Code variables Codex cannot honour."""
+        item = Builder.item(
+            Kind.AGENT,
+            frontmatter={"description": "Sample", "tools": ["read"], "model": "x"},
+            body="Open ${file}.\n",
+        )
+
+        result = CodexProfile().render(item)
+
+        assert result.losses == (
+            "drops frontmatter: tools, model",
+            "uses VS Code variables other harnesses ignore: ${file}",
+        ), f"Expected dropped fields and variables, got {result.losses!r}"
+
+    @pytest.mark.parametrize(
+        ("header", "body", "reason"),
+        [
+            ({}, "Body.\n", "description"),
+            ({"description": "  "}, "Body.\n", "description"),
+            ({"description": ["a"]}, "Body.\n", "description"),
+            ({"description": "Sample"}, "\n  \n", "instructions"),
+        ],
+    )
+    def test_agent_without_required_keys_is_refused(
+        self, header: Frontmatter, body: str, reason: str
+    ) -> None:
+        """Codex needs a description and developer_instructions in every agent."""
+        item = Builder.item(Kind.AGENT, frontmatter=header, body=body)
+
+        result = CodexProfile().render(item)
+
+        assert result.unsupported is not None, f"Expected refusal, got {result!r}"
+        assert reason in result.unsupported, f"Expected {reason!r}, got {result!r}"
+
+    @pytest.mark.parametrize("kind", [Kind.SKILL, Kind.PROMPT])
     def test_other_kinds_are_refused(self, kind: Kind) -> None:
         """Codex has no destination for these kinds under its home."""
         result = CodexProfile().render(Builder.item(kind))

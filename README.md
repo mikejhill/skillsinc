@@ -76,14 +76,14 @@ my-agent-library/
 
 ## What each harness receives
 
-| Profile   | Skills    | Instructions                 | Agents             | Prompts              | MCP servers                    | Resources                             | Hooks                   |
-| --------- | --------- | ---------------------------- | ------------------ | -------------------- | ------------------------------ | ------------------------------------- | ----------------------- |
-| `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md` | `commands/<name>.md` | —                              | `resources/` + `CLAUDE.md` `@` import | `settings.json` `hooks` |
-| `copilot` | `skills/` | `instructions/`              | `agents/`          | —                    | `mcp-config.json` `mcpServers` | `resources/`                          | `hooks/`                |
-| `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`  | `<name>.prompt.md`   | —                              | —                                     | —                       |
-| `codex`   | —         | managed block in `AGENTS.md` | —                  | —                    | —                              | —                                     | —                       |
-| `agents`  | `skills/` | —                            | —                  | —                    | —                              | —                                     | —                       |
-| `generic` | verbatim  | verbatim                     | verbatim           | verbatim             | verbatim                       | verbatim                              | verbatim                |
+| Profile   | Skills    | Instructions                 | Agents               | Prompts              | MCP servers                    | Resources                             | Hooks                   |
+| --------- | --------- | ---------------------------- | -------------------- | -------------------- | ------------------------------ | ------------------------------------- | ----------------------- |
+| `claude`  | `skills/` | `rules/<name>.md` (`paths`)  | `agents/<name>.md`   | `commands/<name>.md` | —                              | `resources/` + `CLAUDE.md` `@` import | `settings.json` `hooks` |
+| `copilot` | `skills/` | `instructions/`              | `agents/`            | —                    | `mcp-config.json` `mcpServers` | `resources/`                          | `hooks/`                |
+| `vscode`  | —         | `<name>.instructions.md`     | `<name>.agent.md`    | `<name>.prompt.md`   | —                              | —                                     | —                       |
+| `codex`   | —         | managed block in `AGENTS.md` | `agents/<name>.toml` | —                    | —                              | —                                     | —                       |
+| `agents`  | `skills/` | —                            | —                    | —                    | —                              | —                                     | —                       |
+| `generic` | verbatim  | verbatim                     | verbatim             | verbatim             | verbatim                       | verbatim                              | verbatim                |
 
 Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/harness-profiles.md) for exact conversions.
 

@@ -252,6 +252,35 @@ class TestApplication:
                 shared.read_text(encoding=('utf-8'))!r
             }"
 
+    def test_codex_agent_toml_lifecycle(self, sandbox: Sandbox) -> None:
+        """Create, update, and delete a Codex custom agent file."""
+        sandbox.configure("codex", allow_lossy=True)
+        agent = sandbox.library / "agents/reviewer.agent.md"
+        target = sandbox.root / "agents/reviewer.toml"
+        assert sandbox.run("sync")[0] == 0, "Expected initial Codex sync"
+        initial = tomllib.loads(target.read_text(encoding="utf-8"))
+        agent.write_text(
+            "---\ndescription: Review code\n---\nReview twice.\n", encoding="utf-8"
+        )
+        assert sandbox.run("sync")[0] == 0, "Expected Codex agent update"
+        updated = tomllib.loads(target.read_text(encoding="utf-8"))
+        agent.unlink()
+
+        status, output = sandbox.run("sync")
+
+        assert (initial, updated["developer_instructions"]) == (
+            {
+                "name": "reviewer",
+                "description": "Review code",
+                "developer_instructions": "Review.",
+            },
+            "Review twice.",
+        ), f"Expected agent written then updated, got {initial!r}, {updated!r}"
+        assert status == 0, f"Expected agent removal sync, got {status}: {output}"
+        assert not target.parent.exists(), (
+            f"Expected agent file and empty folder removed: {output}"
+        )
+
     @pytest.mark.parametrize("allow_lossy", [False, True])
     def test_lossy_conversion_requires_route_permission(
         self, sandbox: Sandbox, *, allow_lossy: bool
