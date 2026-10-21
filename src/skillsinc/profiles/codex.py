@@ -22,7 +22,7 @@ from skillsinc.models import (
     Support,
 )
 from skillsinc.paths import Environment
-from skillsinc.profiles.base import Profile
+from skillsinc.profiles.base import SERVER_OPTIONS, Profile
 
 INSTRUCTION_POLICY: Final = LossPolicy(
     carried=frozenset({"applyTo"}), ignored=frozenset({"name", "description"})
@@ -37,6 +37,10 @@ HTTP_FIELDS: Final = {"url": "url", "headers": "http_headers"}
 STDIO_TYPES: Final = frozenset({"stdio", "local"})
 HTTP_TYPES: Final = frozenset({"http", "streamable-http", "streamable_http"})
 SERVER_VARIABLE: Final = "${"
+CODEX_TIMEOUTS: Final = {
+    "startupTimeoutSec": "startup_timeout_sec",
+    "toolTimeoutSec": "tool_timeout_sec",
+}
 
 
 class CodexProfile(Profile):
@@ -131,38 +135,83 @@ class CodexProfile(Profile):
 
     # MCP servers
 
-    @classmethod
-    def server(cls, item: Customization) -> Rendering:
+    def server(self, item: Customization) -> Rendering:
         """Convert an MCP server into a ``[mcp_servers.<name>]`` table.
 
         Codex rejects unknown fields and fields of the other transport, so only
         fields it reads are written and every other field is reported as lost.
+        ``enabled: false`` and the timeouts map to Codex keys; ``profiles.codex``
+        is applied last, unchecked.
         """
-        server = dict(item.document.frontmatter)
-        transport = server.get("type")
-        if transport is not None and not isinstance(transport, str):
-            return Rendering.refuse("'type' must be a string for Codex")
-        if transport == "sse":
-            return Rendering.refuse(
-                "Codex supports stdio and streamable HTTP MCP servers, not SSE"
-            )
+        parts = self.server_parts(item, handled=SERVER_OPTIONS)
+        if isinstance(parts, Rendering):
+            return parts
+        options = item.document.frontmatter
+        server = parts.fields
+        problem = self._transport(server)
+        if problem is not None:
+            return Rendering.refuse(problem)
         fields = STDIO_FIELDS if "command" in server else HTTP_FIELDS
-        types = STDIO_TYPES if "command" in server else HTTP_TYPES
-        if transport is not None and transport not in types:
-            return Rendering.refuse(f"Codex has no MCP server type '{transport}'")
         table: dict[str, JsonValue] = {}
         for name, target in fields.items():
             if name not in server:
                 continue
-            problem = cls._invalid(name, server[name])
+            problem = self._invalid(name, server[name])
             if problem is not None:
                 return Rendering.refuse(problem)
             table[target] = server[name]
         tools = server.get("tools")
-        tools_carried = cls._tools(tools, table)
-        losses = cls._server_losses(server, fields, tools_carried=tools_carried)
+        tools_carried = self._tools(tools, table)
+        losses = self._server_losses(server, fields, tools_carried=tools_carried)
+        problem = self._options(options, parts.overrides, table)
+        if problem is not None:
+            return Rendering.refuse(problem)
         entry = EntryOutput("config.toml", "mcp_servers", item.name, table)
         return Rendering(entries=(entry,), losses=tuple(losses))
+
+    @staticmethod
+    def _transport(server: Mapping[str, JsonValue]) -> str | None:
+        """Return why Codex cannot run the server's transport, if it cannot."""
+        transport = server.get("type")
+        if transport is None:
+            return None
+        if not isinstance(transport, str):
+            return "'type' must be a string for Codex"
+        if transport == "sse":
+            return "Codex supports stdio and streamable HTTP MCP servers, not SSE"
+        types = STDIO_TYPES if "command" in server else HTTP_TYPES
+        if transport not in types:
+            return f"Codex has no MCP server type '{transport}'"
+        return None
+
+    @classmethod
+    def _options(
+        cls,
+        options: Mapping[str, JsonValue],
+        overrides: Mapping[str, JsonValue],
+        table: dict[str, JsonValue],
+    ) -> str | None:
+        """Add ``enabled``, timeouts, and overrides; return why not, if refused."""
+        if options.get("enabled") is False:
+            table["enabled"] = False
+        for option, key in CODEX_TIMEOUTS.items():
+            if option in options:
+                table[key] = options[option]
+        if cls._has_null(dict(overrides)):
+            return "profiles.codex has a null value, which TOML cannot hold"
+        table.update(overrides)
+        return None
+
+    @classmethod
+    def _has_null(cls, value: JsonValue) -> bool:
+        """Return True if ``value`` is or contains a JSON null."""
+        if value is None:
+            return True
+        if isinstance(value, dict):
+            return any(cls._has_null(inner) for inner in value.values())
+        if isinstance(value, list):
+            return any(cls._has_null(inner) for inner in value)
+        return False
 
     @staticmethod
     def _invalid(name: str, value: JsonValue) -> str | None:

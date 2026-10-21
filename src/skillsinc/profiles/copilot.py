@@ -65,14 +65,21 @@ class CopilotProfile(Profile):
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
             case Kind.MCP:
-                server = dict(item.document.frontmatter)
-                entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
-                return Rendering(entries=(entry,))
+                return self._server(item)
             case Kind.HOOK:
                 return self.copy_file(
                     item, COPY_PATHS[item.kind].format(name=item.name)
                 )
         assert_never(item.kind)
+
+    def _server(self, item: Customization) -> Rendering:
+        """Copy a server's fields as written, then apply ``profiles.copilot``."""
+        parts = self.server_parts(item)
+        if isinstance(parts, Rendering):
+            return parts
+        server = {**parts.fields, **parts.overrides}
+        entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
+        return Rendering(entries=(entry,), losses=tuple(parts.losses))
 
     def _instruction(self, item: Customization) -> Rendering:
         """Copy an instructions file, noting that Copilot CLI needs ``applyTo``."""

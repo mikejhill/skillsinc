@@ -228,3 +228,38 @@ class TestPluginConversions:
                 "runs shell commands with !`...`, which only Claude Code executes",
             ),
         ), f"Expected converted prompt, got {result!r}"
+
+
+class TestCopilotServerOptions:
+    """SkillSinc's own server options never reach Copilot CLI's file."""
+
+    def test_options_are_stripped_and_overrides_applied(self) -> None:
+        """Copied fields lose SkillSinc options and gain ``profiles.copilot``."""
+        server: dict[str, JsonValue] = {
+            "type": "local",
+            "command": "a",
+            "enabled": True,
+            "startupTimeoutSec": 5,
+            "profiles": {"copilot": {"tools": ["*"]}},
+        }
+        item = Builder.item(Kind.MCP, name="api", frontmatter=server)
+
+        result = CopilotProfile().render(item)
+
+        assert result.entries == (
+            EntryOutput(
+                "mcp-config.json",
+                "mcpServers",
+                "api",
+                {"type": "local", "command": "a", "tools": ["*"]},
+            ),
+        ), f"Expected stripped server, got {result!r}"
+        assert result.losses == ("drops per-server timeouts: startupTimeoutSec",)
+
+    def test_disabled_server_is_left_out(self) -> None:
+        """Copilot CLI has no documented switch, so a disabled server is refused."""
+        item = Builder.item(Kind.MCP, frontmatter={"command": "a", "enabled": False})
+
+        result = CopilotProfile().render(item)
+
+        assert result.unsupported is not None, f"Expected refusal, got {result!r}"

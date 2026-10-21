@@ -332,6 +332,26 @@ class SourceReader:
         if len(methods) != 1:
             msg = f"{path}: an MCP server needs either a 'command' or a 'url' string"
             raise SourceError(msg)
+        problem = None
+        if "enabled" in server and not isinstance(server["enabled"], bool):
+            problem = "'enabled' must be true or false"
+        for key in ("startupTimeoutSec", "toolTimeoutSec"):
+            value = server.get(key)
+            if key in server and (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or value <= 0
+            ):
+                problem = f"'{key}' must be a positive number of seconds"
+        profiles = server.get("profiles")
+        if "profiles" in server and not (
+            isinstance(profiles, dict)
+            and all(isinstance(value, dict) for value in profiles.values())
+        ):
+            problem = "'profiles' must map profile names to objects"
+        if problem is not None:
+            msg = f"{path}: {problem}"
+            raise SourceError(msg)
 
     @staticmethod
     def _check_hooks(hooks: Frontmatter, path: Path) -> None:
