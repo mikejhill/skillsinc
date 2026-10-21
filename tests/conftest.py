@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import stat
 import sys
@@ -56,33 +57,28 @@ class Builder:
         allow_lossy: bool = False,
         include: tuple[str, ...] = ("*/*",),
     ) -> Path:
-        """Write a TOML route from a library to explicitly named destinations."""
-        sections = [
-            "version = 1",
-            "[sources.library]",
-            f"path = '{library.as_posix()}'",
-        ]
-        for name, profile, root in destinations:
-            sections.extend(
-                [
-                    f"[destinations.{name}]",
-                    f"profile = '{profile}'",
-                    f"path = '{root.as_posix()}'",
-                ]
-            )
-        targets = ", ".join(f"'{name}'" for name, _, _ in destinations)
-        selectors = ", ".join(f"'{selector}'" for selector in include)
-        sections.extend(
-            [
-                "[[routes]]",
-                "sources = ['library']",
-                f"destinations = [{targets}]",
-                f"include = [{selectors}]",
-                f"allow_lossy = {str(allow_lossy).lower()}",
-            ]
-        )
+        """Write a JSONC route from a library to explicitly named destinations."""
+        config = {
+            "version": 1,
+            "sources": {"library": {"path": library.as_posix()}},
+            "destinations": {
+                name: {"profile": profile, "path": root.as_posix()}
+                for name, profile, root in destinations
+            },
+            "routes": [
+                {
+                    "sources": ["library"],
+                    "destinations": [name for name, _, _ in destinations],
+                    "include": list(include),
+                    "allow_lossy": allow_lossy,
+                }
+            ],
+        }
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(sections) + "\n", encoding="utf-8")
+        path.write_text(
+            "// written by the test suite\n" + json.dumps(config, indent=2) + "\n",
+            encoding="utf-8",
+        )
         return path
 
 

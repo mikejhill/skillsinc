@@ -29,7 +29,7 @@ The gate enforces most rules; the rest are conventions to keep:
 - **Toolchain:** uv, ruff (broad rule set in `pyproject.toml`), `ty` with every rule at error, pytest. All tool config lives in `pyproject.toml`. Never weaken a rule to pass; suppress a single line only with the rule code and a reason.
 - **Layout:** all code in `src/skillsinc/`, tests mirror it under `tests/`.
 - **Design:** classes over module-level functions; frozen slotted dataclasses for values; services take collaborators in `__init__`; module level holds only imports, constants, `logger`, and classes.
-- **Typing:** every parameter and return annotated; no `Any`; untyped input (TOML, YAML, JSON, argparse) is converted to dataclasses at the boundary (`config.Table`, `FrontmatterCodec`, `ManifestStore._parse`, `CommandLine.parse`).
+- **Typing:** every parameter and return annotated; no `Any`; untyped input (JSONC, YAML, JSON, argparse) is converted to dataclasses at the boundary (`config.Table`, `FrontmatterCodec`, `ManifestStore._parse`, `CommandLine.parse`).
 - **Docs in code:** every file, class, and method has a one-line docstring; comments are short block headers, not narration.
 - **Errors:** raise subclasses of `AppError` from `exceptions.py`. `ConfigurationError` exits 2, other `AppError`s exit 1. Diagnostics go to stderr via `logging`; command output goes to the `out` stream.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/); PR titles are linted and squash-merged, and they generate the changelog; do not edit `CHANGELOG.md` by hand.

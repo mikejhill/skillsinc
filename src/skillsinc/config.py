@@ -1,8 +1,7 @@
-"""Load and validate the TOML configuration: sources, destinations, and routes."""
+"""Load and validate the JSONC configuration: sources, destinations, and routes."""
 
 from __future__ import annotations
 
-import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -10,7 +9,9 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Final, NoReturn
 
+from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import ConfigurationError
+from skillsinc.jsonc import Jsonc
 from skillsinc.models import Customization, Kind
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
@@ -19,6 +20,11 @@ CONFIG_VERSION: Final = 1
 DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
 ALL_ITEMS: Final = ("*/*",)
 PLUGINS: Final = "plugins"
+TOML_RETIRED: Final = (
+    "TOML configuration is no longer read; rewrite it as config.jsonc, see"
+    " https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md"
+    "#migrating-from-toml"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +87,7 @@ class Config:
 
 
 class Table:
-    """Typed, strict accessor over one TOML table; reports unknown keys."""
+    """Typed, strict accessor over one JSON object; reports unknown keys."""
 
     def __init__(self, data: Mapping[str, object], where: str) -> None:
         self._data = data
@@ -127,38 +133,38 @@ class Table:
         return value
 
     def table(self, key: str) -> Table | None:
-        """Return a nested table, or None when absent."""
+        """Return a nested object, or None when absent."""
         value = self._take(key)
         if value is None:
             return None
         return self._child(value, f"{self._where}.{key}")
 
     def tables(self, key: str) -> dict[str, Table]:
-        """Return a table of named sub-tables."""
+        """Return an object of named sub-objects."""
         value = self._take(key)
         if value is None:
             return {}
         if not isinstance(value, dict):
-            self._fail(key, "a table")
+            self._fail(key, "an object")
         return {
             str(name): self._child(entry, f"{self._where}.{key}.{name}")
             for name, entry in value.items()
         }
 
     def table_list(self, key: str) -> list[Table]:
-        """Return an array of tables."""
+        """Return an array of objects."""
         value = self._take(key)
         if value is None:
             return []
         if not isinstance(value, list):
-            self._fail(key, "an array of tables ([[...]])")
+            self._fail(key, "an array of objects")
         return [
             self._child(entry, f"{self._where}.{key}[{index}]")
             for index, entry in enumerate(value)
         ]
 
     def finish(self) -> None:
-        """Raise if the table holds keys nobody read (usually typos)."""
+        """Raise if the object holds keys nobody read (usually typos)."""
         unknown = sorted(set(self._data) - self._read)
         if unknown:
             msg = f"{self._where}: unknown key(s): {', '.join(unknown)}"
@@ -167,14 +173,17 @@ class Table:
     # Internals
 
     def _take(self, key: str) -> object:
-        """Mark ``key`` as read and return its raw value."""
+        """Mark ``key`` as read and return its raw value, refusing an explicit null."""
         self._read.add(key)
+        if key in self._data and self._data[key] is None:
+            msg = f"{self._where}.{key}: null is not allowed; omit the key instead"
+            raise ConfigurationError(msg)
         return self._data.get(key)
 
     def _child(self, value: object, where: str) -> Table:
-        """Wrap a nested table, rejecting non-table values."""
+        """Wrap a nested object, rejecting other values."""
         if not isinstance(value, dict):
-            msg = f"{where}: expected a table"
+            msg = f"{where}: expected an object"
             raise ConfigurationError(msg)
         return Table({str(key): item for key, item in value.items()}, where)
 
@@ -235,7 +244,7 @@ class ConfigLoader:
 
     @staticmethod
     def _layout(table: Table | None) -> tuple[dict[Kind, str], str]:
-        """Return each kind's and the plugins directory from ``[...layout]``."""
+        """Return each kind's and the plugins directory from ``layout``."""
         layout = {kind: kind.value for kind in Kind}
         if table is None:
             return layout, PLUGINS
@@ -313,14 +322,21 @@ class ConfigLoader:
 
     @staticmethod
     def _read(path: Path) -> dict[str, object]:
-        """Read and parse the TOML file."""
+        """Read and parse the JSONC file: JSON plus comments and trailing commas."""
+        if path.suffix == ".toml":
+            msg = f"{path}: {TOML_RETIRED}"
+            raise ConfigurationError(msg)
         try:
-            with path.open("rb") as handle:
-                data = tomllib.load(handle)
+            text = path.read_text(encoding="utf-8-sig")
         except FileNotFoundError as err:
-            msg = f"configuration file not found: {path} (run `skillsinc init`)"
+            legacy = path.with_suffix(".toml")
+            hint = TOML_RETIRED if legacy.is_file() else "run `skillsinc init`"
+            msg = f"configuration file not found: {path} ({hint})"
             raise ConfigurationError(msg) from err
-        except tomllib.TOMLDecodeError as err:
-            msg = f"{path}: invalid TOML: {err}"
+        try:
+            plain = Jsonc.blank_trailing_commas(Jsonc.blank_comments(text))
+            data = JsonDocument.load(plain.encode())
+        except ValueError as err:
+            msg = f"{path}: invalid JSONC: {err}"
             raise ConfigurationError(msg) from err
-        return {str(key): value for key, value in data.items()}
+        return dict(data)

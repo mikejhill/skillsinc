@@ -52,7 +52,7 @@ class Environment:
     @property
     def default_config_file(self) -> Path:
         """Return the configuration file used when ``--config`` is not given."""
-        return self.config_home / "skillsinc" / "config.toml"
+        return self.config_home / "skillsinc" / "config.jsonc"
 
     @property
     def default_library(self) -> Path:

@@ -342,13 +342,13 @@ class TestApplication:
         "text",
         [
             None,
-            "version=2",
-            "version=1\nunknown=true",
-            "version=1\n[[routes]]\nsources=['missing']\ndestinations=['missing']",
+            '{"version": 2}',
+            '{"version": 1, "unknown": true}',
+            '{"version": 1, "routes": [{"sources": ["a"], "destinations": ["b"]}]}',
             (
-                "version=1\n[destinations.a]\nprofile='generic'\n"
-                "path='out'\n[destinations.b]\nprofile='generic'"
-                "\npath='out/child'"
+                '{"version": 1, "destinations": {'
+                '"a": {"profile": "generic", "path": "out"},'
+                ' "b": {"profile": "generic", "path": "out/child"}}}'
             ),
         ],
     )
