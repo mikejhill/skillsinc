@@ -76,11 +76,11 @@ class Applier:
         """Return the first required file that is absent or has other content."""
         for path, digest in requires:
             try:
-                if path.is_file() and Digest.of(path.read_bytes()) == digest:
-                    continue
+                present = path.is_file() and Digest.of(path.read_bytes()) == digest
             except OSError:
-                pass
-            return path
+                present = False  # unreadable counts as missing
+            if not present:
+                return path
         return None
 
     @staticmethod
