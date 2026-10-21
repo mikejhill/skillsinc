@@ -15,7 +15,7 @@ from skillsinc.profiles.registry import ProfileRegistry
 
 
 class TestConfigLoader:
-    """Strict TOML loading and semantic validation."""
+    """Strict JSONC loading and semantic validation."""
 
     def test_loads_explicit_paths_and_routes(self, sandbox: Sandbox) -> None:
         """Resolve the shared config builder into exact typed settings."""
@@ -31,31 +31,39 @@ class TestConfigLoader:
     @pytest.mark.parametrize(
         ("text", "message"),
         [
-            ("version = 2", "unsupported version"),
-            ("version = true", "integer"),
-            ("version = 1\nextra = true", "unknown key"),
-            ("not TOML", "invalid TOML"),
-            ("version = 1\n[sources.x]", "path is required"),
-            ("version = 1\n[destinations.generic]", "path is required"),
-            ("version = 1\n[destinations.nope]", "unknown profile"),
-            ("version = 1\n[[routes]]", "at least one"),
+            ('{"version": 2}', "unsupported version"),
+            ('{"version": true}', "integer"),
+            ('{"version": 1, "extra": true}', "unknown key"),
+            ("version = 1", "invalid JSONC"),
+            ('{"version": 1, "version": 1}', "duplicate key"),
+            ("[]", "expected a JSON object"),
+            ('{"version": 1 /* unterminated', "invalid JSONC"),
+            ('{"version": 1, "sources": {"x": {}}}', "path is required"),
+            ('{"version": 1, "destinations": {"generic": {}}}', "path is required"),
+            ('{"version": 1, "destinations": {"nope": {}}}', "unknown profile"),
+            ('{"version": 1, "routes": [{}]}', "at least one"),
+            ('{"version": 1, "routes": null}', "null is not allowed"),
             (
-                "version = 1\n[[routes]]\nsources=['x']\ndestinations=['y']",
+                '{"version": 1, "routes": [{"sources": ["a"], "include": null}]}',
+                "null is not allowed",
+            ),
+            (
+                '{"version": 1, "routes": [{"sources": ["x"], "destinations": ["y"]}]}',
                 "unknown source/destination",
             ),
             (
                 (
-                    "version = 1\n[destinations.a]\nprofile='generic"
-                    "'\npath='out'\n[destinations.b]\nprofile='generi"
-                    "c'\npath='out/sub'"
+                    '{"version": 1, "destinations": {'
+                    '"a": {"profile": "generic", "path": "out"},'
+                    ' "b": {"profile": "generic", "path": "out/sub"}}}'
                 ),
                 "overlap",
             ),
             (
                 (
-                    "version = 1\n[destinations.a]\nprofile='generic"
-                    "'\npath='out'\n[destinations.b]\nprofile='generi"
-                    "c'\npath='out'"
+                    '{"version": 1, "destinations": {'
+                    '"a": {"profile": "generic", "path": "out"},'
+                    ' "b": {"profile": "generic", "path": "out"}}}'
                 ),
                 "overlap",
             ),
@@ -65,7 +73,7 @@ class TestConfigLoader:
         self, tmp_path: Path, environment: Environment, text: str, message: str
     ) -> None:
         """Reject malformed, unknown, incomplete, and overlapping configuration."""
-        path = tmp_path / "config.toml"
+        path = tmp_path / "config.json"
         path.write_text(text, encoding="utf-8")
 
         with pytest.raises(ConfigurationError, match=message):
@@ -78,17 +86,38 @@ class TestConfigLoader:
         with pytest.raises(ConfigurationError, match="run `skillsinc init`"):
             ConfigLoader(ProfileRegistry(), environment).load(tmp_path / "missing")
 
+    def test_toml_configuration_reports_migration(
+        self, tmp_path: Path, environment: Environment
+    ) -> None:
+        """A TOML file, given directly or left beside the default, points at JSONC."""
+        legacy = tmp_path / "config.toml"
+        legacy.write_text("version = 1\n", encoding="utf-8")
+        loader = ConfigLoader(ProfileRegistry(), environment)
+
+        for path in (legacy, tmp_path / "config.json"):
+            with pytest.raises(ConfigurationError, match=r"rewrite it as config\.json"):
+                loader.load(path)
+
     def test_defaults_and_custom_layout(
         self, tmp_path: Path, environment: Environment
     ) -> None:
         """Expand home paths, apply layout overrides, and default harness roots."""
-        path = tmp_path / "config.toml"
+        path = tmp_path / "config.json"
         path.write_text(
-            (
-                "version=1\n[sources.x]\npath='~/lib'\nexclude=[]"
-                "\n[sources.x.layout]\nskills='packages'\nplugins='kits'\n[destin"
-                "ations.claude]\nenabled=false\n"
-            ),
+            """\ufeff// Comments, a byte-order mark, and trailing commas are allowed.
+            {
+              "version": 1,
+              "sources": {
+                "x": {
+                  "path": "~/lib",  // home-relative
+                  "exclude": [],
+                  /* layout overrides */
+                  "layout": { "skills": "packages", "plugins": "kits", },
+                },
+              },
+              "destinations": { "claude": { "enabled": false } },
+            }
+            """,
             encoding="utf-8",
         )
 

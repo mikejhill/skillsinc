@@ -51,8 +51,14 @@ class Environment:
 
     @property
     def default_config_file(self) -> Path:
-        """Return the configuration file used when ``--config`` is not given."""
-        return self.config_home / "skillsinc" / "config.toml"
+        """Return the configuration file used when ``--config`` is not given.
+
+        That is ``config.json`` (read as JSONC), or ``config.jsonc`` when only
+        that one exists, as early builds wrote.
+        """
+        directory = self.config_home / "skillsinc"
+        preferred, early = directory / "config.json", directory / "config.jsonc"
+        return early if early.is_file() and not preferred.exists() else preferred
 
     @property
     def default_library(self) -> Path:

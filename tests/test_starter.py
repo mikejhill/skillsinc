@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from skillsinc.config import ConfigLoader
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
@@ -22,13 +23,13 @@ class TestStarterConfig:
         result = StarterConfig(ProfileRegistry(), environment).render(None)
         library = (environment.config_home / "skillsinc" / "library").as_posix()
 
-        assert f'path = "{library}"' in result, (
+        assert f'"path": "{library}"' in result, (
             f"Expected default library and disabled harnesses, got {result!r}"
         )
-        assert "# [[routes]]" in result, (
+        assert '    // {\n    //   "sources": ["library"],' in result, (
             f"Expected placeholder and disabled harnesses, got {result!r}"
         )
-        assert "# [destinations.claude]" in result, (
+        assert '// "claude": { "profile": "claude" },' in result, (
             f"Expected placeholder and disabled harnesses, got {result!r}"
         )
 
@@ -40,7 +41,7 @@ class TestStarterConfig:
             environment.home / "library"
         )
 
-        assert 'path = "~/library"' in result, (
+        assert '"path": "~/library"' in result, (
             f"Expected home-relative source, got {result!r}"
         )
 
@@ -54,7 +55,7 @@ class TestStarterConfig:
 
         result = StarterConfig(ProfileRegistry(), environment).render(None)
 
-        assert 'path = "~/.config/skillsinc/library"' in result, (
+        assert '"path": "~/.config/skillsinc/library"' in result, (
             f"Expected the library under ~/.config, got {result!r}"
         )
 
@@ -63,7 +64,7 @@ class TestStarterConfig:
     ) -> None:
         """Create the empty default library so the first plan can read it."""
         StarterConfig(ProfileRegistry(), environment).write(
-            tmp_path / "config.toml", None, force=False
+            tmp_path / "config.json", None, force=False
         )
 
         library = environment.config_home / "skillsinc" / "library"
@@ -74,7 +75,7 @@ class TestStarterConfig:
     ) -> None:
         """Leave the default library alone when the user names a source."""
         StarterConfig(ProfileRegistry(), environment).write(
-            tmp_path / "config.toml", tmp_path / "mine", force=False
+            tmp_path / "config.json", tmp_path / "mine", force=False
         )
 
         library = environment.config_home / "skillsinc" / "library"
@@ -85,7 +86,7 @@ class TestStarterConfig:
         self, tmp_path: Path, environment: Environment
     ) -> None:
         """Refuse accidental overwrite of existing user configuration."""
-        path = tmp_path / "config.toml"
+        path = tmp_path / "config.json"
         path.write_text("User config", encoding="utf-8")
 
         with pytest.raises(ConfigurationError, match="pass --force"):
@@ -95,11 +96,25 @@ class TestStarterConfig:
             "Expected existing config preserved"
         )
 
+    def test_toml_path_is_refused_before_writing(
+        self, tmp_path: Path, environment: Environment
+    ) -> None:
+        """Refuse a ``.toml`` target, even with force; plan could not read it."""
+        path = tmp_path / "config.toml"
+        path.write_text("version = 1\n", encoding="utf-8")
+
+        with pytest.raises(ConfigurationError, match=r"config\.json"):
+            StarterConfig(ProfileRegistry(), environment).write(path, None, force=True)
+
+        assert path.read_text(encoding="utf-8") == "version = 1\n", (
+            "Expected the TOML file left untouched"
+        )
+
     def test_force_overwrites_existing_config(
         self, tmp_path: Path, environment: Environment
     ) -> None:
         """Explicit force persists the generated configuration."""
-        path = tmp_path / "config.toml"
+        path = tmp_path / "config.json"
         path.write_text("old", encoding="utf-8")
 
         result = StarterConfig(ProfileRegistry(), environment).write(
@@ -109,6 +124,22 @@ class TestStarterConfig:
         assert path.read_text(encoding="utf-8") == result, (
             f"Expected generated config persisted, got {result!r}"
         )
-        assert "version = 1" in result, (
+        assert '"version": 1,' in result, (
             f"Expected generated config persisted, got {result!r}"
         )
+
+    @pytest.mark.parametrize("installed", [False, True])
+    def test_starter_loads_as_valid_configuration(
+        self, tmp_path: Path, environment: Environment, *, installed: bool
+    ) -> None:
+        """The written JSONC loads, with or without a detected harness."""
+        if installed:
+            (environment.home / ".claude").mkdir(parents=True)
+        path = tmp_path / "config.json"
+        StarterConfig(ProfileRegistry(), environment).write(path, None, force=False)
+
+        config = ConfigLoader(ProfileRegistry(), environment).load(path)
+
+        expected = ("claude",) if installed else ()
+        result = tuple(name for route in config.routes for name in route.destinations)
+        assert result == expected, f"Expected routes to {expected}, got {config!r}"

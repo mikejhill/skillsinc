@@ -22,7 +22,7 @@ The script registers a per-user task named `SkillSinc sync` that runs at logon a
 ```powershell
 .\examples\scheduling\Register-SkillSincTask.ps1 -WhatIf      # show what it would register
 .\examples\scheduling\Register-SkillSincTask.ps1               # register or replace
-.\examples\scheduling\Register-SkillSincTask.ps1 -Interval (New-TimeSpan -Minutes 30) -Arguments '--config C:\agent\config.toml'
+.\examples\scheduling\Register-SkillSincTask.ps1 -Interval (New-TimeSpan -Minutes 30) -Arguments '--config C:\agent\config.json'
 Start-ScheduledTask -TaskName 'SkillSinc sync'                 # run now
 .\examples\scheduling\Register-SkillSincTask.ps1 -Unregister   # remove
 ```

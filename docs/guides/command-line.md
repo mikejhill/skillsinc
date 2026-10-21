@@ -15,7 +15,7 @@ Options go after the command, for example `skillsinc plan --json`.
 
 | Option                     | Commands         | Meaning                                                                                                |
 | -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `--config PATH`            | init, plan, sync | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.toml`)                                  |
+| `--config PATH`            | init, plan, sync | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.json`)                                  |
 | `--source DIR`             | init             | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`) |
 | `--force`                  | init             | Overwrite an existing configuration                                                                    |
 | `-d`, `--destination NAME` | plan, sync       | Limit to this destination; repeatable                                                                  |
