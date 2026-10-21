@@ -74,7 +74,11 @@ class Document:
 
 @dataclass(frozen=True, slots=True)
 class Customization:
-    """One authored customization read from a source library."""
+    """One authored customization read from a source library.
+
+    Items expanded from a plugin name it in ``plugin``; ``losses`` lists plugin
+    parts no kind carries, and ``refusal`` explains why no profile can use it.
+    """
 
     kind: Kind
     name: str
@@ -82,11 +86,21 @@ class Customization:
     document: Document
     file_name: str
     assets: tuple[Asset, ...] = ()
+    plugin: str | None = None
+    losses: tuple[str, ...] = ()
+    refusal: str | None = None
 
     @property
     def selector(self) -> str:
         """Return the ``kind/name`` identity used by route filters."""
         return f"{self.kind}/{self.name}"
+
+    @property
+    def selectors(self) -> tuple[str, ...]:
+        """Return every identity route filters match, including the plugin path."""
+        if self.plugin is None:
+            return (self.selector,)
+        return (self.selector, f"plugins/{self.plugin}/{self.selector}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +122,7 @@ class BlockOutput:
 
 @dataclass(frozen=True, slots=True)
 class EntryOutput:
-    """A keyed value a profile wants inside a container object of a shared JSON file.
+    """A keyed value a profile wants inside a container of a shared config file.
 
     With ``merge``, the value is a list that other items may extend: the planner
     concatenates every item's list for the key instead of reporting a clash.

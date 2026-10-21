@@ -68,10 +68,11 @@ my-agent-library/
 ├── prompts/<name>.prompt.md
 ├── mcp/<name>.json                   # one MCP server definition per file
 ├── resources/<name>.md               # reference files, copied as written
-└── hooks/<name>.json                 # one Copilot CLI hook file per file
+├── hooks/<name>.json                 # one Copilot CLI hook file per file
+└── plugins/<plugin>/                 # Claude Code plugin layout, expanded into the kinds above
 ```
 
-`INTENT.md`, `*.intent.md`, and hidden files are never distributed.
+`INTENT.md`, `*.intent.md`, and hidden files are never distributed. A plugin's `skills/`, `agents/`, `commands/`, and `.mcp.json` are synced as skills, agents, prompts, and MCP servers; everything else in it (hooks, scripts, LSP servers) is reported as a loss. See [decision 0005](docs/decisions/0005-plugins-expand-into-kinds.md).
 
 ## What each harness receives
 
@@ -109,6 +110,8 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 - [Decision: rebuild scope](docs/decisions/0001-rebuild-scope.md)
 - [Decision: MCP server entries](docs/decisions/0002-mcp-server-entries.md)
 - [Decision: resources and Claude imports](docs/decisions/0003-resources-and-claude-imports.md)
+- [Decision: TOML entries with tomlkit](docs/decisions/0004-toml-entries-with-tomlkit.md)
+- [Decision: plugins expand into kinds](docs/decisions/0005-plugins-expand-into-kinds.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License

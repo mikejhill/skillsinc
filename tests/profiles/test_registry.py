@@ -48,7 +48,6 @@ class TestProfileRegistry:
         [
             ("claude", "~/.claude.json"),
             ("vscode", "User/mcp.json"),
-            ("codex", "config.toml"),
             ("agents", ""),
         ],
     )

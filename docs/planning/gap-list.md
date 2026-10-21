@@ -10,37 +10,37 @@ This list records what SkillSinc still lacks to sync Agent Skills, plugins, inst
 | Instructions | yes (`rules/`)    | yes (lossy, `AGENTS.md`) | yes               | yes                    | —           |
 | Agents       | yes (lossy)       | **gap** (TOML agents)    | yes               | yes                    | —           |
 | Prompts      | yes (`commands/`) | no harness format        | no harness format | yes                    | —           |
-| MCP servers  | **gap**           | **gap**                  | yes (new)         | **gap**                | —           |
+| MCP servers  | **gap**           | yes (converted)          | yes               | **gap**                | —           |
 | Hooks        | yes (lossy, new)  | **gap**                  | yes (new)         | via `copilot`/`claude` | —           |
 | Resources    | yes (new)         | —                        | yes (new)         | —                      | —           |
-| Plugins      | **gap**           | **gap**                  | **gap**           | **gap**                | —           |
+| Plugins      | expanded          | via `agents`             | expanded          | expanded               | skills only |
 
 ## Parity with ai-feature-sync
 
-| ai-feature-sync feature                                                  | SkillSinc                                                     |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Skills, agents, prompts, instructions into `~/.copilot` and `~/.claude`  | Covered, with format conversion instead of renaming           |
-| Codex skills                                                             | Covered through the `agents` destination (`~/.agents/skills`) |
-| Codex agents: `*.agent.md` → `~/.codex/agents/<name>.toml`               | **Gap 1**                                                     |
-| Hook files (`*.json`) copied to `~/.copilot/hooks`                       | Covered, plus conversion into Claude Code `settings.json`     |
-| Resources (`*.md`) copied to `~/.copilot/resources`                      | Covered: `resources` kind (decision 0003)                     |
-| `claude_md_import`: managed `@`-import block in `CLAUDE.md`              | Covered: resources imported from `~/.claude/CLAUDE.md`        |
-| Prompts copied to `~/.copilot/prompts`                                   | Refused on purpose: Copilot CLI documents no prompt folder    |
-| Junctions and hard links                                                 | Not planned: copies plus ownership are safer (decision 0001)  |
-| Optional `--prune`                                                       | Covered: owned files are always reconciled, edits released    |
-| Windows Task Scheduler registration script                               | **Gap 9**                                                     |
+| ai-feature-sync feature                                                 | SkillSinc                                                     |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Skills, agents, prompts, instructions into `~/.copilot` and `~/.claude` | Covered, with format conversion instead of renaming           |
+| Codex skills                                                            | Covered through the `agents` destination (`~/.agents/skills`) |
+| Codex agents: `*.agent.md` → `~/.codex/agents/<name>.toml`              | **Gap 1**                                                     |
+| Hook files (`*.json`) copied to `~/.copilot/hooks`                      | Covered, plus conversion into Claude Code `settings.json`     |
+| Resources (`*.md`) copied to `~/.copilot/resources`                     | Covered: `resources` kind (decision 0003)                     |
+| `claude_md_import`: managed `@`-import block in `CLAUDE.md`             | Covered: resources imported from `~/.claude/CLAUDE.md`        |
+| Prompts copied to `~/.copilot/prompts`                                  | Refused on purpose: Copilot CLI documents no prompt folder    |
+| Junctions and hard links                                                | Not planned: copies plus ownership are safer (decision 0001)  |
+| Optional `--prune`                                                      | Covered: owned files are always reconciled, edits released    |
+| Windows Task Scheduler registration script                              | **Gap 9**                                                     |
 
 ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from the documented scope only.
 
 ## Gaps, highest value first
 
-1. **Codex agents.** Render agents into `~/.codex/agents/<name>.toml` with `name`, `description`, and the body as `developer_instructions`; report `tools`, `model`, and other fields as losses. ai-feature-sync already does this, so it is the most direct regression. Needs a small, safe TOML string writer (the standard library only reads TOML).
-2. ~~**Hooks.**~~ Done for Copilot CLI and Claude Code ([decision 0004](../decisions/0004-hooks.md)). Remaining: Codex hooks, once its user hook location is confirmed against current Codex docs.
+1. **Codex agents.** Render agents into `~/.codex/agents/<name>.toml` with `name`, `description`, and the body as `developer_instructions`; report `tools`, `model`, and other fields as losses. ai-feature-sync already does this, so it is the most direct regression. `tomlkit` is now a dependency ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)), so the agent files can be written with it.
+2. ~~**Hooks.**~~ Done for Copilot CLI and Claude Code ([decision 0006](../decisions/0006-hooks.md)). Remaining: Codex hooks, once its user hook location is confirmed against current Codex docs.
 3. ~~**Resources and Claude imports.**~~ Done: a `resources` kind copied to `~/.copilot/resources` and `~/.claude/resources`, with a managed `@`-import block in `~/.claude/CLAUDE.md` ([decision 0003](../decisions/0003-resources-and-claude-imports.md)).
 4. **Claude Code MCP servers.** Target `mcpServers` in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Needs a profile to name one file outside its root, with the same link and overlap checks. Claude Code rewrites this file while running, so expect precondition conflicts; the applier already fails closed and a rerun succeeds.
 5. **VS Code MCP servers.** Target `servers` in `Code/User/mcp.json`. Same outside-root need, plus a choice between comment-preserving JSONC edits and refusing files with comments (today's behavior).
-6. **Codex MCP servers.** Target `[mcp_servers.<name>]` in `~/.codex/config.toml`. Needs a formatting-preserving TOML editor (for example `tomlkit`); adding a dependency needs a decision record. `command`, `args`, and `env` carry over; check remote `url` servers against current Codex docs.
-7. **Plugins.** Bundles of skills, agents, commands, hooks, and MCP servers with a manifest (`.claude-plugin/plugin.json` for Claude Code). Two options: expand a library plugin into its component kinds per harness (works with every profile, loses the bundle), or publish a local marketplace directory for harnesses that install plugins. Needs a decision; expanding first is cheaper and reuses everything above.
+6. ~~**Codex MCP servers.**~~ Done: `[mcp_servers.<name>]` in `config.toml`, edited with `tomlkit` ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)).
+7. ~~**Plugins.**~~ Done: library plugins expand into skills, agents, prompts, and MCP servers ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Hooks inside plugins wait on gap 2; an opt-in local marketplace profile stays possible behind a new decision.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
 9. **Scheduling helper.** ai-feature-sync ships a Task Scheduler registration script. SkillSinc documents scheduling but ships nothing; an example per OS (Task Scheduler, launchd, systemd timer) would close it.
 10. **Native verification.** None of the mappings, including the new Copilot MCP entries, have been confirmed by loading the harness (roadmap item 2).

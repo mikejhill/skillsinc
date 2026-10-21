@@ -1,4 +1,4 @@
-# 0004: Hooks from Copilot CLI hook files
+# 0006: Hooks from Copilot CLI hook files
 
 This record defines the library format for hooks and how SkillSinc writes them for each harness. It is for anyone extending hook support to another harness.
 

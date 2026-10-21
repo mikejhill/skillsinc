@@ -9,7 +9,21 @@ This guide lists exactly what each profile writes and which conversions lose inf
 - Library files use the GitHub Copilot formats: `applyTo` on instructions, `tools`/`model` on agents, `${input:...}` variables in prompts.
 - MCP servers are `mcp/<name>.json` files, each one server object in the `mcpServers` entry format (`type`, `command`, `args`, `env`, or `url`, `headers`). SkillSinc owns only its own keys inside a shared JSON file; see [decision 0002](../decisions/0002-mcp-server-entries.md).
 - Resources are `resources/<name>.md` reference files, copied byte for byte and never parsed; see [decision 0003](../decisions/0003-resources-and-claude-imports.md).
-- Hooks are `hooks/<name>.json` files in the [Copilot CLI hook format](https://docs.github.com/en/copilot/reference/hooks-reference): `{"version": 1, "hooks": {"<event>": [<hook>, ...]}}`. Event names may be camelCase (`preToolUse`, Copilot's payload) or PascalCase (`PreToolUse`, the Claude-compatible payload); see [decision 0004](../decisions/0004-hooks.md).
+- Hooks are `hooks/<name>.json` files in the [Copilot CLI hook format](https://docs.github.com/en/copilot/reference/hooks-reference): `{"version": 1, "hooks": {"<event>": [<hook>, ...]}}`. Event names may be camelCase (`preToolUse`, Copilot's payload) or PascalCase (`PreToolUse`, the Claude-compatible payload); see [decision 0006](../decisions/0006-hooks.md).
+
+## Plugins
+
+Library plugins (`plugins/<plugin>/`, Claude Code layout) are expanded into skills, agents, prompts, and MCP servers before any profile sees them ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Each harness then receives the parts it supports, without the plugin namespace (`kit:reviewer` becomes `reviewer`).
+
+| Plugin part          | Becomes     | `claude`                         | `copilot`, `vscode`                                                                        |
+| -------------------- | ----------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `skills/<name>/`     | skill       | exact                            | exact (`copilot`)                                                                          |
+| `agents/<name>.md`   | agent       | exact                            | keeps `name`, `description`; other fields are losses                                       |
+| `commands/<name>.md` | prompt      | exact                            | `vscode` keeps `description`, `argument-hint`; `$ARGUMENTS`, `$1`, `` !`cmd` `` are losses |
+| `.mcp.json`          | MCP servers | refused (as for library items)   | `copilot` entries                                                                          |
+| everything else      | —           | loss on every item of the plugin | loss on every item of the plugin                                                           |
+
+Items whose files (skill assets included) refer to `${CLAUDE_PLUGIN_ROOT}`, another `CLAUDE_PLUGIN_*` variable, or `${user_config.*}` are skipped everywhere: only an installed plugin resolves them.
 
 ## claude
 
@@ -62,7 +76,13 @@ Default path `$CODEX_HOME` or `~/.codex`. Instructions are combined, in name ord
 
 Losses: `applyTo` globs become an advisory sentence; files without `applyTo` become always-on.
 
-MCP servers are not written: Codex reads them from `[mcp_servers.<name>]` tables in `config.toml`, which needs a TOML editor that preserves formatting. Hooks are not written.
+| Kind         | Output                                 | Conversion |
+| ------------ | -------------------------------------- | ---------- |
+| instructions | managed block in `AGENTS.md`           | lossy      |
+| mcp          | `config.toml` → `[mcp_servers.<name>]` | converted  |
+| others       | unsupported                            | —          |
+
+MCP servers become `[mcp_servers.<name>]` tables in `config.toml`, edited in place with comments, ordering, and other tables kept ([decision 0004](../decisions/0004-toml-entries-with-tomlkit.md)). Codex rejects fields it does not know, so only these are written: `command`, `args`, `env`, `cwd` for stdio servers; `url` and `headers` (as `http_headers`) for streamable HTTP servers; `tools` as `enabled_tools` unless it contains `"*"`. `type` is checked, not written: SSE servers and unknown types are refused, as are carried fields of the wrong type. Losses: any other field, and `${...}` variables, which Codex does not expand. A server with the same name that SkillSinc did not write blocks until `--adopt`; invalid TOML, or an `mcp_servers` that is not a table, blocks the destination. Hooks are not written.
 
 ## agents
 

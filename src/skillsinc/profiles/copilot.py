@@ -15,11 +15,6 @@ COPY_PATHS: Final = {
     Kind.RESOURCE: "resources/{name}.md",
     Kind.HOOK: "hooks/{name}.json",
 }
-VSCODE_SUFFIXES: Final = {
-    Kind.INSTRUCTION: ".instructions.md",
-    Kind.AGENT: ".agent.md",
-    Kind.PROMPT: ".prompt.md",
-}
 VSCODE_REFUSALS: Final = {
     Kind.SKILL: "VS Code reads skills from copilot or agents destinations",
     Kind.MCP: (
@@ -65,15 +60,18 @@ class CopilotProfile(Profile):
                 return self.copy_skill(item)
             case Kind.INSTRUCTION:
                 return self._instruction(item)
-            case Kind.AGENT | Kind.RESOURCE | Kind.HOOK:
-                path = COPY_PATHS[item.kind].format(name=item.name)
-                return self.copy_file(item, path)
+            case Kind.AGENT | Kind.RESOURCE:
+                return self.agent(item, COPY_PATHS[item.kind].format(name=item.name))
             case Kind.PROMPT:
                 return self.refuse_kind(item, "route prompts to a vscode destination")
             case Kind.MCP:
                 server = dict(item.document.frontmatter)
                 entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
                 return Rendering(entries=(entry,))
+            case Kind.HOOK:
+                return self.copy_file(
+                    item, COPY_PATHS[item.kind].format(name=item.name)
+                )
         assert_never(item.kind)
 
     def _instruction(self, item: Customization) -> Rendering:
@@ -117,7 +115,12 @@ class VSCodeProfile(Profile):
     @override
     def render(self, item: Customization) -> Rendering:
         """Copy ``item`` verbatim with the suffix VS Code expects."""
-        suffix = VSCODE_SUFFIXES.get(item.kind)
-        if suffix is None:
-            return self.refuse_kind(item, VSCODE_REFUSALS[item.kind])
-        return self.copy_file(item, f"{item.name}{suffix}")
+        match item.kind:
+            case Kind.INSTRUCTION:
+                return self.copy_file(item, f"{item.name}.instructions.md")
+            case Kind.AGENT:
+                return self.agent(item, f"{item.name}.agent.md")
+            case Kind.PROMPT:
+                return self.prompt(item, f"{item.name}.prompt.md")
+            case _:
+                return self.refuse_kind(item, VSCODE_REFUSALS[item.kind])
