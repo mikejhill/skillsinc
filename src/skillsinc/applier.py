@@ -48,12 +48,20 @@ class Applier:
                 for other in destination.depends_on
                 if other in results and results[other].error is not None
             ]
+            missing = self._missing(destination.requires)
             if failed:
                 results[name] = DestinationResult(
                     name,
                     0,
                     f"not applied: {', '.join(failed)} failed, and it skips"
                     " items that destination was to deliver",
+                )
+            elif missing is not None:
+                results[name] = DestinationResult(
+                    name,
+                    0,
+                    f"not applied: {missing} is missing or changed, and it skips"
+                    " the item that file delivers",
                 )
             else:
                 results[name] = self._apply_destination(destination)
@@ -62,6 +70,18 @@ class Applier:
             for destination in plan.destinations
             if destination.destination.name in results
         )
+
+    @staticmethod
+    def _missing(requires: Sequence[tuple[Path, str]]) -> Path | None:
+        """Return the first required file that is absent or has other content."""
+        for path, digest in requires:
+            try:
+                if path.is_file() and Digest.of(path.read_bytes()) == digest:
+                    continue
+            except OSError:
+                pass
+            return path
+        return None
 
     @staticmethod
     def _ordered(

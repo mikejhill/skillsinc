@@ -6,13 +6,14 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Final
 
 from skillsinc.config import Config, DestinationConfig, RouteConfig
 from skillsinc.diff import DestinationDiff
 from skillsinc.exceptions import ConfigurationError, SourceError
 from skillsinc.manifest import ManifestStore
-from skillsinc.models import Customization, EntryOutput, FileOutput
+from skillsinc.models import Customization, Digest, EntryOutput, FileOutput
 from skillsinc.paths import Environment
 from skillsinc.plan import Change, DestinationPlan, Plan, Skip
 from skillsinc.profiles.registry import ProfileRegistry
@@ -43,6 +44,7 @@ class DesiredState:
     skipped: list[Skip] = field(default_factory=list)
     delivered: list[str] = field(default_factory=list)
     depends_on: set[str] = field(default_factory=set)
+    requires: list[tuple[Path, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -168,7 +170,7 @@ class Planner:
             if other is not destination
             and other.enabled
             and other.profile in covered_by
-            and self._at_default(other)
+            and self._searched(other)
         ]
 
     def _plan_destination(  # noqa: PLR0913 — the planning context for one destination
@@ -223,6 +225,8 @@ class Planner:
             delivered=tuple(desired.delivered),
             pending=self._pending(desired, changes),
             depends_on=tuple(sorted(desired.depends_on)),
+            outputs=self._outputs(desired),
+            requires=tuple(desired.requires),
         )
 
     @staticmethod
@@ -281,7 +285,7 @@ class Planner:
             kinds = also_reads.get(other.destination.profile)
             if other is reader or kinds is None:
                 continue
-            if not self._at_default(other.destination):
+            if not self._searched(other.destination):
                 continue
             for label in other.delivered:
                 if self._kind(label) in kinds:
@@ -330,6 +334,26 @@ class Planner:
                 labels.update(desired.contributors.get(change.path, ()))
         return frozenset(labels)
 
+    @staticmethod
+    def _outputs(desired: DesiredState) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Return each label's rendered files with their content digests."""
+        found: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for path, labels in desired.contributors.items():
+            digest = Digest.of(desired.files[path].content)
+            for label in labels:
+                found[label].append((path, digest))
+        return {label: tuple(sorted(files)) for label, files in found.items()}
+
+    def _searched(self, destination: DestinationConfig) -> bool:
+        """Return True if other harnesses search this destination's directory.
+
+        Harnesses look in fixed home-relative folders, so a default moved by
+        ``COPILOT_HOME`` or similar is the writer's choice, not theirs.
+        """
+        home = Environment(self._environment.home, {}, self._environment.platform)
+        default = self._profiles.get(destination.profile).default_path(home)
+        return default is not None and default == destination.path
+
     def _at_default(self, destination: DestinationConfig) -> bool:
         """Return True if the destination is its profile's default directory."""
         default = self._profiles.get(destination.profile).default_path(
@@ -370,6 +394,11 @@ class Planner:
                 reason = f"{profile.harness} already loads it from destination {cover}"
                 desired.skipped.append(Skip(label, reason))
                 desired.depends_on.add(cover)
+                plan = covers.plans[cover]
+                desired.requires.extend(
+                    (plan.destination.path / path, digest)
+                    for path, digest in plan.outputs.get(label, ())
+                )
                 continue
             rendering = profile.render(item)
             if rendering.unsupported is not None:

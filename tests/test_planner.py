@@ -485,3 +485,38 @@ class TestDuplicateLoads:
         assert "library:skills/sample" not in self.skipped(plan, "copilot"), (
             f"Expected copilot to keep its skill, got {plan!r}"
         )
+
+    def test_relocated_copilot_home_does_not_cover_vscode(
+        self, sandbox: Sandbox
+    ) -> None:
+        """VS Code searches ~/.copilot, not a COPILOT_HOME elsewhere."""
+        relocated = sandbox.environment.home / "elsewhere"
+        environment = replace(
+            sandbox.environment,
+            variables={**sandbox.environment.variables, "COPILOT_HOME": str(relocated)},
+        )
+        relocated_sandbox = Sandbox(environment, sandbox.library)
+
+        plan = self.plan(relocated_sandbox, ("copilot", "vscode"))
+
+        assert "library:agents/reviewer" not in self.skipped(plan, "vscode"), (
+            f"Expected VS Code to keep its agent, got {plan!r}"
+        )
+
+    def test_vanished_cover_stops_dependent_apply(self, sandbox: Sandbox) -> None:
+        """An up-to-date cover that disappears after planning blocks the cleanup."""
+        store = ManifestStore(sandbox.environment.state_directory)
+        Applier(store).apply(self.plan(sandbox, ("copilot",)))
+        Applier(store).apply(self.plan(sandbox, ("agents",)))
+        plan = self.plan(sandbox, ("copilot", "agents"))
+        copilot = next(d for d in plan.destinations if d.destination.name == "copilot")
+        assert copilot.requires, f"Expected cover requirements, got {copilot!r}"
+        shutil.rmtree(sandbox.environment.home / ".agents" / "skills" / "sample")
+
+        results = Applier(store).apply(plan)
+
+        by_name = {result.name: result for result in results}
+        assert by_name["copilot"].applied == 0, f"Got {results!r}"
+        assert "is missing or changed" in str(by_name["copilot"].error)
+        kept = sandbox.environment.home / ".copilot" / "skills" / "sample" / "SKILL.md"
+        assert kept.is_file(), "Expected Copilot's copy kept"
