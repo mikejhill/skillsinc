@@ -10,11 +10,11 @@ This is the prioritized list of work after the 2026-10 rebuild, with enough cont
 | Profiles                                 | `claude`, `copilot`, `vscode`, `codex`, `agents`, `generic`                         |
 | MCP servers                              | Copilot CLI only; see the [gap list](gap-list.md)                                   |
 | Harness locations                        | Checked against vendor docs on 2026-10-13; not yet verified by loading each harness |
-| Releases                                 | Workflow ready; first release blocked on one-time setup (see below)                 |
+| Releases                                 | Automated with release-please; see [releasing](../guides/releasing.md)              |
 
 ## Next
 
-1. **First release.** Complete the one-time setup in [CONTRIBUTING](../../CONTRIBUTING.md#releasing): PyPI trusted publisher, `pypi` environment, and a GitHub Actions bypass on the `Protected main` and `Immutable version tags` rulesets. Then run the Release workflow.
+1. **First release.** Complete the [one-time setup](../guides/releasing.md#one-time-setup), then merge the `chore: release 0.1.0` pull request.
 2. **Native verification.** For each profile, sync a small library into a scratch user, start the harness, and confirm it discovers each kind: skills listed, a rule with `paths` loads only for matching files, agents and commands appear, and the Codex block is read. Record harness versions and results in [harness profiles](../guides/harness-profiles.md) under a "Verified" note per profile.
 3. **Content diff in `plan`.** `plan --diff` printing a unified diff per changed file (and for the managed block) so users can review updates, not just paths.
 

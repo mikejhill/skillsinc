@@ -15,5 +15,5 @@ SkillSinc syncs one library of agent customizations (skills, instructions, agent
 - `uv run poe fix`, then `uv run poe check` must pass. Never weaken ruff, `ty`, or coverage settings.
 - Tests never read or write the real home directory; use the `environment` fixture or `Sandbox`.
 - Update the matching guide when behavior changes; record scope changes as a new file in `docs/decisions/`.
-- Conventional Commit PR titles; add a `CHANGELOG.md` entry under `[Unreleased]`.
-- Workflows may use only GitHub-owned actions, `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; put other CI logic in `scripts/`.
+- Conventional Commit PR titles; they drive the version and the generated `CHANGELOG.md`, so never edit the changelog by hand ([releasing](docs/guides/releasing.md)).
+- Workflows may use only GitHub-owned actions, `astral-sh/setup-uv`, `pypa/gh-action-pypi-publish`, and `github/codeql-action`; put other CI logic in `scripts/` or run a pinned CLI (release-please runs through `npx`).

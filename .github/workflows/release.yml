@@ -1,128 +1,200 @@
 name: Release
 
+# Every push to main opens or updates a release pull request (version bump and
+# CHANGELOG) computed from Conventional Commits by release-please. Merging that
+# pull request tags vX.Y.Z and creates the GitHub release; the same run then
+# re-runs CI on the release commit, builds the package once, attests it, and
+# publishes it to PyPI through trusted publishing (no API tokens).
+#
+# release-please runs as its npm CLI rather than its action because the
+# repository's Actions policy allows only an explicit list of actions.
+
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
-      force-patch:
-        description: Force a patch bump when no releasable commits exist
+      testpypi:
+        description: Build the current main and publish it to TestPyPI only
         type: boolean
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
-jobs:
-  release:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: astral-sh/setup-uv@v10.3.0
-        with:
-          python-version: "3.12"
-          enable-cache: true
-      - name: Determine next version
-        id: version
-        env:
-          FORCE_PATCH: ${{ inputs.force-patch }}
-        run: |
-          args=()
-          if [[ "$FORCE_PATCH" == "true" ]]; then args+=(--force-patch); fi
-          echo "version=$(uv run scripts/next_version.py "${args[@]}")" >> "$GITHUB_OUTPUT"
-      - name: Require a valid version bump
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::No valid version bump. Add releasable commits or use force-patch."
-            exit 1
-          fi
-          if git show-ref --verify --quiet "refs/tags/v$VERSION"; then
-            echo "::error::Release tag already exists."
-            exit 1
-          fi
-      - run: uv sync --locked
-      - run: uv run poe check
-      - name: Validate and promote the changelog
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          uv run python - <<'PY'
-          import datetime
-          import os
-          import pathlib
-          import re
+env:
+  RELEASE_PLEASE: release-please@17.11.2
 
-          path = pathlib.Path("CHANGELOG.md")
-          text = path.read_text(encoding="utf-8")
-          version = os.environ["VERSION"]
-          headers = list(re.finditer(r"^## \[Unreleased\]\s*$", text, re.MULTILINE))
-          if len(headers) != 1:
-              raise SystemExit("CHANGELOG.md must contain exactly one ## [Unreleased] header")
-          if re.search(rf"^## \[{re.escape(version)}\]", text, re.MULTILINE):
-              raise SystemExit("CHANGELOG.md already contains the release version")
-          header = headers[0]
-          rest = text[header.end():]
-          section = re.split(r"^## ", rest, maxsplit=1, flags=re.MULTILINE)[0]
-          if not re.search(r"^### (Added|Changed|Deprecated|Removed|Fixed|Security)$", section, re.MULTILINE):
-              raise SystemExit("Unreleased must contain a Keep a Changelog category")
-          if not re.search(r"^[-*] \S", section, re.MULTILINE):
-              raise SystemExit("Unreleased must contain at least one change entry")
-          date = datetime.datetime.now(datetime.UTC).date().isoformat()
-          replacement = f"## [Unreleased]\n\n## [{version}] - {date}\n\n"
-          updated = text[:header.start()] + replacement + rest.lstrip("\n")
-          if len(re.findall(r"^## \[Unreleased\]$", updated, re.MULTILINE)) != 1:
-              raise SystemExit("Unreleased header verification failed")
-          if f"## [{version}] - {date}" not in updated:
-              raise SystemExit("Version header verification failed")
-          path.write_text(updated, encoding="utf-8", newline="\n")
-          PY
-      - name: Bump package and lockfile versions
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          uv version "$VERSION"
-          uv lock
-      - run: uv build
-      - uses: actions/upload-artifact@v7
+jobs:
+  release-please:
+    name: Version and changelog
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          name: dist
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 30
-      - name: Commit, tag, and push the release atomically
+          node-version: "24"
+      - name: Tag and release a merged release pull request
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md pyproject.toml uv.lock
-          git commit -m "chore(release): v$VERSION"
-          git tag "v$VERSION"
-          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
-      - name: Create GitHub Release
+          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+        run: >-
+          npx --yes "$RELEASE_PLEASE" github-release
+          --token="$TOKEN" --repo-url="$GITHUB_REPOSITORY" --target-branch=main
+      - name: Detect whether this commit was released
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: gh release create "v$VERSION" dist/* --title "v$VERSION" --generate-notes --verify-tag
+        run: |
+          version=$(gh api "repos/$GITHUB_REPOSITORY/contents/.release-please-manifest.json?ref=$GITHUB_SHA" \
+            --jq '.content' | base64 --decode | jq -r '."."')
+          tag="v$version"
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha' 2>/dev/null || true)
+          if [[ "$tagged" == "$GITHUB_SHA" ]]; then
+            echo "Released $tag"
+            echo "release_created=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_created=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open or update the release pull request
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+        run: >-
+          npx --yes "$RELEASE_PLEASE" release-pr
+          --token="$TOKEN" --repo-url="$GITHUB_REPOSITORY" --target-branch=main
+      # Pull requests opened with the default token start no workflows, and the
+      # required CI and Security checks only count runs on the head commit.
+      - name: Run the required checks on the release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" \
+            --json headRefName,headRefOid --jq '.[0] // empty')
+          if [[ -z "$pr" ]]; then
+            echo "No open release pull request"
+            exit 0
+          fi
+          branch=$(jq -r '.headRefName' <<< "$pr")
+          sha=$(jq -r '.headRefOid' <<< "$pr")
+          sleep 20
+          for workflow in ci.yml security.yml; do
+            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$sha" \
+              --json databaseId --jq 'length')
+            if [[ "$runs" == "0" ]]; then
+              echo "Dispatching $workflow on $branch"
+              gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$branch"
+            fi
+          done
 
-  pypi:
-    needs: release
+  ci:
+    name: CI
+    needs: release-please
+    if: always() && (needs.release-please.outputs.release_created == 'true' || inputs.testpypi)
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository] -- portable local reuse
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+
+  build:
+    name: Build distributions
+    needs: [release-please, ci]
+    if: >-
+      always() && needs.ci.result == 'success' &&
+      (needs.release-please.outputs.release_created == 'true' || inputs.testpypi)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: pypi
-    permissions:
-      id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Check package metadata
+        run: uvx twine check --strict dist/*
+      - name: Version must match the release tag
+        if: needs.release-please.outputs.tag_name != ''
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          version="${TAG#v}"
+          ls "dist/skillsinc-$version-py3-none-any.whl" "dist/skillsinc-$version.tar.gz"
+      - name: Smoke test the installed wheel
+        run: |
+          uv venv .smoke-venv
+          uv pip install --python .smoke-venv/bin/python dist/*.whl
+          .smoke-venv/bin/skillsinc --version
+          .smoke-venv/bin/skillsinc profiles
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+          if-no-files-found: error
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [release-please, build]
+    if: always() && needs.build.result == 'success' && needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/skillsinc/
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Publish (trusted publishing, PEP 740 attestations)
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - name: Attach distributions to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: always() && needs.build.result == 'success' && inputs.testpypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/skillsinc/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
