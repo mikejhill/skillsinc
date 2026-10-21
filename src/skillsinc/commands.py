@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import TextIO
 
 from skillsinc.applier import Applier
@@ -13,7 +15,19 @@ from skillsinc.paths import Environment
 from skillsinc.planner import Planner
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.report import Reporter
-from skillsinc.settings import InitSettings, PlanSettings
+from skillsinc.schedule import (
+    VARIABLES,
+    Backend,
+    Job,
+    Runner,
+    Scheduler,
+    backend,
+    command_line,
+    detect,
+    format_interval,
+    interpreter,
+)
+from skillsinc.settings import InitSettings, PlanSettings, ScheduleSettings
 from skillsinc.sources import SourceReader
 from skillsinc.starter import StarterConfig
 
@@ -32,6 +46,7 @@ class InitCommand:
         out.write(
             f"Wrote {settings.config_path}\n"
             "Review it, run `skillsinc plan` to preview, then `skillsinc sync`.\n"
+            "To keep destinations in sync, run `skillsinc schedule install`.\n"
         )
         return 0
 
@@ -88,3 +103,92 @@ class ProfilesCommand:
         """Print the profile table."""
         out.write(Reporter.profiles_text(self._profiles.profiles))
         return 0
+
+
+class ScheduleCommand:
+    """Register, remove, or inspect the scheduled ``sync``."""
+
+    def __init__(
+        self,
+        environment: Environment,
+        runner: Runner | None = None,
+        executable: Path | None = None,
+    ) -> None:
+        self._environment = environment
+        self._runner = runner or Runner()
+        self._executable = executable or Path(sys.executable)
+
+    def run(self, settings: ScheduleSettings, out: TextIO) -> int:
+        """Run the requested action and report it."""
+        scheduler = (
+            Scheduler(settings.scheduler)
+            if settings.scheduler is not None
+            else detect(self._environment.platform, self._runner)
+        )
+        chosen = backend(scheduler, self._runner, self._environment)
+        if settings.action == "install":
+            return self._install(chosen, settings, out)
+        if settings.action == "remove":
+            removed = chosen.remove()
+            verb = "Removed" if removed else "Nothing to remove; no"
+            out.write(f"{verb} {chosen.title} {chosen.location}.\n")
+            return 0
+        status = chosen.status()
+        out.write(f"Scheduler: {chosen.title} ({chosen.location})\n")
+        out.write(f"Installed: {'yes' if status.installed else 'no'}\n")
+        for label, value in status.details:
+            out.write(f"{label}: {value}\n")
+        if not status.installed:
+            out.write("Register it with `skillsinc schedule install`.\n")
+        return 0 if status.installed else 1
+
+    def _install(self, chosen: Backend, settings: ScheduleSettings, out: TextIO) -> int:
+        """Register the job, or print its definition for ``--dry-run``."""
+        job, log = self._job(chosen, settings)
+        if settings.dry_run:
+            out.write(f"Would register with {chosen.title} ({chosen.location}):\n")
+            out.write(chosen.definition(job))
+            return 0
+        if log is not None:
+            log.parent.mkdir(parents=True, exist_ok=True)
+        chosen.install(job)
+        platform = self._environment.platform
+        out.write(
+            f"Registered {chosen.title} {chosen.location}:"
+            f" sync every {format_interval(job.interval)}.\n"
+            f"Runs: {command_line(job.argv, platform)}\n"
+        )
+        if log is not None:
+            out.write(f"Log: {log}\n")
+        if platform == "win32" and job.variables:
+            names = ", ".join(sorted(job.variables))
+            out.write(
+                f"Note: tasks read saved user variables only; set {names} with"
+                " setx so scheduled runs see the same values.\n"
+            )
+        out.write(
+            "Check it with `skillsinc schedule status`;"
+            " remove it with `skillsinc schedule remove`.\n"
+        )
+        return 0
+
+    def _job(
+        self, chosen: Backend, settings: ScheduleSettings
+    ) -> tuple[Job, Path | None]:
+        """Return the job to register and the log it appends to, if any."""
+        platform = self._environment.platform
+        # -P keeps the job's working directory off the import path
+        python = str(interpreter(self._executable, platform))
+        argv = [python, "-P", "-m", "skillsinc", "sync"]
+        log = None
+        if chosen.writes_log:
+            log = self._environment.state_directory / "sync.log"
+            argv += ["--log-file", str(log)]
+        if settings.config_path is not None:
+            argv += ["--config", str(settings.config_path)]
+        variables = {
+            name: self._environment.variables[name]
+            for name in VARIABLES
+            if self._environment.variables.get(name, "")
+        }
+        return Job(tuple(argv), settings.interval, variables), log

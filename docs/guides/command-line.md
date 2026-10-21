@@ -4,35 +4,42 @@ This guide lists every command, option, exit code, and the JSON report format, f
 
 ## Commands
 
-| Command              | Purpose                                              |
-| -------------------- | ---------------------------------------------------- |
-| `skillsinc init`     | Write a starter configuration                        |
-| `skillsinc plan`     | Show every change a sync would make; write nothing   |
-| `skillsinc sync`     | Plan and apply, holding the run lock                 |
-| `skillsinc profiles` | List harness profiles and how each kind is supported |
+| Command                                      | Purpose                                                                       |
+| -------------------------------------------- | ----------------------------------------------------------------------------- |
+| `skillsinc init`                             | Write a starter configuration                                                 |
+| `skillsinc plan`                             | Show every change a sync would make; write nothing                            |
+| `skillsinc sync`                             | Plan and apply, holding the run lock                                          |
+| `skillsinc profiles`                         | List harness profiles and how each kind is supported                          |
+| `skillsinc schedule install\|remove\|status` | Register, remove, or inspect a scheduled `sync` ([scheduling](scheduling.md)) |
 
 Options go after the command, for example `skillsinc plan --json`.
 
-| Option                     | Commands         | Meaning                                                                                                |
-| -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `--config PATH`            | init, plan, sync | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.json`)                                  |
-| `--source DIR`             | init             | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`) |
-| `--force`                  | init             | Overwrite an existing configuration                                                                    |
-| `-d`, `--destination NAME` | plan, sync       | Limit to this destination; repeatable                                                                  |
-| `--adopt`                  | plan, sync       | Take ownership of existing files instead of blocking                                                   |
-| `--json`                   | plan, sync       | Print the JSON report instead of text                                                                  |
-| `-v`, `--verbose`          | plan, sync       | List unsupported items, accepted losses, and every skill file                                          |
-| `--log-level LEVEL`        | all              | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                            |
-| `--version`                | none             | Print the version                                                                                      |
+| Option                     | Commands                           | Meaning                                                                                                                       |
+| -------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `--config PATH`            | init, plan, sync, schedule install | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.json`)                                                         |
+| `--source DIR`             | init                               | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`)                        |
+| `--force`                  | init                               | Overwrite an existing configuration                                                                                           |
+| `-d`, `--destination NAME` | plan, sync                         | Limit to this destination; repeatable                                                                                         |
+| `--adopt`                  | plan, sync                         | Take ownership of existing files instead of blocking                                                                          |
+| `--json`                   | plan, sync                         | Print the JSON report instead of text                                                                                         |
+| `-v`, `--verbose`          | plan, sync                         | List unsupported items, accepted losses, and every skill file                                                                 |
+| `--log-file PATH`          | plan, sync                         | Append the report and diagnostics to PATH under a timestamped header instead of printing them; rotates to `PATH.1` past 1 MiB |
+| `--interval DURATION`      | schedule install                   | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS` (default `1h`)                                                    |
+| `--dry-run`                | schedule install                   | Print the scheduler definition without registering it                                                                         |
+| `--scheduler NAME`         | schedule                           | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default                                             |
+| `--log-level LEVEL`        | all                                | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                                                   |
+| `--version`                | none                               | Print the version                                                                                                             |
 
 ## Exit codes
 
 | Code | Meaning                                                               |
 | ---: | --------------------------------------------------------------------- |
-| 0    | Success; for `plan`, nothing is blocked                               |
-| 1    | A source failed, a destination was blocked, or an apply step failed   |
-| 2    | Usage or configuration error (including another config-level problem) |
-| 130  | Interrupted                                                           |
+|    0 | Success; for `plan`, nothing is blocked                               |
+|    1 | A source failed, a destination was blocked, or an apply step failed   |
+|    2 | Usage or configuration error (including another config-level problem) |
+|  130 | Interrupted                                                           |
+
+`schedule status` exits 0 when a job is registered and 1 when not; `schedule remove` exits 0 either way.
 
 A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` exit 1. Locks older than one hour are treated as stale.
 
@@ -90,4 +97,4 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
 
 ## Scheduling
 
-Run `skillsinc sync` from Task Scheduler, launchd, a systemd timer, or cron using the absolute path from `uv tool dir --bin`. Keep the same `XDG_*` environment as interactive runs so the scheduled job sees the same configuration and manifests. The [scheduling guide](scheduling.md) has a ready example for each.
+`skillsinc schedule install --interval 5m` registers `sync` with Task Scheduler, launchd, a systemd user timer, or cron, carrying the `XDG_*` and harness-home variables set at install so scheduled runs see the same configuration and manifests. See the [scheduling guide](scheduling.md).

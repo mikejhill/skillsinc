@@ -263,3 +263,48 @@ class TestSafety:
             f"Expected the lock named on stderr, got {result.stderr!r}"
         )
         assert _files(cli.home / ".claude") == [], "Expected no writes under a lock"
+
+
+class TestScheduling:
+    """What a scheduler runs, and what ``schedule`` would register."""
+
+    def test_scheduled_sync_writes_only_the_log(self, cli: Cli, library: Path) -> None:
+        """``sync --log-file`` prints nothing and appends the report to the log."""
+        Harnesses.install(cli.home)
+        cli.run("init", "--source", str(library))
+        log = cli.state_directory / "sync.log"
+
+        result = cli.run("sync", "--log-file", str(log))
+
+        assert (result.status, result.stdout, result.stderr) == (0, "", ""), (
+            f"Expected a silent run, got {result!r}"
+        )
+        text = log.read_text(encoding="utf-8")
+        assert "skillsinc sync" in text, f"Expected a run header in {text}"
+        assert "claude" in text, f"Expected the report in {text}"
+
+    def test_dry_run_shows_the_launchd_agent(self, cli: Cli) -> None:
+        """``schedule install --dry-run`` prints the agent and registers nothing."""
+        result = cli.run(
+            "schedule",
+            "install",
+            "--scheduler",
+            "launchd",
+            "--interval",
+            "5m",
+            "--dry-run",
+        )
+
+        assert result.status == 0, f"Expected exit 0, got {result!r}"
+        assert "<integer>300</integer>" in result.stdout, (
+            f"Expected a 300-second interval, got {result.stdout}"
+        )
+        agents = cli.home / "Library" / "LaunchAgents"
+        assert not agents.exists(), f"Expected nothing written to {agents}"
+
+    def test_invalid_interval_is_a_usage_error(self, cli: Cli) -> None:
+        """An interval below one minute exits 2 before touching any scheduler."""
+        result = cli.run("schedule", "install", "--interval", "10s")
+
+        assert result.status == 2, f"Expected exit 2, got {result!r}"
+        assert "from 1m to 31d" in result.stderr, f"Expected the range: {result!r}"
