@@ -153,9 +153,9 @@ class TestJsoncEdits:
         member = span.find(key)
 
         if member is None:
-            edited = Jsonc.insert(source, span, key, new)
+            edited = Jsonc.insert(source, span, {key: new})
         else:
-            edited = Jsonc.replace(source, span, member, new)
+            edited = Jsonc.replace(source, span, {member: new})
 
         assert _parse(edited) == value | {key: new}, (
             f"Expected {value | {key: new}!r}, got {edited!r}"

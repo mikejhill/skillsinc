@@ -872,20 +872,51 @@ class TestEntryDiff:
             f"Expected whole-file delete, got {changes!r}"
         )
 
-    def test_sequential_changes_chain_preconditions(self, tmp_path: Path) -> None:
-        """Each change expects the bytes the previous change wrote."""
+    def test_entry_changes_share_one_precondition_and_result(
+        self, tmp_path: Path
+    ) -> None:
+        """Every entry change to one file expects its bytes and carries the result."""
         outputs = (
             EntryOutput("mcp-config.json", "servers", "a", self.SERVER),
             EntryOutput("mcp-config.json", "servers", "b", self.SERVER),
         )
 
-        changes, _ = self.compare(tmp_path, None, None, outputs)
-
-        first, second = changes
-        assert first.expected is None, f"Expected missing file first, got {first!r}"
-        assert second.expected == Digest.of(first.content or b""), (
-            f"Expected chained precondition, got {second!r}"
+        changes, _ = self.compare(
+            tmp_path, {"other": 1}, {"servers/gone": "d"}, outputs
         )
+
+        expected = Digest.of(json.dumps({"other": 1}).encode())
+        result = json.loads(changes[0].content or b"")
+        assert [(c.action, c.entry) for c in changes] == [
+            (Action.CREATE, "servers/a"),
+            (Action.CREATE, "servers/b"),
+            (Action.FORGET, "servers/gone"),
+        ], f"Expected one change per entry, got {changes!r}"
+        assert {c.expected for c in changes} == {expected}, (
+            f"Expected the current file's digest throughout, got {changes!r}"
+        )
+        assert changes[0].content == changes[1].content, (
+            f"Expected both creates to carry the final bytes, got {changes!r}"
+        )
+        assert result == {"other": 1, "servers": {"a": self.SERVER, "b": self.SERVER}}
+        assert changes[2].content is None, f"Expected no write, got {changes[2]!r}"
+
+    def test_removal_after_sets_writes_the_combined_result(
+        self, tmp_path: Path
+    ) -> None:
+        """A removed entry and a new one land in the same final bytes."""
+        current: dict[str, JsonValue] = {"servers": {"old": self.SERVER}}
+        owned = {"servers/old": JsonDocument.digest(self.SERVER)}
+
+        changes, _ = self.compare(tmp_path, current, owned, (self.output(),))
+
+        assert [(c.action, c.entry) for c in changes] == [
+            (Action.CREATE, "servers/ours"),
+            (Action.DELETE, "servers/old"),
+        ], f"Expected a create then a delete, got {changes!r}"
+        assert json.loads(changes[1].content or b"") == {
+            "servers": {"ours": self.SERVER}
+        }, f"Expected the combined result, got {changes[1].content!r}"
 
     def test_invalid_json_blocks_destination(self, tmp_path: Path) -> None:
         """A file that is not plain JSON is never rewritten."""

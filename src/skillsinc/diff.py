@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from skillsinc.blocks import ManagedBlock
-from skillsinc.entries import EntryFile, JsonDocument
+from skillsinc.entries import EntryFile, JsonDocument, Removal, Setting
 from skillsinc.exceptions import ConflictError
 from skillsinc.manifest import Manifest, OwnedBlock
 from skillsinc.models import Digest, EntryOutput, FileOutput
@@ -202,97 +202,87 @@ class DestinationDiff:
     def _entries(self, path: str, outputs: Mapping[str, EntryOutput]) -> None:
         """Plan keyed entries inside a shared JSON or TOML file, one change per entry.
 
-        Each change carries the digest of the file before it and the bytes
-        after it, so the applier applies them in order and stops at any drift.
-        Removals come last so an emptied file is never deleted and recreated.
+        Every entry change to one file expects the file's current bytes and
+        carries the bytes after all of them, so the applier writes the file
+        once and refuses the whole set if the file drifted. Removals are
+        applied after sets, so an emptied file is never deleted and recreated.
         """
         document = EntryFile.open(path, self._read(path))
+        expected = Digest.of(document.raw) if document.raw is not None else None
         owned = self._manifest.entries.get(path)
         created = owned.created_file if owned else document.raw is None
         recorded = owned.keys if owned else {}
+        planned: list[tuple[Action, str, str | None, str]] = []
+        sets: list[Setting] = []
+        removals: list[Removal] = []
         for entry in sorted(outputs):
-            change = self._desired_entry(
-                document, outputs[entry], recorded.get(entry), created=created
-            )
-            if change is not None:
-                self._changes.append(change)
+            output = outputs[entry]
+            decided = self._desired_entry(document, output, recorded.get(entry))
+            if decided is None:
+                continue
+            action, note = decided
+            planned.append((action, entry, JsonDocument.digest(output.value), note))
+            if action is not Action.TRACK:
+                sets.append((output.container, output.key, output.value))
         for entry in sorted(set(recorded) - set(outputs)):
+            action, note = self._removed_entry(document, path, entry)
+            planned.append((action, entry, None, note))
+            if action is Action.DELETE:
+                container, _, key = entry.partition("/")
+                removals.append((container, key))
+        content = (
+            document.edit(sets, removals, prune=created) if sets or removals else None
+        )
+        for action, entry, digest, note in planned:
+            writes = action not in {Action.TRACK, Action.FORGET}
             self._changes.append(
-                self._removed_entry(document, path, entry, created=created)
+                Change(
+                    action,
+                    path,
+                    expected,
+                    content=content if writes else None,
+                    owned_digest=digest,
+                    entry=entry,
+                    created_file=created and action is not Action.FORGET,
+                    note=note,
+                )
             )
 
     def _desired_entry(
-        self,
-        document: EntryFile,
-        output: EntryOutput,
-        owned: str | None,
-        *,
-        created: bool,
-    ) -> Change | None:
-        """Plan one entry that should hold ``output.value``."""
-        expected = Digest.of(document.raw) if document.raw is not None else None
+        self, document: EntryFile, output: EntryOutput, owned: str | None
+    ) -> tuple[Action, str] | None:
+        """Return the action and note for an entry that should hold ``output.value``."""
         found = document.digest(output.container, output.key)
         wanted = JsonDocument.digest(output.value)
         if found is None:
-            action = Action.CREATE
-            note = "restores a deleted managed entry" if owned is not None else ""
-        elif owned is None:
+            return Action.CREATE, (
+                "restores a deleted managed entry" if owned is not None else ""
+            )
+        if owned is None:
             if not self._adopt:
                 same = " (identical content)" if found == wanted else ""
                 self._errors.append(
                     f"{output.path}: entry {output.entry} {UNMANAGED}{same}"
                 )
                 return None
-            action = Action.TRACK if found == wanted else Action.ADOPT
-            note = ""
-        elif found != wanted:
-            action = Action.UPDATE
-            note = "overwrites local edits" if found != owned else ""
-        elif owned != wanted:
-            action, note = Action.TRACK, ""
-        else:
-            return None
-        content = (
-            None
-            if action is Action.TRACK
-            else document.set(output.container, output.key, output.value)
-        )
-        return Change(
-            action,
-            output.path,
-            expected,
-            content=content,
-            owned_digest=wanted,
-            entry=output.entry,
-            created_file=created,
-            note=note,
-        )
+            return (Action.TRACK if found == wanted else Action.ADOPT), ""
+        if found != wanted:
+            return Action.UPDATE, ("overwrites local edits" if found != owned else "")
+        if owned != wanted:
+            return Action.TRACK, ""
+        return None
 
     def _removed_entry(
-        self, document: EntryFile, path: str, entry: str, *, created: bool
-    ) -> Change:
-        """Plan an owned entry that is no longer desired."""
+        self, document: EntryFile, path: str, entry: str
+    ) -> tuple[Action, str]:
+        """Return the action and note for an owned entry that is no longer desired."""
         container, _, key = entry.partition("/")
-        expected = Digest.of(document.raw) if document.raw is not None else None
         found = document.digest(container, key)
         if found is None:
-            return Change(
-                Action.FORGET, path, expected, entry=entry, note="already gone"
-            )
+            return Action.FORGET, "already gone"
         if found != self._manifest.entries[path].keys[entry]:
-            note = (
-                "edited since SkillSinc wrote it, so it is left in place and released"
-            )
-            return Change(Action.FORGET, path, expected, entry=entry, note=note)
-        content = document.remove(container, key, prune=created)
-        return Change(
-            Action.DELETE,
-            path,
-            expected,
-            content=content,
-            entry=entry,
-            created_file=created,
-        )
+            return Action.FORGET, EDITED
+        return Action.DELETE, ""
 
     # Internals
 

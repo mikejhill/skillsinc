@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import tomllib
+from collections.abc import Callable
+from typing import Final
 
 import pytest
 import tomlkit
@@ -13,6 +15,8 @@ from skillsinc.entries import (
     JsoncEntryFile,
     JsonDocument,
     JsonEntryFile,
+    Removal,
+    Setting,
     TomlEntryFile,
 )
 from skillsinc.exceptions import ConflictError
@@ -501,3 +505,121 @@ class TestJsonc:
         result = Jsonc.blank_comments(text)
 
         assert result == '{"a\\"b": 1     \n         \n}', f"Got {result!r}"
+
+
+class TestBatchedEdits:
+    """``edit`` gives exactly what setting and removing one entry at a time gives."""
+
+    SETS: Final[tuple[Setting, ...]] = (
+        ("servers", "a", {"command": "new", "args": ["1"]}),
+        ("servers", "added", {"command": "x"}),
+        ("servers", "more", {"command": "y", "env": {"K": "v"}}),
+        ("fresh", "one", {"command": "z"}),
+    )
+
+    @staticmethod
+    def one_at_a_time(
+        document: EntryFile,
+        sets: tuple[Setting, ...],
+        removals: tuple[Removal, ...],
+        *,
+        prune: bool,
+    ) -> bytes | None:
+        """Apply each edit separately, as planning did before batching."""
+        result = document.raw
+        for container, key, value in sets:
+            result = document.set(container, key, value)
+        for container, key in removals:
+            result = document.remove(container, key, prune=prune)
+        return result
+
+    @pytest.mark.parametrize(
+        ("kind", "raw"),
+        [
+            (JsonEntryFile, None),
+            (JsonEntryFile, b'{"servers": {"a": {}, "b": {}, "gone": 1}, "k": 3}'),
+            (JsoncEntryFile, None),
+            (JsoncEntryFile, USER_JSONC),
+            (JsoncEntryFile, b"{}"),
+            (JsoncEntryFile, b'{"servers": {"a": 1 /* c */ }, "x": [1]}'),
+            (
+                JsoncEntryFile,
+                b'{\n\t"servers": {\n\t\t"a": {"command": "a"},\n\t}\n}\n',
+            ),
+            (JsoncEntryFile, b'{\r\n  "servers": {\r\n    "gone": {}\r\n  }\r\n}\r\n'),
+        ],
+    )
+    @pytest.mark.parametrize("prune", [True, False])
+    def test_json_batches_match_single_edits(
+        self,
+        kind: Callable[[bytes | None], EntryFile],
+        raw: bytes | None,
+        *,
+        prune: bool,
+    ) -> None:
+        """Sets, then removals of present entries, give byte-identical results."""
+        removals = (("servers", "gone"), ("servers", "b"), ("servers", "mine"))
+        present: tuple[Removal, ...] = tuple(
+            (container, key)
+            for container, key in removals
+            if kind(raw).digest(container, key) is not None
+        )
+
+        batched = kind(raw).edit(self.SETS, present, prune=prune)
+        single = self.one_at_a_time(kind(raw), self.SETS, present, prune=prune)
+
+        assert batched == single, f"Expected {single!r}, got {batched!r}"
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            None,
+            b'# top\nmodel = "x"\n\n[mcp_servers.a]\ncommand = "a"\n',
+            b'mcp_servers = { a = { command = "x" }, gone = { command = "g" } }\n',
+            b'[mcp_servers.gone]\ncommand = "g"\n[mcp_servers.a]\ncommand = "a"\n',
+        ],
+    )
+    @pytest.mark.parametrize("prune", [True, False])
+    def test_toml_batches_match_single_edits(
+        self, raw: bytes | None, *, prune: bool
+    ) -> None:
+        """Sets, then removals of present entries, give byte-identical results."""
+        sets: tuple[Setting, ...] = tuple(
+            ("mcp_servers", key, value) for _, key, value in self.SETS if key != "one"
+        )
+        present: tuple[Removal, ...] = tuple(
+            ("mcp_servers", key)
+            for key in ("gone", "b")
+            if TomlEntryFile(raw).digest("mcp_servers", key) is not None
+        )
+
+        batched = TomlEntryFile(raw).edit(sets, present, prune=prune)
+        single = self.one_at_a_time(TomlEntryFile(raw), sets, present, prune=prune)
+
+        assert batched == single, f"Expected {single!r}, got {batched!r}"
+
+    @pytest.mark.parametrize(
+        ("kind", "raw"),
+        [
+            (JsonEntryFile, b'{"servers": {"a": 1, "b": 2}}'),
+            (JsoncEntryFile, b'{"servers": {"a": 1, "b": 2}}'),
+            (TomlEntryFile, b"[servers.a]\nq = 1\n[servers.b]\nq = 2\n"),
+        ],
+    )
+    def test_removing_every_entry_reports_an_emptied_file(
+        self, kind: Callable[[bytes | None], EntryFile], raw: bytes
+    ) -> None:
+        """Pruning the last entries of a created file leaves nothing to keep."""
+        document = kind(raw)
+
+        result = document.edit((), (("servers", "a"), ("servers", "b")), prune=True)
+
+        assert (result, document.raw) == (None, None), f"Got {result!r}"
+
+    def test_toml_edit_without_changes_keeps_the_bytes(self) -> None:
+        """Removing only absent entries leaves the file as it was."""
+        raw = b'[mcp_servers.a]\ncommand = "a"\n'
+
+        result = TomlEntryFile(raw).edit((), (("mcp_servers", "zz"),), prune=True)
+
+        assert result == raw, f"Expected the original bytes, got {result!r}"

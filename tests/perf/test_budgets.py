@@ -21,17 +21,20 @@ from skillsinc.__main__ import Application
 from skillsinc.paths import Environment
 
 PROFILES: Final = ("claude", "copilot", "codex", "vscode", "agents")
-# Items of each kind: well beyond a large personal library. A first sync
-# grows faster than linearly with the number of entries in one shared file,
-# because each entry is its own verified write; see issue #25.
+# Items of each kind: well beyond a large personal library
 SIZE: Final = 100
 REPEATS: Final = 3
 
 # Seconds, for SIZE items of each kind into every profile
-FIRST_SYNC_BUDGET: Final = 15.0
+FIRST_SYNC_BUDGET: Final = 5.0
 CONVERGED_PLAN_BUDGET: Final = 3.0
 # A converged plan of twice the items may take at most this many times as long
 SCALING_LIMIT: Final = 3.0
+# A first sync of four times the items may take at most this many times as
+# long. Linear growth measures about 4-5x; the quadratic first sync of
+# issue #25 measured about 10x.
+FIRST_SYNC_GROWTH: Final = 4
+FIRST_SYNC_SCALING_LIMIT: Final = 7.0
 
 
 def _write_library(root: Path, size: int) -> Path:
@@ -62,9 +65,9 @@ def _write_library(root: Path, size: int) -> Path:
     return root
 
 
-def _application(root: Path, size: int) -> Callable[[str], int]:
+def _application(root: Path, size: int, run: int = 0) -> Callable[[str], int]:
     """Configure ``size`` items per kind into every profile; return a runner."""
-    base = root / f"size-{size}"
+    base = root / f"size-{size}-{run}"
     environment = Environment(
         base / "home",
         {
@@ -87,15 +90,24 @@ def _application(root: Path, size: int) -> Callable[[str], int]:
     return run
 
 
+def _time(action: Callable[[], int]) -> float:
+    """Return how long one successful run takes, in seconds."""
+    start = time.perf_counter()
+    status = action()
+    elapsed = time.perf_counter() - start
+    assert status == 0, f"Expected exit 0 while timing, got {status}"
+    return elapsed
+
+
 def _best(action: Callable[[], int]) -> float:
     """Return the fastest of ``REPEATS`` successful runs, in seconds."""
-    timings = []
-    for _ in range(REPEATS):
-        start = time.perf_counter()
-        status = action()
-        timings.append(time.perf_counter() - start)
-        assert status == 0, f"Expected exit 0 while timing, got {status}"
-    return min(timings)
+    return min(_time(action) for _ in range(REPEATS))
+
+
+def _best_first_sync(root: Path, size: int) -> float:
+    """Return the fastest of ``REPEATS`` first syncs, each into empty folders."""
+    runs = [_application(root, size, index) for index in range(REPEATS)]
+    return min(_time(lambda run=run: run("sync")) for run in runs)
 
 
 def test_first_sync_fits_the_budget(tmp_path: Path) -> None:
@@ -109,6 +121,20 @@ def test_first_sync_fits_the_budget(tmp_path: Path) -> None:
     assert status == 0, f"Expected the first sync to succeed, got {status}"
     assert elapsed < FIRST_SYNC_BUDGET, (
         f"Expected first sync under {FIRST_SYNC_BUDGET}s, took {elapsed:.2f}s"
+    )
+
+
+def test_first_sync_scales_linearly(tmp_path: Path) -> None:
+    """Growing the library grows a first sync in proportion (issue #25)."""
+    small = _best_first_sync(tmp_path, SIZE)
+    large = _best_first_sync(tmp_path, SIZE * FIRST_SYNC_GROWTH)
+
+    ratio = large / small
+
+    assert ratio < FIRST_SYNC_SCALING_LIMIT, (
+        f"Expected under {FIRST_SYNC_SCALING_LIMIT}x time for"
+        f" {FIRST_SYNC_GROWTH}x items, got {ratio:.2f}x"
+        f" ({small:.2f}s to {large:.2f}s)"
     )
 
 
