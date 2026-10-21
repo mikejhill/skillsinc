@@ -15,14 +15,15 @@ from skillsinc.starter import StarterConfig
 class TestStarterConfig:
     """Initial configuration enables only detected harness directories."""
 
-    def test_no_harnesses_comments_out_route_and_uses_placeholder(
+    def test_no_harnesses_comments_out_route_and_uses_default_library(
         self, environment: Environment
     ) -> None:
-        """Generate editable source guidance without enabling absent harnesses."""
+        """Point at the default library without enabling absent harnesses."""
         result = StarterConfig(ProfileRegistry(), environment).render(None)
+        library = (environment.config_home / "skillsinc" / "library").as_posix()
 
-        assert 'path = "~/agent-library"' in result, (
-            f"Expected placeholder and disabled harnesses, got {result!r}"
+        assert f'path = "{library}"' in result, (
+            f"Expected default library and disabled harnesses, got {result!r}"
         )
         assert "# [[routes]]" in result, (
             f"Expected placeholder and disabled harnesses, got {result!r}"
@@ -42,6 +43,43 @@ class TestStarterConfig:
         assert 'path = "~/library"' in result, (
             f"Expected home-relative source, got {result!r}"
         )
+
+    def test_default_library_is_tilde_path_under_home_config(
+        self, tmp_path: Path
+    ) -> None:
+        """Default to ``~/.config/skillsinc/library`` when XDG is not set."""
+        home = tmp_path / "home"
+        home.mkdir()
+        environment = Environment(home, {}, "linux")
+
+        result = StarterConfig(ProfileRegistry(), environment).render(None)
+
+        assert 'path = "~/.config/skillsinc/library"' in result, (
+            f"Expected the library under ~/.config, got {result!r}"
+        )
+
+    def test_write_without_source_creates_default_library(
+        self, tmp_path: Path, environment: Environment
+    ) -> None:
+        """Create the empty default library so the first plan can read it."""
+        StarterConfig(ProfileRegistry(), environment).write(
+            tmp_path / "config.toml", None, force=False
+        )
+
+        library = environment.config_home / "skillsinc" / "library"
+        assert library.is_dir(), f"Expected {library} to be created"
+
+    def test_write_with_source_creates_nothing_else(
+        self, tmp_path: Path, environment: Environment
+    ) -> None:
+        """Leave the default library alone when the user names a source."""
+        StarterConfig(ProfileRegistry(), environment).write(
+            tmp_path / "config.toml", tmp_path / "mine", force=False
+        )
+
+        library = environment.config_home / "skillsinc" / "library"
+        assert not library.exists(), f"Expected no default library at {library}"
+        assert not (tmp_path / "mine").exists(), "Expected --source left untouched"
 
     def test_existing_config_requires_force(
         self, tmp_path: Path, environment: Environment

@@ -7,6 +7,7 @@ This guide documents every key in `config.toml`. `skillsinc init` writes a worki
 | Item        | Default                                                | Override         |
 | ----------- | ------------------------------------------------------ | ---------------- |
 | Config file | `$XDG_CONFIG_HOME/skillsinc/config.toml` (`~/.config`) | `--config PATH`  |
+| Library     | `$XDG_CONFIG_HOME/skillsinc/library/` (written by `init`) | `init --source DIR`, or `path` below |
 | State       | `$XDG_STATE_HOME/skillsinc/` (`~/.local/state`)        | `XDG_STATE_HOME` |
 
 The XDG variables are honoured on Windows and macOS too. Relative paths in the file resolve against the file's directory; `~` expands to the home directory. Unknown keys are errors, so typos never pass silently.
@@ -17,7 +18,7 @@ The XDG variables are honoured on Windows and macOS too. Relative paths in the f
 version = 1
 
 [sources.library]
-path = "~/agent-library"
+path = "~/.config/skillsinc/library"
 
 [sources.team]
 path = "~/src/team-agent-library"

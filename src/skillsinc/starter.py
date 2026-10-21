@@ -10,7 +10,6 @@ from skillsinc.exceptions import ConfigurationError
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
 
-PLACEHOLDER_SOURCE: Final = "~/agent-library"
 HEADER: Final = """\
 # SkillSinc configuration. Reference: https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md
 # Preview with `skillsinc plan`; nothing is written until `skillsinc sync`.
@@ -28,6 +27,9 @@ class StarterConfig:
     def write(self, path: Path, source: Path | None, *, force: bool) -> str:
         """Write the starter configuration to ``path`` and return its text.
 
+        Without ``source``, the default library directory is created empty so
+        the first ``plan`` succeeds.
+
         Raises:
             ConfigurationError: If ``path`` exists and ``force`` is not set.
         """
@@ -36,17 +38,19 @@ class StarterConfig:
             raise ConfigurationError(msg)
         text = self.render(source)
         path.parent.mkdir(parents=True, exist_ok=True)
+        if source is None:
+            self._environment.default_library.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         return text
 
     def render(self, source: Path | None) -> str:
         """Return starter TOML, enabling destinations whose harness directory exists."""
-        source_path = self._display(source) if source else PLACEHOLDER_SOURCE
+        source_path = self._display(source or self._environment.default_library)
         lines = [HEADER, "[sources.library]", f"path = {json.dumps(source_path)}"]
         if source is None:
             lines.append(
-                "# Replace with your library: skills/, instructions/, agents/,"
-                " prompts/, mcp/, resources/, hooks/"
+                "# Default library. Add skills/, instructions/, agents/,"
+                " prompts/, mcp/, resources/, hooks/, plugins/"
             )
 
         detected: list[str] = []

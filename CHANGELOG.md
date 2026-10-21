@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Rebuilt from scratch around a smaller scope; see [decision 0001](docs/decisions/0001-rebuild-scope.md).
 - Package metadata lists the author by name only; the personal email address is removed.
+- `skillsinc init` without `--source` now points at, and creates, a default library at `$XDG_CONFIG_HOME/skillsinc/library` (`~/.config/skillsinc/library`) instead of a `~/agent-library` placeholder.
 
 ### Added
 

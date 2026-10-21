@@ -36,10 +36,10 @@ uv tool install git+https://github.com/mikejhill/skillsinc.git
 
 ## Quick start
 
-1. Point SkillSinc at your library. It enables a destination for every harness folder found on this machine:
+1. Write a configuration. It enables a destination for every harness folder found on this machine and creates an empty library at `~/.config/skillsinc/library` (`$XDG_CONFIG_HOME/skillsinc/library`). Pass `--source DIR` to use an existing library instead:
 
     ```bash
-    skillsinc init --source ~/my-agent-library
+    skillsinc init
     ```
 
 2. Preview the changes:
