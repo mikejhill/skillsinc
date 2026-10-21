@@ -7,10 +7,10 @@ import copy
 import json
 import math
 from abc import ABC, abstractmethod
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping, Sequence
 from decimal import Decimal
 from pathlib import PurePosixPath
-from typing import Final, cast, override
+from typing import Any, Final, cast, override
 
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
@@ -21,6 +21,11 @@ from skillsinc.jsonc import Jsonc, ObjectSpan
 from skillsinc.models import Digest, JsonValue
 
 JSONC_FILES: Final = frozenset({"mcp.json"})
+
+type Setting = tuple[str, str, JsonValue]
+"""``(container, key, value)`` for one entry to set."""
+type Removal = tuple[str, str]
+"""``(container, key)`` for one entry to remove."""
 
 
 class JsonDocument:
@@ -133,6 +138,17 @@ class EntryFile(ABC):
         reported as None so the caller can delete it.
         """
 
+    @abstractmethod
+    def edit(
+        self, sets: Sequence[Setting], removals: Sequence[Removal], *, prune: bool
+    ) -> bytes | None:
+        """Apply ``sets``, then ``removals``, and return the final bytes.
+
+        The result is what calling ``set`` and ``remove`` in that order would
+        give, but the file is rendered and checked once instead of after every
+        entry, so planning many entries in one file stays linear.
+        """
+
 
 class JsonEntryFile(EntryFile):
     """One shared JSON file being edited entry by entry while planning."""
@@ -179,14 +195,23 @@ class JsonEntryFile(EntryFile):
         With ``prune``, an emptied container is dropped and an emptied file is
         reported as None so the caller can delete it.
         """
-        values = self._container(container, create=False)
-        values.pop(key, None)
-        if prune and not values:
-            self._document.pop(container, None)
-            if not self._document:
-                self.raw = None
-                return None
-        self.raw = JsonDocument.dump(self._document)
+        return self.edit((), ((container, key),), prune=prune)
+
+    @override
+    def edit(
+        self, sets: Sequence[Setting], removals: Sequence[Removal], *, prune: bool
+    ) -> bytes | None:
+        """Apply ``sets``, then ``removals``, and return the final bytes."""
+        for container, key, value in sets:
+            self._container(container, create=True)[key] = value
+        emptied = False
+        for container, key in removals:
+            values = self._container(container, create=False)
+            values.pop(key, None)
+            if prune and not values:
+                self._document.pop(container, None)
+                emptied = emptied or not self._document
+        self.raw = None if emptied else JsonDocument.dump(self._document)
         return self.raw
 
     # Internals
@@ -250,22 +275,7 @@ class JsoncEntryFile(EntryFile):
         Raises:
             ConflictError: If the edit does not read back as intended.
         """
-        expected = copy.deepcopy(self._document)
-        expected[container] = {**self._container(container), key: value}
-        if self.raw is None:
-            return self._commit(JsonDocument.dump(expected).decode(), expected)
-        top = self._top()
-        holder = top.find(container)
-        if holder is None:
-            text = Jsonc.insert(self._text, top, container, {key: value})
-            return self._commit(text, expected)
-        span = Jsonc.object_at(self._bare(), holder.value_start)
-        member = span.find(key)
-        if member is None:
-            text = Jsonc.insert(self._text, span, key, value)
-        else:
-            text = Jsonc.replace(self._text, span, member, value)
-        return self._commit(text, expected)
+        return self._set_all({container: {key: value}})
 
     @override
     def remove(self, container: str, key: str, *, prune: bool) -> bytes | None:
@@ -301,7 +311,60 @@ class JsoncEntryFile(EntryFile):
             text = Jsonc.delete(self._text, span, member)
         return self._commit(text, expected)
 
+    @override
+    def edit(
+        self, sets: Sequence[Setting], removals: Sequence[Removal], *, prune: bool
+    ) -> bytes | None:
+        """Apply ``sets``, then ``removals``, and return the final bytes.
+
+        Sets are spliced together, a container at a time; removals, which are
+        rare in bulk, go one by one.
+
+        Raises:
+            ConflictError: If an edit does not read back as intended.
+        """
+        grouped: dict[str, dict[str, JsonValue]] = {}
+        for container, key, value in sets:
+            grouped.setdefault(container, {})[key] = value
+        if grouped:
+            self._set_all(grouped)
+        for container, key in removals:
+            self.remove(container, key, prune=prune)
+        return self.raw
+
     # Internals
+
+    def _set_all(self, grouped: Mapping[str, Mapping[str, JsonValue]]) -> bytes:
+        """Set every ``container.key`` in ``grouped`` and return the new bytes.
+
+        Raises:
+            ConflictError: If the edit does not read back as intended.
+        """
+        expected = copy.deepcopy(self._document)
+        for container, values in grouped.items():
+            expected[container] = {**self._container(container), **values}
+        if self.raw is None:
+            return self._commit(JsonDocument.dump(expected).decode(), expected)
+        text = self._text
+        for container, values in grouped.items():
+            top = Jsonc.object_at(Jsonc.blank_comments(text), 0)
+            holder = top.find(container)
+            if holder is None:
+                text = Jsonc.insert(text, top, {container: dict(values)})
+                continue
+            span = Jsonc.object_at(Jsonc.blank_comments(text), holder.value_start)
+            members = {member.key: member for member in span.members}
+            replaced = {
+                members[key]: value for key, value in values.items() if key in members
+            }
+            if replaced:
+                text = Jsonc.replace(text, span, replaced)
+            added = {key: value for key, value in values.items() if key not in members}
+            if added:
+                bare = Jsonc.blank_comments(text)
+                span = Jsonc.object_at(bare, span.open)
+                text = Jsonc.insert(text, span, added)
+        return self._commit(text, expected)
 
     @staticmethod
     def _load(text: str) -> dict[str, JsonValue]:
@@ -390,18 +453,8 @@ class TomlEntryFile(EntryFile):
             ConflictError: If ``value`` is not a table or the edit does not
                 read back as intended.
         """
-        if not isinstance(value, dict):
-            msg = f"'{container}.{key}' must be a table"
-            raise ConflictError(msg)
-        values = self._container(container)
         expected = self._document.unwrap()
-        expected.setdefault(container, {})[key] = value
-        if values is None:
-            if self._document:
-                self._document.add(tomlkit.nl())
-            values = tomlkit.table(is_super_table=True)
-            self._document[container] = values
-        values[key] = self._item(value, inline=isinstance(values, InlineTable))
+        self._put(expected, container, key, value)
         return self._dump(expected)
 
     @override
@@ -414,23 +467,65 @@ class TomlEntryFile(EntryFile):
         Raises:
             ConflictError: If the edit does not read back as intended.
         """
-        values = self._container(container)
-        if values is None or key not in values:
-            return self.raw
+        return self.edit((), ((container, key),), prune=prune)
+
+    @override
+    def edit(
+        self, sets: Sequence[Setting], removals: Sequence[Removal], *, prune: bool
+    ) -> bytes | None:
+        """Apply ``sets``, then ``removals``, and return the final bytes.
+
+        Raises:
+            ConflictError: If a value is not a table or the result does not
+                read back as intended.
+        """
         expected = self._document.unwrap()
-        del expected[container][key]
-        del values[key]
-        # An empty table header means nothing in TOML, so drop it either way
-        if not values:
-            del expected[container]
-            del self._document[container]
-            # Comments the user added keep a file SkillSinc created
-            if prune and not expected and not tomlkit.dumps(self._document).strip():
-                self.raw = None
-                return None
-        return self._dump(expected)
+        changed = False
+        for container, key, value in sets:
+            self._put(expected, container, key, value)
+            changed = True
+        emptied = False
+        for container, key in removals:
+            values = self._container(container)
+            if values is None or key not in values:
+                continue
+            changed = True
+            del expected[container][key]
+            del values[key]
+            # An empty table header means nothing in TOML, so drop it either way
+            if not values:
+                del expected[container]
+                del self._document[container]
+                # Comments the user added keep a file SkillSinc created
+                emptied = emptied or (
+                    prune and not expected and not tomlkit.dumps(self._document).strip()
+                )
+        if emptied:
+            self.raw = None
+            return None
+        return self._dump(expected) if changed else self.raw
 
     # Internals
+
+    def _put(
+        self, expected: dict[str, Any], container: str, key: str, value: JsonValue
+    ) -> None:
+        """Set ``container.key`` in the document and in ``expected``.
+
+        Raises:
+            ConflictError: If ``value`` is not a table.
+        """
+        if not isinstance(value, dict):
+            msg = f"'{container}.{key}' must be a table"
+            raise ConflictError(msg)
+        values = self._container(container)
+        expected.setdefault(container, {})[key] = value
+        if values is None:
+            if self._document:
+                self._document.add(tomlkit.nl())
+            values = tomlkit.table(is_super_table=True)
+            self._document[container] = values
+        values[key] = self._item(value, inline=isinstance(values, InlineTable))
 
     def _container(self, container: str) -> MutableMapping[str, object] | None:
         """Return the container table, or None if the file has none."""

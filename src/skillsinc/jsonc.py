@@ -8,6 +8,7 @@ comment, so edits splice text at the positions recorded here instead.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -136,11 +137,11 @@ class Jsonc:
         return ObjectSpan(opening, index, tuple(members))
 
     @staticmethod
-    def insert(text: str, span: ObjectSpan, key: str, value: JsonValue) -> str:
-        """Return ``text`` with ``"key": value`` added as the last member of ``span``.
+    def insert(text: str, span: ObjectSpan, members: Mapping[str, JsonValue]) -> str:
+        """Return ``text`` with ``members`` added, in order, at the end of ``span``.
 
-        The member goes after the last thing inside the braces (a comment
-        included), indented like its siblings.
+        They go after the last thing inside the braces (a comment included),
+        indented like their siblings, exactly as adding them one at a time would.
         """
         newline = Jsonc.newline(text)
         outer = Jsonc.indent(text, span.open, whole_line=True)
@@ -148,21 +149,25 @@ class Jsonc:
         inner = outer + step
         if span.members:
             inner = Jsonc.indent(text, span.members[-1].start) or inner
-        rendered = json.dumps(value, indent=step, ensure_ascii=False)
-        rendered = rendered.replace("\n", newline + inner)
-        entry = f"{newline}{inner}{json.dumps(key, ensure_ascii=False)}: {rendered}"
+        added = []
+        for key, value in members.items():
+            rendered = json.dumps(value, indent=step, ensure_ascii=False)
+            rendered = rendered.replace("\n", newline + inner)
+            added.append(
+                f"{newline}{inner}{json.dumps(key, ensure_ascii=False)}: {rendered}"
+            )
+        trailing = bool(span.members) and span.members[-1].comma is not None
+        # The file uses trailing commas, so every new member gets one too
+        entry = "".join(f"{one}," for one in added) if trailing else ",".join(added)
         position = span.close
         while position > span.open + 1 and text[position - 1] in WHITESPACE:
             position -= 1
         if position == span.open + 1:
             entry += newline + outer
         edits: list[tuple[int, int, str]] = []
-        if span.members:
+        if span.members and not trailing:
             last = span.members[-1]
-            if last.comma is not None:
-                # The file uses trailing commas, so this member gets one too
-                entry += ","
-            elif last.value_end == position:
+            if last.value_end == position:
                 entry = "," + entry
             else:
                 edits.append((last.value_end, last.value_end, ","))
@@ -170,13 +175,17 @@ class Jsonc:
         return Jsonc.apply(text, edits)
 
     @staticmethod
-    def replace(text: str, span: ObjectSpan, member: Member, value: JsonValue) -> str:
-        """Return ``text`` with ``member``'s value replaced, indented in place."""
+    def replace(text: str, span: ObjectSpan, values: Mapping[Member, JsonValue]) -> str:
+        """Return ``text`` with each member's value replaced, indented in place."""
         newline = Jsonc.newline(text)
-        indent = Jsonc.indent(text, member.start, whole_line=True)
-        rendered = json.dumps(value, indent=Jsonc.step(text, span), ensure_ascii=False)
-        rendered = rendered.replace("\n", newline + indent)
-        return Jsonc.apply(text, [(member.value_start, member.value_end, rendered)])
+        step = Jsonc.step(text, span)
+        edits: list[tuple[int, int, str]] = []
+        for member, value in values.items():
+            indent = Jsonc.indent(text, member.start, whole_line=True)
+            rendered = json.dumps(value, indent=step, ensure_ascii=False)
+            rendered = rendered.replace("\n", newline + indent)
+            edits.append((member.value_start, member.value_end, rendered))
+        return Jsonc.apply(text, edits)
 
     @staticmethod
     def delete(text: str, span: ObjectSpan, member: Member) -> str:
@@ -215,10 +224,18 @@ class Jsonc:
 
     @staticmethod
     def apply(text: str, edits: list[tuple[int, int, str]]) -> str:
-        """Apply non-overlapping ``(start, end, replacement)`` edits."""
-        for start, end, replacement in sorted(edits, key=lambda edit: -edit[0]):
-            text = text[:start] + replacement + text[end:]
-        return text
+        """Apply non-overlapping ``(start, end, replacement)`` edits in one pass.
+
+        Insertions at one offset land in reverse order, as if applied one by one.
+        """
+        pieces: list[str] = []
+        done = 0
+        order = sorted(range(len(edits)), key=lambda index: (edits[index][0], -index))
+        for start, end, replacement in (edits[index] for index in order):
+            pieces += (text[done:start], replacement)
+            done = end
+        pieces.append(text[done:])
+        return "".join(pieces)
 
     @staticmethod
     def indent(text: str, index: int, *, whole_line: bool = False) -> str:

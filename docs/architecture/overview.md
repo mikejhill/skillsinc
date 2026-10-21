@@ -62,7 +62,7 @@ Blocks follow the same ownership rules as files. A block taken over with `--adop
 
 ## Managed entries
 
-Harnesses that read MCP servers from a shared JSON or TOML file (Copilot CLI's `mcp-config.json`, Codex's `config.toml`) receive one entry per server under a container key such as `mcpServers` or `mcp_servers`. The manifest records each owned `container/key` with the digest of its value (key order and whitespace ignored) and whether SkillSinc created the file. Each entry follows the ownership table above; changes to one file are chained, each expecting the bytes the previous one wrote. Other keys are never changed, an unowned key with the same name blocks until `--adopt`, and a file that is not plain JSON, or not valid TOML, blocks the destination. TOML is edited with `tomlkit` and VS Code's JSONC `mcp.json` by splicing member text (`skillsinc.jsonc`), both keeping comments and layout, and every edit is parsed back and compared with the intended data before it is planned. A file SkillSinc created is deleted when its last entry goes.
+Harnesses that read MCP servers from a shared JSON or TOML file (Copilot CLI's `mcp-config.json`, Codex's `config.toml`) receive one entry per server under a container key such as `mcpServers` or `mcp_servers`. The manifest records each owned `container/key` with the digest of its value (key order and whitespace ignored) and whether SkillSinc created the file. Each entry follows the ownership table above and is reported as its own change, but all entry changes to one file are planned against one parse of it: they expect the file's current bytes and carry the bytes after every one of them, so the applier writes the file once and refuses all of them if it changed. Planning many entries in one file stays linear ([decision 0013](../decisions/0013-linear-first-sync.md)). Other keys are never changed, an unowned key with the same name blocks until `--adopt`, and a file that is not plain JSON, or not valid TOML, blocks the destination. TOML is edited with `tomlkit` and VS Code's JSONC `mcp.json` by splicing member text (`skillsinc.jsonc`), both keeping comments and layout, and the edited file is parsed back and compared with the intended data before it is planned. A file SkillSinc created is deleted when its last entry goes.
 
 An entry may be marked mergeable (Claude Code hooks, keyed by event under `hooks` in `settings.json`). Several items may then contribute to one key: the planner concatenates their lists in item order, skipping elements already present, and the merged list is owned as one entry.
 
@@ -72,7 +72,7 @@ A profile may also write entries into files it declares beside its root (`Profil
 
 - Every change records the digest of the file it expects; the applier re-reads and refuses if the file changed after planning.
 - Writes go to a sibling temporary file, then `Path.replace` swaps it in.
-- The manifest is saved after every applied change, so an interrupted run never loses track of written files.
+- Every applied step (one write, with all the entries it carries) is appended as one line to a journal beside the manifest (`<destination>.journal`), and the manifest is saved once when the destination finishes. Loading replays a leftover journal, so an interrupted run never loses track of written files.
 - Paths that pass through a symlink or junction inside a destination are refused, so a sync can never write back into the library through a link. A declared file beside the root must not be a link either; any other `..` path is refused.
 
 ## Adding a harness

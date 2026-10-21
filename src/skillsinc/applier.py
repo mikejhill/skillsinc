@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skillsinc.exceptions import ConflictError
-from skillsinc.manifest import Manifest, ManifestStore, OwnedBlock, OwnedEntries
+from skillsinc.manifest import ManifestStore, Ownership
 from skillsinc.models import Digest
 from skillsinc.paths import destination_file
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
@@ -27,7 +27,7 @@ class DestinationResult:
 
 
 class Applier:
-    """Execute planned changes, recording ownership after every successful step."""
+    """Execute planned changes, journaling ownership after every successful step."""
 
     def __init__(self, store: ManifestStore) -> None:
         self._store = store
@@ -110,36 +110,76 @@ class Applier:
     # Steps
 
     def _apply_destination(self, plan: DestinationPlan) -> DestinationResult:
-        """Apply one destination, stopping at the first failed precondition."""
+        """Apply one destination, stopping at the first failed precondition.
+
+        Ownership is journaled after every step and the manifest saved once
+        at the end, so an interrupted run still knows everything it wrote.
+        """
         destination = plan.destination
         manifest = self._store.load(destination.name, destination.path)
         applied = 0
-        for change in plan.changes:
-            try:
-                self._apply_change(destination.path, change)
-            except (ConflictError, OSError) as err:
-                logger.error("%s: %s: %s", destination.name, change.path, err)  # noqa: TRY400 — expected failure, no traceback
-                self._store.save(manifest)
-                return DestinationResult(
-                    destination.name, applied, f"{change.path}: {err}"
-                )
-            self._record(manifest, change)
+        try:
+            with self._store.journal(manifest) as journal:
+                for step in self._steps(plan.changes):
+                    try:
+                        self._apply_step(destination.path, step)
+                    except (ConflictError, OSError) as err:
+                        path = step[0].path
+                        logger.error("%s: %s: %s", destination.name, path, err)  # noqa: TRY400 — expected failure, no traceback
+                        return DestinationResult(
+                            destination.name, applied, f"{path}: {err}"
+                        )
+                    journal.record(
+                        tuple(
+                            Ownership(
+                                change.path,
+                                change.owned_digest,
+                                change.block,
+                                change.entry,
+                                change.created_file,
+                            )
+                            for change in step
+                        )
+                    )
+                    applied += len(step)
+        finally:
             self._store.save(manifest)
-            applied += 1
         return DestinationResult(destination.name, applied)
 
-    def _apply_change(self, root: Path, change: Change) -> None:
-        """Verify the file is as planned, then perform the change."""
-        target = destination_file(root, change.path)
-        self._verify(target, change.expected)
-        match change.action:
-            case Action.DELETE if change.content is None:
-                target.unlink()
-                self._prune(target.parent, root)
-            case Action.CREATE | Action.UPDATE | Action.ADOPT | Action.DELETE:
-                self._write(target, change)
-            case Action.TRACK | Action.FORGET:
-                pass
+    @staticmethod
+    def _steps(changes: Sequence[Change]) -> list[tuple[Change, ...]]:
+        """Group the changes applied as one step.
+
+        Entry changes to one shared file follow each other, expect the same
+        bytes, and carry the same result, so the file is written once.
+        """
+        steps: list[list[Change]] = []
+        for change in changes:
+            previous = steps[-1][-1] if steps else None
+            if (
+                previous is not None
+                and change.entry
+                and previous.entry
+                and (previous.path, previous.expected) == (change.path, change.expected)
+            ):
+                steps[-1].append(change)
+            else:
+                steps.append([change])
+        return [tuple(step) for step in steps]
+
+    def _apply_step(self, root: Path, step: Sequence[Change]) -> None:
+        """Verify the file is as planned, then perform the step's write, if any."""
+        target = destination_file(root, step[0].path)
+        self._verify(target, step[0].expected)
+        writes = [change for change in step if change.writes]
+        if not writes:
+            return
+        change = writes[-1]
+        if change.action is Action.DELETE and change.content is None:
+            target.unlink()
+            self._prune(target.parent, root)
+        else:
+            self._write(target, change)
 
     # Internals
 
@@ -178,30 +218,3 @@ class Applier:
             except OSError:
                 return
             directory = directory.parent
-
-    @staticmethod
-    def _record(manifest: Manifest, change: Change) -> None:
-        """Update ownership to reflect an applied change."""
-        if change.entry:
-            owned = manifest.entries.setdefault(
-                change.path, OwnedEntries(change.created_file)
-            )
-            if change.owned_digest is None:
-                owned.keys.pop(change.entry, None)
-            else:
-                owned.keys[change.entry] = change.owned_digest
-            if not owned.keys:
-                manifest.entries.pop(change.path)
-            return
-        if change.block:
-            if change.owned_digest is None:
-                manifest.blocks.pop(change.path, None)
-            else:
-                manifest.blocks[change.path] = OwnedBlock(
-                    change.owned_digest, change.created_file
-                )
-            return
-        if change.owned_digest is None:
-            manifest.files.pop(change.path, None)
-        else:
-            manifest.files[change.path] = change.owned_digest

@@ -278,6 +278,101 @@ class TestApplier:
             "mcp.json": OwnedEntries(created_file=True, keys={"servers/ours": "d"})
         }, f"Expected recorded entry, got {actual!r}"
 
+    def test_entry_changes_to_one_file_are_one_write(self, tmp_path: Path) -> None:
+        """Entry changes sharing a precondition write the file once, then record all."""
+        store = ManifestStore(tmp_path / "state")
+        content = b'{"servers": {"a": {}, "b": {}}}\n'
+        changes = tuple(
+            Change(
+                Action.CREATE,
+                "mcp.json",
+                None,
+                content=content,
+                owned_digest=f"d{key}",
+                entry=f"servers/{key}",
+                created_file=True,
+            )
+            for key in ("a", "b")
+        )
+
+        results = Applier(store).apply(self.plan(tmp_path, changes))
+
+        keys = store.load("target", tmp_path).entries["mcp.json"].keys
+        assert (results[0].applied, (tmp_path / "mcp.json").read_bytes()) == (
+            2,
+            content,
+        ), f"Expected one write of the final bytes, got {results!r}"
+        assert keys == {"servers/a": "da", "servers/b": "db"}, f"Got {keys!r}"
+
+    def test_drifted_shared_file_applies_none_of_its_entries(
+        self, tmp_path: Path
+    ) -> None:
+        """A file edited since planning blocks every entry change planned for it."""
+        store = ManifestStore(tmp_path / "state")
+        (tmp_path / "mcp.json").write_bytes(b'{"edited": true}')
+        changes = tuple(
+            Change(
+                Action.UPDATE,
+                "mcp.json",
+                Digest.of(b"{}"),
+                content=b"{}",
+                owned_digest="d",
+                entry=f"servers/{key}",
+            )
+            for key in ("a", "b")
+        )
+
+        results = Applier(store).apply(self.plan(tmp_path, changes))
+
+        assert (results[0].applied, store.load("target", tmp_path).entries) == (
+            0,
+            {},
+        ), f"Expected nothing applied or recorded, got {results!r}"
+        assert results[0].error is not None, "Expected the drift reported"
+
+    def test_saving_folds_in_the_journal(self, tmp_path: Path) -> None:
+        """A finished run leaves only the manifest behind."""
+        store = ManifestStore(tmp_path / "state")
+        change = Change(
+            Action.CREATE, "file", None, content=b"x", owned_digest=Digest.of(b"x")
+        )
+
+        Applier(store).apply(self.plan(tmp_path, (change,)))
+
+        assert not store.journal_path("target").exists(), "Expected no journal left"
+        assert store.load("target", tmp_path).files == {"file": Digest.of(b"x")}
+
+    def test_interrupted_run_keeps_what_it_wrote(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the final save never happens, the journal still records each write."""
+        store = ManifestStore(tmp_path / "state")
+        root = tmp_path / "destination"
+        root.mkdir()
+        changes = tuple(
+            Change(
+                Action.CREATE,
+                name,
+                None,
+                content=name.encode(),
+                owned_digest=Digest.of(name.encode()),
+            )
+            for name in ("a", "b")
+        )
+
+        def interrupted(_manifest: Manifest) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(store, "save", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            Applier(store).apply(self.plan(root, changes))
+
+        recovered = ManifestStore(tmp_path / "state").load("target", root)
+        assert recovered.files == {
+            "a": Digest.of(b"a"),
+            "b": Digest.of(b"b"),
+        }, f"Expected both writes recovered, got {recovered!r}"
+
 
 class TestCoverRequirements:
     """Files another destination relies on are checked before it is applied."""
