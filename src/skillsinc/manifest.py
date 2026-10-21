@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -124,7 +124,8 @@ class Ownership:
 class Journal:
     """Changes applied since the manifest was last saved, one JSON line each.
 
-    Appending a line costs the same however large the manifest is, so a run
+    Each line is one applied step. Appending a line costs the same however
+    large the manifest is, so a run
     that writes thousands of files stays linear while an interrupted run still
     loses track of nothing it wrote. Saving the manifest folds the journal in.
     """
@@ -133,10 +134,16 @@ class Journal:
         self._manifest = manifest
         self._stream = stream
 
-    def record(self, ownership: Ownership) -> None:
-        """Apply ``ownership`` to the manifest and append it to the journal."""
-        ownership.apply(self._manifest)
-        self._stream.write(json.dumps(asdict(ownership)) + "\n")
+    def record(self, step: Sequence[Ownership]) -> None:
+        """Apply one step's changes to the manifest and append them as one line.
+
+        A step is everything one write did, such as every entry of a shared
+        file, so an interruption keeps all of it or none of it.
+        """
+        line = json.dumps([asdict(ownership) for ownership in step]) + "\n"
+        for ownership in step:
+            ownership.apply(self._manifest)
+        self._stream.write(line)
         self._stream.flush()
 
 
@@ -239,7 +246,12 @@ class ManifestStore:
                 raise ValueError(msg)  # noqa: TRY301 — reported below
             manifest.root = header["root"]
             for line in lines[1:]:
-                Ownership.parse(json.loads(line)).apply(manifest)
+                step: object = json.loads(line)
+                if not isinstance(step, list):
+                    msg = "expected a list of changes"
+                    raise ValueError(msg)  # noqa: TRY004, TRY301 — reported below
+                for data in step:
+                    Ownership.parse(data).apply(manifest)
         except (OSError, ValueError, KeyError) as err:
             msg = f"ownership journal is unreadable: {path} ({err})"
             raise ConfigurationError(msg) from err

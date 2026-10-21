@@ -132,7 +132,7 @@ class TestJournal:
         """Journal ``ownerships`` as a run that never saved its manifest would."""
         with store.journal(Manifest("target", str(root))) as journal:
             for ownership in ownerships:
-                journal.record(ownership)
+                journal.record((ownership,))
 
     def test_journal_replays_onto_the_saved_manifest(self, tmp_path: Path) -> None:
         """Every kind of ownership change is replayed in order."""
@@ -192,7 +192,7 @@ class TestJournal:
         store = ManifestStore(tmp_path / "state")
         self.interrupted(store, tmp_path, Ownership("a", "d"))
         with store.journal_path("target").open("a", encoding="utf-8") as stream:
-            stream.write('{"path": "b", "dig')
+            stream.write('[{"path": "b", "dig')
 
         before = store.load("target", tmp_path).files
         self.interrupted(store, tmp_path, Ownership("c", "d"))
@@ -200,6 +200,31 @@ class TestJournal:
 
         assert (before, after) == ({"a": "d"}, {"a": "d", "c": "d"}), (
             f"Got {before!r} then {after!r}"
+        )
+
+    def test_shared_file_write_is_recovered_whole(self, tmp_path: Path) -> None:
+        """Every entry one write put on disk is recorded together, or not at all."""
+        store = ManifestStore(tmp_path / "state")
+        step = tuple(
+            Ownership("mcp.json", "e", entry=f"servers/{key}", created_file=True)
+            for key in ("a", "b")
+        )
+        with store.journal(Manifest("target", str(tmp_path))) as journal:
+            journal.record(step)
+        whole = store.load("target", tmp_path).entries
+        path = store.journal_path("target")
+        raw = path.read_bytes()
+        path.write_bytes(raw[: raw.rindex(b"servers/b")])
+
+        torn = store.load("target", tmp_path).entries
+
+        assert whole == {
+            "mcp.json": OwnedEntries(
+                created_file=True, keys={"servers/a": "e", "servers/b": "e"}
+            )
+        }, f"Expected both entries recovered, got {whole!r}"
+        assert torn == {}, (
+            f"Expected a cut-short step recovered not at all, got {torn!r}"
         )
 
     def test_header_cut_short_is_rewritten(self, tmp_path: Path) -> None:
@@ -217,9 +242,10 @@ class TestJournal:
     @pytest.mark.parametrize(
         "text",
         [
-            '{"root": "ROOT"}\nnot json\n{"path": "a"}\n',
+            '{"root": "ROOT"}\nnot json\n[{"path": "a"}]\n',
+            '{"root": "ROOT"}\n[{"path": "a"}]\n',
             '{"root": "ROOT"}\n{"path": "a"}\n',
-            '{"root": "ROOT"}\n[]\n',
+            '{"root": "ROOT"}\n[[]]\n',
             '{"path": "a", "digest": "d"}\n',
             '{"root": "elsewhere"}\n',
         ],

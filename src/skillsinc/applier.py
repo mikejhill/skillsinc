@@ -129,8 +129,8 @@ class Applier:
                         return DestinationResult(
                             destination.name, applied, f"{path}: {err}"
                         )
-                    for change in step:
-                        journal.record(
+                    journal.record(
+                        tuple(
                             Ownership(
                                 change.path,
                                 change.owned_digest,
@@ -138,7 +138,9 @@ class Applier:
                                 change.entry,
                                 change.created_file,
                             )
+                            for change in step
                         )
+                    )
                     applied += len(step)
         finally:
             self._store.save(manifest)

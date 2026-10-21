@@ -72,7 +72,7 @@ A profile may also write entries into files it declares beside its root (`Profil
 
 - Every change records the digest of the file it expects; the applier re-reads and refuses if the file changed after planning.
 - Writes go to a sibling temporary file, then `Path.replace` swaps it in.
-- Every applied change is appended to a journal beside the manifest (`<destination>.journal`), and the manifest is saved once when the destination finishes. Loading replays a leftover journal, so an interrupted run never loses track of written files.
+- Every applied step (one write, with all the entries it carries) is appended as one line to a journal beside the manifest (`<destination>.journal`), and the manifest is saved once when the destination finishes. Loading replays a leftover journal, so an interrupted run never loses track of written files.
 - Paths that pass through a symlink or junction inside a destination are refused, so a sync can never write back into the library through a link. A declared file beside the root must not be a link either; any other `..` path is refused.
 
 ## Adding a harness
