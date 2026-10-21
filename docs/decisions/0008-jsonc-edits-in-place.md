@@ -15,7 +15,7 @@ VS Code reads `User/mcp.json` as JSONC: `//` and `/* */` comments and trailing c
 - **Match the surroundings.** A new member goes after the last thing inside its object (a trailing comment included), indented like its siblings, with a trailing comma when the file already uses them. Removing it gives back the original bytes.
 - **Fail closed.** Every edit is parsed back (comments and trailing commas blanked, then the strict JSON rules from decision 0002) and compared with the intended data. Any difference, an unterminated comment or string, duplicate keys, or a non-object container blocks the destination; nothing is written.
 - **Scope.** Only files whose harness reads them as JSONC use this editor: VS Code's `mcp.json`. Copilot CLI's `mcp-config.json` and Claude Code's `~/.claude.json` stay strict JSON, since those harnesses do not accept comments.
-- **Limits.** A value SkillSinc replaces is written fresh, so a comment inside an owned server's value is lost when that server changes. A file SkillSinc created is deleted with its last server only if it holds no comments.
+- **Limits.** A value SkillSinc replaces is written fresh, so a comment inside an owned server's value is lost when that server changes. Pruning never removes a comment: an emptied `servers` with a comment inside stays, and a file SkillSinc created is deleted with its last server only if it holds no comments.
 
 ## Consequences
 

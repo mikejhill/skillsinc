@@ -271,8 +271,9 @@ class JsoncEntryFile(EntryFile):
     def remove(self, container: str, key: str, *, prune: bool) -> bytes | None:
         """Remove ``container.key`` and return the new bytes, or None if now empty.
 
-        With ``prune``, an emptied container is dropped, and an emptied file
-        without comments is reported as None so the caller can delete it.
+        With ``prune``, an emptied container without comments is dropped, and
+        an emptied file without comments is reported as None so the caller can
+        delete it.
 
         Raises:
             ConflictError: If the edit does not read back as intended.
@@ -289,7 +290,8 @@ class JsoncEntryFile(EntryFile):
         if holder is None or span is None or member is None:
             # Unreachable: the parsed document and the scanned text agree
             return self.raw
-        if prune and len(span.members) == 1:
+        inside = self._text[span.open + 1 : span.close]
+        if prune and len(span.members) == 1 and not Jsonc.has_comments(inside):
             del expected[container]
             text = Jsonc.delete(self._text, top, holder)
             if not expected and not Jsonc.has_comments(text):

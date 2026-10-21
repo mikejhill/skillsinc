@@ -390,6 +390,14 @@ class TestJsoncEntryFile:
 
         assert result == b"{\n  // mine\n}\n", f"Got {result!r}"
 
+    def test_pruning_keeps_comments_inside_the_container(self) -> None:
+        """A comment inside ``servers`` keeps the container and the file."""
+        raw = b'{\n  "servers": {\n    // mine\n    "gh": {"command": "gh"}\n  }\n}\n'
+
+        result = JsoncEntryFile(raw).remove("servers", "gh", prune=True)
+
+        assert result == b'{\n  "servers": {\n    // mine\n  }\n}\n', f"Got {result!r}"
+
     def test_removing_a_missing_entry_changes_nothing(self) -> None:
         """Absent entries leave the bytes alone."""
         result = JsoncEntryFile(USER_JSONC).remove("servers", "gh", prune=True)
