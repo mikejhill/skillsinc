@@ -86,8 +86,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" \
-            --json headRefName,headRefOid --jq '.[0] // empty')
+          # Filter labels locally: --label uses the search index, which lags a
+          # just-labelled pull request.
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json headRefName,headRefOid,labels \
+            --jq '[.[] | select(any(.labels[]; .name == "autorelease: pending"))][0] // empty')
           if [[ -z "$pr" ]]; then
             echo "No open release pull request"
             exit 0
