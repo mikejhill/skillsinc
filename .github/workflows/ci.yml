@@ -1,5 +1,10 @@
 name: CI
 
+# Every pull request and push to main proves the package is releasable:
+# static checks, unit and integration tests on every OS and Python, the
+# built wheel driven end to end as a separate process, performance budgets,
+# and workflow security. The Release workflow calls this one before tagging.
+
 on:
   push:
     branches: [main]
@@ -8,20 +13,26 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, edited, ready_for_review]
   merge_group:
-  workflow_call:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
-  checks: write
-  pull-requests: read
 
 concurrency:
+  # The workflow name keeps a Release run's call apart from the push run on main
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_COLOR: "1"
+  PYTHONUTF8: "1"
+  UV_LOCKED: "1"
+  HYPOTHESIS_PROFILE: ci
+
 jobs:
   commit-lint:
+    name: Conventional PR title
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -37,21 +48,40 @@ jobs:
           fi
 
   lint:
+    name: Format and lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --locked
-      - run: uv run poe format-check
-      - run: uv run poe lint
-      - run: uv run poe typecheck
+      - run: uv sync
+      - name: Check formatting
+        run: uv run ruff format --check --diff .
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+
+  typecheck:
+    name: Type check (ty, every rule at error)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync
+      - run: uv run ty check --output-format github
 
   test:
-    name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    name: Unit and integration (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -60,66 +90,199 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # Diff coverage compares against the base branch
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - run: uv sync --locked
-      - run: uv run pytest --cov --junitxml=junit.xml
+      - run: uv sync
+      - name: Unit, property, and journey tests with the coverage gate
+        run: >-
+          uv run pytest -m "not e2e and not perf"
+          --cov --cov-report=xml --cov-report=term
+          --junitxml=junit.xml
       - name: Publish test report
         if: always()
         shell: bash
         env:
           TITLE: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
-        run: uv run scripts/junit_summary.py junit.xml --title "$TITLE" >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload test results
+        run: |
+          if [ -f junit.xml ]; then
+            uv run python scripts/junit_summary.py junit.xml --title "$TITLE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Diff coverage (lines this pull request changes)
+        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          status=0
+          uvx diff-cover@10.6.0 coverage.xml --compare-branch "origin/$BASE" \
+            --fail-under 100 --markdown-report diff-coverage.md || status=$?
+          if [ -f diff-coverage.md ]; then cat diff-coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          exit "$status"
+      - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ matrix.os }}-py${{ matrix.python }}
-          path: junit.xml
+          path: |
+            junit.xml
+            coverage.xml
           if-no-files-found: ignore
           retention-days: 7
 
   build:
+    name: Build and verify distributions
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --locked
       - run: uv build
-      - name: Smoke test the installed wheel
-        run: |
-          uv venv .smoke-venv
-          uv pip install --python .smoke-venv/bin/python dist/*.whl
-          .smoke-venv/bin/skillsinc --version
-          .smoke-venv/bin/skillsinc profiles
-      - uses: actions/upload-artifact@v7
+      - name: Check package metadata
+        run: uvx twine@7.0.0 check --strict dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-dist
           path: dist/*
           if-no-files-found: error
           retention-days: 7
 
+  e2e:
+    name: End to end, installed wheel (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-dist
+          path: dist/
+      - name: Install the wheel into a clean environment
+        id: install
+        shell: bash
+        env:
+          PYTHON: ${{ matrix.python }}
+        run: |
+          uv venv --python "$PYTHON" "$RUNNER_TEMP/wheel-venv"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            bin="$RUNNER_TEMP/wheel-venv/Scripts"
+            exe="$bin/skillsinc.exe"
+          else
+            bin="$RUNNER_TEMP/wheel-venv/bin"
+            exe="$bin/skillsinc"
+          fi
+          uv pip install --python "$RUNNER_TEMP/wheel-venv" dist/*.whl
+          echo "command=$exe" >> "$GITHUB_OUTPUT"
+      - run: uv sync
+      - name: Drive the installed command against a throwaway home
+        env:
+          SKILLSINC_E2E_COMMAND: ${{ steps.install.outputs.command }}
+        run: uv run pytest -m e2e --junitxml=junit-e2e.xml -p no:randomly
+      - name: Publish test report
+        if: always()
+        shell: bash
+        env:
+          TITLE: End to end (${{ matrix.os }}, Python ${{ matrix.python }})
+        run: |
+          if [ -f junit-e2e.xml ]; then
+            uv run python scripts/junit_summary.py junit-e2e.xml --title "$TITLE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  perf:
+    name: Performance budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync
+      - name: Plan and sync a large library within budget
+        run: uv run pytest -m perf --durations=0 -p no:randomly
+
   markdown:
+    name: Markdown lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
       - run: npx --yes markdownlint-cli2@0.23.3
 
+  workflows:
+    name: Workflow lint and security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - name: actionlint
+        run: uvx --from actionlint-py@1.7.12.25 actionlint -color
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uvx zizmor@1.31.1 --format github .github/workflows
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+
   ci-pass:
     name: CI
     if: always()
-    needs: [commit-lint, lint, test, build, markdown]
+    needs:
+      - commit-lint
+      - lint
+      - typecheck
+      - test
+      - build
+      - e2e
+      - perf
+      - markdown
+      - workflows
+      - dependency-review
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
