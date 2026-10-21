@@ -11,15 +11,16 @@ uv sync
 uv run poe check
 ```
 
-| Task                   | Runs                                                                      |
-| ---------------------- | ------------------------------------------------------------------------- |
-| `uv run poe fix`       | `ruff format` and `ruff check --fix`                                      |
-| `uv run poe check`     | Format check, lint, `ty check`, every test layer but perf, coverage ≥ 98% |
-| `uv run poe e2e`       | Only the end-to-end tests (the `skillsinc` process)                       |
-| `uv run poe perf`      | The performance budgets                                                   |
-| `uv run poe mutate`    | Mutation testing with mutmut, then a score report (Linux, macOS, or WSL)  |
-| `uv run poe docs-lint` | `markdownlint-cli2` over every Markdown file                              |
-| `uv run skillsinc ...` | The CLI from the working tree                                             |
+| Task                     | Runs                                                                      |
+| ------------------------ | ------------------------------------------------------------------------- |
+| `uv run poe fix`         | `ruff format` and `ruff check --fix`                                      |
+| `uv run poe check`       | Format check, lint, `ty check`, every test layer but perf, coverage ≥ 98% |
+| `uv run poe e2e`         | Only the end-to-end tests (the `skillsinc` process)                       |
+| `uv run poe perf`        | The performance budgets                                                   |
+| `uv run poe mutate`      | Mutation testing with mutmut, then a score report (Linux, macOS, or WSL)  |
+| `uv run poe docs-lint`   | `markdownlint-cli2` over every Markdown file                              |
+| `uv run poe pypi-readme` | Regenerate `README.pypi.md` from `README.md`                              |
+| `uv run skillsinc ...`   | The CLI from the working tree                                             |
 
 ## Continuous integration
 
@@ -99,6 +100,17 @@ Before running `sync` against real folders, point destinations at scratch direct
 1. Add the member to `Kind` in `models.py`, and a suffix in `sources.SUFFIXES` if it is a single-file Markdown kind (MCP servers and hooks are JSON files read by `_json_items` with a per-kind check; resources have their own reader).
 2. Give every profile a `support` entry and a `render` branch (refuse it where unsupported).
 3. Update the README table, [configuration](configuration.md), and [harness profiles](harness-profiles.md).
+
+### Edit the README
+
+PyPI publishes `README.pypi.md`, generated from `README.md`: PyPI renders no Mermaid and no repository-relative links. After editing `README.md`, run `uv run poe pypi-readme`; CI fails while the two differ. Each Mermaid block in the README is replaced by the SVG beside its copy in `docs/assets/`. To change a diagram, edit the block in both `README.md` and its `.mmd` file, then render the SVG:
+
+```bash
+npx --yes @mermaid-js/mermaid-cli@11.4.2 -c docs/assets/mermaid-config.json -b white \
+  -i docs/assets/how-it-works.mmd -o docs/assets/how-it-works.svg
+```
+
+PyPI shows the SVG from `main`, so it updates when the change merges, not at the next release.
 
 ### Change ownership or apply behavior
 

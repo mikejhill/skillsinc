@@ -146,6 +146,8 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
+      - name: Check README.pypi.md matches README.md
+        run: uv run scripts/pypi_readme.py --check
       - run: uv build
       - name: Check package metadata
         run: uvx twine@7.0.0 check --strict dist/*

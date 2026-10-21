@@ -2,7 +2,7 @@
 name = "skillsinc"
 version = "0.1.0"
 description = "Sync one library of agent skills, instructions, agents, and prompts into every AI coding harness you use."
-readme = "README.md"
+readme = "README.pypi.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Mike Hill" }]
@@ -124,6 +124,7 @@ test = { cmd = "pytest --cov", help = "Run unit, property, integration, and e2e 
 e2e = { cmd = "pytest -m e2e", help = "Run the skillsinc process against a throwaway home" }
 perf = { cmd = "pytest -m perf --durations=0 -p no:randomly", help = "Run the performance budgets" }
 mutate = { shell = "uv run --group mutation mutmut run && uv run --group mutation mutmut results --all true > mutation-results.txt && uv run python scripts/mutation_report.py mutation-results.txt", help = "Mutation testing (POSIX only; slow)" }
+pypi-readme = { cmd = "python scripts/pypi_readme.py", help = "Regenerate README.pypi.md from README.md" }
 docs-lint = { cmd = "npx --yes markdownlint-cli2", help = "Lint Markdown documentation" }
 fix = { sequence = ["format", "lint-fix"], help = "Auto-fix formatting and lint" }
 check = { sequence = ["format-check", "lint", "typecheck", "test"], help = "Run every Python quality gate" }
