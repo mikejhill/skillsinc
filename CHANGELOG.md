@@ -28,7 +28,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - Profiles for Claude Code, Copilot CLI, VS Code, Codex, the shared `~/.agents` folder, and generic copies.
 - Ownership manifests, drift repair, `--adopt`, lossy-conversion opt-in, managed `AGENTS.md` block, and a run lock.
 - Command-line, development, and roadmap guides for contributors.
-- "Verified" notes in the [harness profiles](docs/guides/harness-profiles.md) guide, recording harness versions and native load results from 2026-10-21.
 
 ### Fixed
 
