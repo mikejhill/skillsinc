@@ -43,4 +43,4 @@ ai-feature-sync has no MCP, plugin, or VS Code support, so those gaps come from 
 7. ~~**Plugins.**~~ Done: library plugins expand into skills, agents, prompts, and MCP servers ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Hooks inside plugins wait on gap 2; an opt-in local marketplace profile stays possible behind a new decision.
 8. **More harnesses.** Cursor, Gemini CLI, OpenCode (see the [roadmap](roadmap.md)). Each needs its MCP location too.
 9. ~~**Scheduling helper.**~~ Done: [scheduling examples](../guides/scheduling.md) for Task Scheduler, launchd, and a systemd user timer.
-10. **Native verification.** None of the mappings, including the new Copilot MCP entries, have been confirmed by loading the harness (roadmap item 2).
+10. **Native verification.** Partly done on 2026-10-21 on Windows: Claude Code, Copilot CLI, and Codex loaded a real library, including MCP servers ([harness profiles](../guides/harness-profiles.md)). Remaining: VS Code discovery, Claude path-scoped rules, the Codex `AGENTS.md` block, and macOS and Linux (roadmap item 2).
