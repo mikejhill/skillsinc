@@ -1,0 +1,8 @@
+{
+  "name": "skillsinc-release-tools",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "release-please": "17.11.2"
+  }
+}

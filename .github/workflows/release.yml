@@ -1,38 +1,24 @@
 name: Release
-
-# Every push to main opens or updates a release pull request (version bump and
-# CHANGELOG) computed from Conventional Commits by release-please. Merging that
-# pull request tags vX.Y.Z and creates the GitHub release; the same run then
-# re-runs CI on the release commit, builds the package once, attests it, and
-# publishes it to PyPI through trusted publishing (no API tokens).
-#
-# release-please runs as its npm CLI rather than its action because the
-# repository's Actions policy allows only an explicit list of actions.
-
-on:
+'on':
   push:
-    branches: [main]
+    branches:
+    - main
   workflow_dispatch:
     inputs:
       testpypi:
-        description: Build the current main and publish it to TestPyPI only
+        description: Publish the current reviewed main commit to TestPyPI only
         type: boolean
         default: false
-
 permissions:
   contents: read
-
 concurrency:
   group: release
   cancel-in-progress: false
-
-env:
-  RELEASE_PLEASE: release-please@17.11.2
-
 jobs:
   release-please:
     name: Version and changelog
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.actor == 'mikejhill' && github.triggering_actor == 'mikejhill'
+      && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -40,153 +26,132 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24"
-      - name: Tag and release a merged release pull request
-        env:
-          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
-        run: >-
-          npx --yes "$RELEASE_PLEASE" github-release
-          --token="$TOKEN" --repo-url="$GITHUB_REPOSITORY" --target-branch=main
-      # A release counts as unpublished until publish-pypi attaches its
-      # distributions, so a release whose run was superseded (the concurrency
-      # group keeps only the newest pending run) is published by a later push.
-      - name: Find the current release if it is not published yet
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version=$(gh api "repos/$GITHUB_REPOSITORY/contents/.release-please-manifest.json?ref=$GITHUB_SHA" \
-            --jq '.content' | base64 --decode | jq -r '."."')
-          tag="v$version"
-          assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
-            --jq '.assets | length' 2>/dev/null || echo none)
-          if [[ "$assets" == "0" ]]; then
-            echo "Publishing $tag"
-            echo "release_created=true" >> "$GITHUB_OUTPUT"
-            echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
-          else
-            echo "Nothing to publish ($tag assets: $assets)"
-            echo "release_created=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Open or update the release pull request
-        env:
-          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
-        run: >-
-          npx --yes "$RELEASE_PLEASE" release-pr
-          --token="$TOKEN" --repo-url="$GITHUB_REPOSITORY" --target-branch=main
-      # Pull requests opened with the default token start no workflows, and the
-      # required CI and Security checks only count runs on the head commit.
-      - name: Run the required checks on the release pull request
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Filter labels locally: --label uses the search index, which lags a
-          # just-labelled pull request.
-          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json headRefName,headRefOid,labels \
-            --jq '[.[] | select(any(.labels[]; .name == "autorelease: pending"))][0] // empty')
-          if [[ -z "$pr" ]]; then
-            echo "No open release pull request"
-            exit 0
-          fi
-          branch=$(jq -r '.headRefName' <<< "$pr")
-          # Read the head from the branch: the pull request's head lags a
-          # branch that release-please has just rewritten.
-          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha')
-          pending=(ci.yml security.yml)
-          for attempt in $(seq 1 18); do
-            waiting=()
-            for workflow in "${pending[@]}"; do
-              runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$sha"                 --json databaseId,event,conclusion)
-              if [[ $(jq 'length' <<< "$runs") == "0" ]]; then
-                waiting+=("$workflow")
-                continue
-              fi
-              # Pull requests opened by the bot hold their runs for approval.
-              held=$(jq -r '.[] | select(.event == "pull_request" and .conclusion == "action_required")
-                | .databaseId' <<< "$runs")
-              approved=true
-              for id in $held; do
-                if gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" --silent; then
-                  echo "Approved $workflow run $id"
-                else
-                  approved=false
-                fi
-              done
-              if [[ "$approved" == false ]]; then
-                echo "Could not approve $workflow; dispatching it on $branch"
-                gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$branch"
-              fi
-            done
-            pending=("${waiting[@]}")
-            if (( ${#pending[@]} == 0 )); then
-              exit 0
-            fi
-            echo "Waiting for ${pending[*]} on $branch@$sha (attempt $attempt)"
-            sleep 10
-          done
-          for workflow in "${pending[@]}"; do
-            echo "No $workflow run on $branch@$sha; dispatching it"
-            gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$branch"
-          done
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.sha }}
+        sparse-checkout: |
+          .github/release-tools
+          scripts/release_boundary.cjs
+        sparse-checkout-cone-mode: false
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      with:
+        script: |
+          const { ReleaseBoundary } = require('./scripts/release_boundary.cjs');
+          await ReleaseBoundary.context({github, context, core});
+      name: Require unchanged reviewed main before writer calls
+    - name: Install integrity-locked release tool without package scripts
+      run: npm ci --prefix .github/release-tools --ignore-scripts --no-audit --no-fund
+    - name: Tag a merged version PR
+      run: node .github/release-tools/node_modules/release-please/build/src/bin/release-please.js github-release
+        --token="$TOKEN" --repo-url="$GITHUB_REPOSITORY" --target-branch=main
+      env:
+        TOKEN: ${{ github.token }}
+    - name: Open or update version PR
+      run: node .github/release-tools/node_modules/release-please/build/src/bin/release-please.js release-pr --token="$TOKEN"
+        --repo-url="$GITHUB_REPOSITORY" --target-branch=main
+      env:
+        TOKEN: ${{ github.token }}
+    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      with:
+        script: |
+          const { ReleaseBoundary } = require('./scripts/release_boundary.cjs');
+          await ReleaseBoundary.versionPr({github, context, core});
+      name: Dispatch only exact verified version-PR checks; never approve runs
+  target:
+    name: Validate release source
+    needs: release-please
+    if: always() && github.ref == 'refs/heads/main' && github.actor == 'mikejhill' && github.triggering_actor ==
+      'mikejhill' && ((github.event_name == 'push' && needs.release-please.result == 'success') || inputs.testpypi)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      version: ${{ steps.target.outputs.version }}
+      tag: ${{ steps.target.outputs.tag }}
+      mode: ${{ steps.target.outputs.mode }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.sha }}
+        sparse-checkout: |
+          .github/release-tools
+          scripts/release_boundary.cjs
+        sparse-checkout-cone-mode: false
+    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      id: target
+      env:
+        TESTPYPI: ${{ inputs.testpypi || false }}
+      with:
+        script: |
+          const { ReleaseBoundary } = require('./scripts/release_boundary.cjs');
+          await ReleaseBoundary.releaseTarget({github, context, core}, process.env.TESTPYPI === 'true');
   ci:
     name: CI
-    needs: release-please
-    if: always() && (needs.release-please.outputs.release_created == 'true' || inputs.testpypi)
-    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository] -- portable local reuse
+    needs: target
+    if: github.ref == 'refs/heads/main' && github.actor == 'mikejhill' && github.triggering_actor == 'mikejhill'
+      && contains(fromJSON('["pypi","testpypi"]'), needs.target.outputs.mode)
+    # Same-commit local call; keep the syntax supported by the pinned actionlint.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+    with:
+      source_sha: ${{ needs.target.outputs.sha }}
     permissions:
-      checks: write
       contents: read
-      pull-requests: read
-
   build:
     name: Build distributions
-    needs: [release-please, ci]
-    if: >-
-      always() && needs.ci.result == 'success' &&
-      (needs.release-please.outputs.release_created == 'true' || inputs.testpypi)
+    needs:
+    - target
+    - ci
+    if: github.ref == 'refs/heads/main' && github.actor == 'mikejhill' && github.triggering_actor == 'mikejhill'
+      && needs.ci.result == 'success' && contains(fromJSON('["pypi","testpypi"]'), needs.target.outputs.mode)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          python-version: "3.12"
-      - name: Build sdist and wheel
-        run: uv build
-      - name: Check package metadata
-        run: uvx twine check --strict dist/*
-      - name: Version must match the release tag
-        if: needs.release-please.outputs.tag_name != ''
-        env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: |
-          version="${TAG#v}"
-          ls "dist/skillsinc-$version-py3-none-any.whl" "dist/skillsinc-$version.tar.gz"
-      - name: Smoke test the installed wheel
-        run: |
-          uv venv .smoke-venv
-          uv pip install --python .smoke-venv/bin/python dist/*.whl
-          .smoke-venv/bin/skillsinc --version
-          .smoke-venv/bin/skillsinc profiles
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: 'false'
+        ref: ${{ needs.target.outputs.sha }}
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      with:
+        python-version: '3.12'
+    - name: Build sdist and wheel
+      run: uv build
+    - name: Check package metadata
+      run: uvx twine@7.0.0 check --strict dist/*
+    - name: Version must match the release tag
+      if: needs.target.outputs.mode == 'pypi'
+      env:
+        TAG: ${{ needs.target.outputs.tag }}
+      run: |
+        version="${TAG#v}"
+        ls "dist/skillsinc-$version-py3-none-any.whl" "dist/skillsinc-$version.tar.gz"
+    - name: Smoke test the installed wheel
+      run: |
+        uv venv .smoke-venv
+        uv pip install --python .smoke-venv/bin/python dist/*.whl
+        .smoke-venv/bin/skillsinc --version
+        .smoke-venv/bin/skillsinc profiles
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: dist-${{ github.sha }}
+        path: dist/
+        if-no-files-found: error
+      id: dist
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.dist.outputs.artifact-id }}
   publish-pypi:
     name: Publish to PyPI
-    needs: [release-please, build]
-    if: always() && needs.build.result == 'success' && needs.release-please.outputs.release_created == 'true'
+    needs:
+    - target
+    - build
+    if: github.ref == 'refs/heads/main' && github.actor == 'mikejhill' && github.triggering_actor == 'mikejhill'
+      && needs.build.result == 'success' && needs.target.outputs.mode == 'pypi'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -197,29 +162,30 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dist
-          path: dist/
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: dist/*
-      # skip-existing lets a re-run finish a release whose asset upload failed.
-      - name: Publish (trusted publishing, PEP 740 attestations)
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          skip-existing: true
-      - name: Attach distributions to the GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
-
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        artifact-ids: ${{ needs.build.outputs.artifact-id }}
+        path: dist/
+    - name: Attest build provenance
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+      with:
+        subject-path: dist/*
+    - name: Publish (trusted publishing, PEP 740 attestations)
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+      with:
+        skip-existing: 'true'
+    - name: Attach distributions to the GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ needs.target.outputs.tag }}
+      run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: build
-    if: always() && needs.build.result == 'success' && inputs.testpypi
+    needs:
+    - target
+    - build
+    if: github.ref == 'refs/heads/main' && github.actor == 'mikejhill' && github.triggering_actor == 'mikejhill'
+      && needs.build.result == 'success' && needs.target.outputs.mode == 'testpypi'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -228,11 +194,11 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          skip-existing: true
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        artifact-ids: ${{ needs.build.outputs.artifact-id }}
+        path: dist/
+    - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+      with:
+        repository-url: https://test.pypi.org/legacy/
+        skip-existing: 'true'
