@@ -16,6 +16,7 @@ class InitSettings:
     source: Path | None
     force: bool
     log_level: str
+    with_guidance: bool = False
 
 
 @dataclass(frozen=True, slots=True)

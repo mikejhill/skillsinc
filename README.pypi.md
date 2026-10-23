@@ -36,6 +36,14 @@ uv tool install git+https://github.com/mikejhill/skillsinc.git
     skillsinc init
     ```
 
+    Optionally use `skillsinc init --with-guidance` to add a SkillSinc skill and
+    always-on instruction to the library. They tell assistants to author shared
+    guidance at its source and distribute it through SkillSinc. You own and can
+    edit both files; differing existing files are never overwritten, even with
+    `--force`. Nothing is synced, scheduled, or committed to Git by `init`.
+    For Codex or VS Code, it also enables the shared `agents` destination so the
+    skill is discoverable after you explicitly sync.
+
 2. Preview the changes:
 
     ```bash
@@ -48,7 +56,7 @@ uv tool install git+https://github.com/mikejhill/skillsinc.git
     skillsinc sync
     ```
 
-4. Keep destinations in sync on a schedule (Task Scheduler on Windows, launchd on macOS, a systemd user timer or cron on Linux):
+4. Optionally keep destinations in sync on a schedule (Task Scheduler on Windows, launchd on macOS, a systemd user timer or cron on Linux). Manual `skillsinc sync` remains supported:
 
     ```bash
     skillsinc schedule install --interval 5m
