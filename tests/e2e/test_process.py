@@ -66,7 +66,53 @@ class TestEntryPoint:
 
 
 class TestFirstRun:
-    """The quick start: init, plan, sync, and convergence on every harness."""
+    """Process-level onboarding, explicit distribution, and convergence."""
+
+    def test_codex_only_bootstrap_distributes_the_skill(self, cli: Cli) -> None:
+        """Onboarding connects Codex's instructions and shared skill discovery."""
+        (cli.home / ".codex").mkdir()
+
+        init = cli.run("init", "--with-guidance")
+
+        assert init.status == 0, f"Expected bootstrap success, got {init!r}"
+        assert not (cli.home / ".agents").exists(), "Expected no implicit sync"
+        result = cli.run("sync")
+        assert result.status == 0, f"Expected bootstrap sync, got {result!r}"
+        assert (cli.home / ".agents/skills/skillsinc/SKILL.md").is_file(), (
+            "Expected Codex's shared SkillSinc skill"
+        )
+        assert "Manage shared guidance with SkillSinc" in (
+            cli.home / ".codex/AGENTS.md"
+        ).read_text(encoding="utf-8"), "Expected the companion instruction"
+
+    def test_optional_guidance_and_conflicting_repeat(self, cli: Cli) -> None:
+        """Opt-in writes source assets only and refuses later customizations."""
+        Harnesses.install(cli.home)
+        first = cli.run("init", "--with-guidance")
+        root = cli.home / ".config/skillsinc/library"
+        instruction = root / "instructions/skillsinc.instructions.md"
+        config_before = cli.config_file.read_bytes()
+        repeat = cli.run("init", "--force", "--with-guidance")
+
+        assert first.status == repeat.status == 0, (
+            f"Expected repeatable opt-in, got {first!r}, {repeat!r}"
+        )
+        assert not cli.state_directory.exists(), "Expected no implicit sync state"
+        assert _files(cli.home / ".codex") == [], "Expected no implicit harness edit"
+        assert not (root / ".git").exists(), "Expected no Git initialization"
+        instruction.write_text("User customization", encoding="utf-8")
+        conflict = cli.run("init", "--force", "--with-guidance")
+
+        assert conflict.status == 2, f"Expected configuration error, got {conflict!r}"
+        assert "guidance conflicts" in conflict.stderr, (
+            f"Expected actionable configuration error, got {conflict!r}"
+        )
+        assert cli.config_file.read_bytes() == config_before, (
+            "Expected conflict to preserve existing configuration"
+        )
+        assert instruction.read_text(encoding="utf-8") == "User customization", (
+            "Expected customized guidance preserved"
+        )
 
     def test_init_detects_every_installed_harness(
         self, cli: Cli, library: Path

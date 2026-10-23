@@ -24,6 +24,22 @@ from skillsinc.settings import (
 class TestCommandLine:
     """CLI options become typed settings before reaching command handlers."""
 
+    def test_guidance_is_explicitly_opted_in(self, environment: Environment) -> None:
+        """The new init option is typed and does not alter its default."""
+        default = CommandLine(environment).parse(["init"])
+        opted_in = CommandLine(environment).parse(["init", "--with-guidance"])
+
+        assert isinstance(default, InitSettings), f"Expected init settings: {default!r}"
+        assert not default.with_guidance, (
+            f"Expected manual empty-library default, got {default!r}"
+        )
+        assert isinstance(opted_in, InitSettings), (
+            f"Expected init settings: {opted_in!r}"
+        )
+        assert opted_in.with_guidance, (
+            f"Expected explicit guidance option, got {opted_in!r}"
+        )
+
     def test_sync_options_are_typed(self, environment: Environment) -> None:
         """Parse repeatable destinations and boolean output/adoption flags."""
         result = CommandLine(environment).parse(

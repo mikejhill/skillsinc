@@ -59,7 +59,13 @@ class CommandLine:
             source = Path(args.source) if args.source else None
             if source is not None and not source.expanduser().is_dir():
                 self._parser.error(f"--source is not a directory: {source}")
-            return InitSettings(config_path, source, bool(args.force), log_level)
+            return InitSettings(
+                config_path,
+                source,
+                bool(args.force),
+                log_level,
+                bool(args.with_guidance),
+            )
         return PlanSettings(
             config_path=config_path,
             apply=command == "sync",
@@ -104,6 +110,11 @@ class CommandLine:
             "init", parents=[configured], help="write a starter configuration"
         )
         init.add_argument("--source", metavar="DIR", help="your customization library")
+        init.add_argument(
+            "--with-guidance",
+            action="store_true",
+            help="add a SkillSinc skill and instruction to the source library",
+        )
         init.add_argument(
             "--force", action="store_true", help="overwrite an existing file"
         )

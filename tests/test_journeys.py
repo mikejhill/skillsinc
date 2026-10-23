@@ -19,6 +19,39 @@ from skillsinc.manifest import ManifestStore
 class TestApplication:
     """Complete init, reconciliation, adoption, and failure journeys."""
 
+    def test_guidance_uses_normal_sync_and_source_edits(self, sandbox: Sandbox) -> None:
+        """Bootstrap stays local until sync and subsequent source edits converge."""
+        for name in (".claude", ".agents", ".codex", ".copilot"):
+            (sandbox.environment.home / name).mkdir()
+        status, _ = sandbox.run("init", "--with-guidance")
+        root = sandbox.environment.default_library
+        instruction = root / "instructions/skillsinc.instructions.md"
+
+        assert status == 0, "Expected optional bootstrap to succeed"
+        assert not sandbox.environment.state_directory.exists(), (
+            "Expected init not to sync or create ownership state"
+        )
+        for name in (".claude", ".agents", ".codex", ".copilot"):
+            assert list((sandbox.environment.home / name).iterdir()) == [], (
+                f"Expected {name} left empty before explicit sync"
+            )
+        assert sandbox.run("sync")[0] == 0, "Expected portable starter sync"
+        instruction.write_text(
+            instruction.read_text(encoding="utf-8") + "\nLocal customization.\n",
+            encoding="utf-8",
+        )
+        assert sandbox.run("sync")[0] == 0, "Expected canonical edit distributed"
+        codex = sandbox.environment.home / ".codex/AGENTS.md"
+        assert "Local customization." in codex.read_text(encoding="utf-8"), (
+            "Expected source customization in the managed Codex block"
+        )
+        status, report = sandbox.run("plan", "--json")
+        data = json.loads(report)
+        assert status == 0, f"Expected successful convergence check, got {report}"
+        assert all(
+            not destination["changes"] for destination in data["destinations"]
+        ), f"Expected convergence, got {report}"
+
     def test_destination_root_linked_into_library_is_refused(
         self, sandbox: Sandbox
     ) -> None:

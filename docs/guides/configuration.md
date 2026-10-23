@@ -54,6 +54,24 @@ Editors treat a `.json` file as strict JSON and may flag comments. In VS Code, a
 }
 ```
 
+## Optional self-management guidance
+
+`skillsinc init --with-guidance` adds `skills/skillsinc/SKILL.md` and
+`instructions/skillsinc.instructions.md` to the selected source. These are
+ordinary library files: edit them there, review `skillsinc plan`, and explicitly
+run `skillsinc sync` to distribute them. No configuration schema key is added.
+When Codex or VS Code is detected, opt-in enables an `agents` destination for
+shared skill discovery, even if `~/.agents` has not yet been created. Init does
+not create that destination directory.
+
+The option does not create Git history or contact a remote. Keep the library in
+your own local Git repository and review eligible files before committing or
+publishing. Guidance upgrades never overwrite installed customizations.
+Identical files are preserved; differing files block init, including with
+`--force`. Plain init and manual-only syncing remain supported. For an existing
+customized configuration, copy the two bundled assets into the library instead
+of regenerating the config. See [the decision](../decisions/0014-optional-self-managed-guidance.md).
+
 ## `version`
 
 Required. Must be `1`.
