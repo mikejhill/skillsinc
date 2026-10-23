@@ -68,6 +68,20 @@ class TestEntryPoint:
 class TestFirstRun:
     """Process-level onboarding, explicit distribution, and convergence."""
 
+    def test_aliased_config_cannot_overwrite_guidance(self, cli: Cli) -> None:
+        """Reject parent-component aliases before creating either guidance file."""
+        root = cli.home / "library"
+        root.mkdir()
+        config = root / "instructions/../instructions/skillsinc.instructions.md"
+
+        result = cli.run(
+            "init", "--source", str(root), "--config", str(config), "--with-guidance"
+        )
+
+        assert result.status == 2, f"Expected alias conflict, got {result!r}"
+        assert "overlaps" in result.stderr, f"Expected overlap detail, got {result!r}"
+        assert list(root.iterdir()) == [], "Expected no config or guidance writes"
+
     def test_codex_only_bootstrap_distributes_the_skill(self, cli: Cli) -> None:
         """Onboarding connects Codex's instructions and shared skill discovery."""
         (cli.home / ".codex").mkdir()

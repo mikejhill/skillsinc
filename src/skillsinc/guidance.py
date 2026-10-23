@@ -29,11 +29,14 @@ class GuidanceInstaller:
     def plan(self, library: Path, config: Path) -> tuple[GuidanceFile, ...]:
         """Validate paths and conflicts, keeping identical files untouched."""
         root = library.expanduser().absolute()
+        self._check_path(config.absolute())
+        config_location = config.resolve()
         pending: list[GuidanceFile] = []
         for relative in GUIDANCE_PATHS:
             path = root / relative
             self._check_path(path)
-            if config.absolute() in (path, *path.parents):
+            location = path.resolve()
+            if config_location in (location, *location.parents):
                 msg = f"{config}: configuration overlaps the guidance library"
                 raise ConfigurationError(msg)
             content = files("skillsinc").joinpath("guidance", relative).read_bytes()

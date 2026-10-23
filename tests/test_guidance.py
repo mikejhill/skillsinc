@@ -106,14 +106,33 @@ class TestGuidance:
         assert not (tmp_path / "instructions").exists(), "Expected no writes"
 
     @pytest.mark.parametrize("relative", GUIDANCE_PATHS)
+    @pytest.mark.parametrize("aliased", ["none", "config", "source", "both"])
     def test_config_cannot_replace_guidance(
-        self, tmp_path: Path, relative: str
+        self, tmp_path: Path, relative: str, aliased: str
     ) -> None:
-        """Configuration and bootstrap targets cannot name the same file."""
+        """Direct and aliased paths cannot configure over bootstrap targets."""
+        root = tmp_path / "library"
+        config = root / relative
+        if aliased in {"config", "both"}:
+            config = config.parent / ".." / config.parent.name / config.name
+        if aliased in {"source", "both"}:
+            root = root / ".." / root.name
         with pytest.raises(ConfigurationError, match="overlaps"):
-            GuidanceInstaller().plan(tmp_path, tmp_path / relative)
+            GuidanceInstaller().plan(root, config)
 
         assert list(tmp_path.iterdir()) == [], "Expected preflight to write nothing"
+
+    def test_linked_configuration_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Do not normalize a configuration link into an apparently safe path."""
+        config = tmp_path / "linked-config.json"
+        monkeypatch.setattr(Path, "is_symlink", lambda path: path == config)
+
+        with pytest.raises(ConfigurationError, match="passes through a link"):
+            GuidanceInstaller().plan(tmp_path / "library", config)
+
+        assert list(tmp_path.iterdir()) == [], "Expected no writes through config link"
 
     def test_junction_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -35,6 +35,8 @@ source model or personal content is added to the product repository.
 Preflight both asset paths before changing configuration or creating content.
 Existing identical bytes are left untouched; different content, directories,
 linked paths, and non-directory parents fail with a configuration error.
+Check links before comparing normalized config and guidance locations, so `..`
+aliases cannot overwrite a source asset with generated configuration.
 `--force` applies only to configuration, never to guidance conflicts. Exclusive
 file creation also refuses targets appearing after preflight. An interrupted or
 failed write can leave a partial installation: preserve it for review rather
