@@ -1,5 +1,12 @@
 # SkillSinc
 
+<!-- markdownlint-disable MD033 -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-dark.svg">
+  <img src="docs/brand/wordmark-light.png" alt="SkillSinc" width="320">
+</picture>
+<!-- markdownlint-enable MD033 -->
+
 [![CI](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml)
 [![Release](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml)
 [![License](https://img.shields.io/github/license/mikejhill/skillsinc)](LICENSE)
@@ -114,6 +121,8 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 `plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, and `--config PATH`. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
 ## Documentation
+
+- [Brand assets and usage](docs/brand/README.md)
 
 - [Configuration reference](docs/guides/configuration.md)
 - [Command-line reference](docs/guides/command-line.md)

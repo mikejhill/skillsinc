@@ -2,6 +2,10 @@
 
 <!-- Generated from README.md by scripts/pypi_readme.py; do not edit. -->
 
+<!-- markdownlint-disable MD033 -->
+![SkillSinc](https://raw.githubusercontent.com/mikejhill/skillsinc/main/docs/brand/wordmark-light.png)
+<!-- markdownlint-enable MD033 -->
+
 [![CI](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml)
 [![Release](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml)
 [![License](https://img.shields.io/github/license/mikejhill/skillsinc)](https://github.com/mikejhill/skillsinc/blob/main/LICENSE)
@@ -108,6 +112,8 @@ Run `skillsinc profiles` for the same table. See [harness profiles](https://gith
 `plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, and `--config PATH`. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
 ## Documentation
+
+- [Brand assets and usage](https://github.com/mikejhill/skillsinc/blob/main/docs/brand/README.md)
 
 - [Configuration reference](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md)
 - [Command-line reference](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/command-line.md)
