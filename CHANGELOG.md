@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- SkillSinc vector logo, light/dark wordmarks, small icon exports, and brand guide.
+
 - `init`, `plan`, `sync`, and `profiles` commands.
 - Profiles for Claude Code, Copilot CLI, VS Code, Codex, the shared `~/.agents` folder, and generic copies.
 - Ownership manifests, drift repair, `--adopt`, lossy-conversion opt-in, managed `AGENTS.md` block, and a run lock.
