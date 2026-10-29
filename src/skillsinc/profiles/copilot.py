@@ -58,20 +58,26 @@ class CopilotProfile(Profile):
         """Copy ``item`` into Copilot CLI's native layout."""
         match item.kind:
             case Kind.SKILL:
-                return self.copy_skill(item)
+                rendering = self.copy_skill(item)
             case Kind.INSTRUCTION:
-                return self._instruction(item)
+                rendering = self._instruction(item)
             case Kind.AGENT | Kind.RESOURCE:
-                return self.agent(item, COPY_PATHS[item.kind].format(name=item.name))
-            case Kind.PROMPT:
-                return self.refuse_kind(item, "route prompts to a vscode destination")
-            case Kind.MCP:
-                return self._server(item)
-            case Kind.HOOK:
-                return self.copy_file(
+                rendering = self.agent(
                     item, COPY_PATHS[item.kind].format(name=item.name)
                 )
-        assert_never(item.kind)
+            case Kind.PROMPT:
+                rendering = self.refuse_kind(
+                    item, "route prompts to a vscode destination"
+                )
+            case Kind.MCP:
+                rendering = self._server(item)
+            case Kind.HOOK:
+                rendering = self.copy_file(
+                    item, COPY_PATHS[item.kind].format(name=item.name)
+                )
+            case _:
+                return assert_never(item.kind)
+        return rendering
 
     def _server(self, item: Customization) -> Rendering:
         """Copy a server's fields as written, then apply ``profiles.copilot``."""
@@ -142,5 +148,6 @@ class VSCodeProfile(Profile):
                 return self.prompt(item, f"{item.name}.prompt.md")
             case Kind.MCP:
                 return self.server_entry(item, "../mcp.json", "servers")
-            case _:
+            case Kind.SKILL | Kind.HOOK | Kind.RESOURCE:
                 return self.refuse_kind(item, VSCODE_REFUSALS[item.kind])
+        return assert_never(item.kind)

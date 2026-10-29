@@ -38,7 +38,7 @@ jobs:
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: '24'
-    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
       with:
         script: |
           const { ReleaseBoundary } = require('./scripts/release_boundary.cjs');
@@ -56,7 +56,7 @@ jobs:
         --repo-url="$GITHUB_REPOSITORY" --target-branch=main
       env:
         TOKEN: ${{ github.token }}
-    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
       with:
         script: |
           const { ReleaseBoundary } = require('./scripts/release_boundary.cjs');
@@ -82,7 +82,7 @@ jobs:
           .github/release-tools
           scripts/release_boundary.cjs
         sparse-checkout-cone-mode: false
-    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
       id: target
       env:
         TESTPYPI: ${{ inputs.testpypi || false }}
@@ -115,7 +115,7 @@ jobs:
       with:
         persist-credentials: 'false'
         ref: ${{ needs.target.outputs.sha }}
-    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
       with:
         python-version: '3.12'
     - name: Build sdist and wheel
@@ -171,7 +171,7 @@ jobs:
       with:
         subject-path: dist/*
     - name: Publish (trusted publishing, PEP 740 attestations)
-      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+      uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
       with:
         skip-existing: 'true'
     - name: Attach distributions to the GitHub release
@@ -198,7 +198,7 @@ jobs:
       with:
         artifact-ids: ${{ needs.build.outputs.artifact-id }}
         path: dist/
-    - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+    - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
       with:
         repository-url: https://test.pypi.org/legacy/
         skip-existing: 'true'

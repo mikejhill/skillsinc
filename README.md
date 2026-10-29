@@ -9,6 +9,7 @@
 
 [![CI](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/ci.yml)
 [![Release](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml/badge.svg)](https://github.com/mikejhill/skillsinc/actions/workflows/release.yml)
+[![PyPI](https://img.shields.io/pypi/v/skillsinc)](https://pypi.org/project/skillsinc/)
 [![License](https://img.shields.io/github/license/mikejhill/skillsinc)](LICENSE)
 
 Write your agent skills, instructions, agents, prompts, MCP servers, reference files, and hooks once. SkillSinc copies them into Claude Code, GitHub Copilot, VS Code, Codex, and the shared `~/.agents` folder, converting formats where it must and saying so when a conversion loses something.

@@ -641,7 +641,7 @@ def backend(scheduler: Scheduler, runner: Runner, environment: Environment) -> B
         case Scheduler.CRON:
             return Cron(runner)
         case _:
-            assert_never(scheduler)
+            return assert_never(scheduler)
 
 
 def interpreter(executable: Path, platform: str) -> Path:
