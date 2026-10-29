@@ -17,8 +17,14 @@ class TestStarterConfig:
     """Initial configuration enables only detected harness directories."""
 
     @pytest.mark.parametrize("harness", ["codex", "vscode"])
-    def test_guidance_enables_shared_skills_for_readers(
-        self, tmp_path: Path, environment: Environment, harness: str
+    @pytest.mark.parametrize("with_guidance", [False, True])
+    def test_init_enables_shared_skills_for_readers(
+        self,
+        tmp_path: Path,
+        environment: Environment,
+        harness: str,
+        *,
+        with_guidance: bool,
     ) -> None:
         """Codex and VS Code receive their skill even without an agents folder."""
         profiles = ProfileRegistry()
@@ -28,7 +34,7 @@ class TestStarterConfig:
         path = tmp_path / "config.json"
 
         StarterConfig(profiles, environment).write(
-            path, None, force=False, with_guidance=True
+            path, None, force=False, with_guidance=with_guidance
         )
 
         loaded = ConfigLoader(profiles, environment).load(path)

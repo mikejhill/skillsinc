@@ -71,9 +71,10 @@ A profile may also write entries into files it declares beside its root (`Profil
 ## Safety checks
 
 - Every change records the digest of the file it expects; the applier re-reads and refuses if the file changed after planning.
-- Writes go to a sibling temporary file, then `Path.replace` swaps it in.
-- Every applied step (one write, with all the entries it carries) is appended as one line to a journal beside the manifest (`<destination>.journal`), and the manifest is saved once when the destination finishes. Loading replays a leftover journal, so an interrupted run never loses track of written files.
-- Paths that pass through a symlink or junction inside a destination are refused, so a sync can never write back into the library through a link. A declared file beside the root must not be a link either; any other `..` path is refused.
+- Writes use a unique, exclusively created sibling temporary file, then `Path.replace` swaps it in. Existing files that happen to use a temporary-file name are not reused. A failed write cleans up its own staging file.
+- Every applied step (one write, with all the entries it carries) is appended as one line to a journal beside the manifest (`<destination>.journal`), and the manifest is saved once when the destination finishes. Loading replays recorded journal steps after an interruption. Replacement is atomic per file; a destination is not one transaction, and there is no automatic rollback or backup of prior content.
+- Planning refuses paths that pass through a symlink or junction beneath a destination root. A declared file beside the root must not be a link either; any other `..` path is refused.
+- An error scanning a nested source directory fails the whole source. Destinations depending on that source stay unchanged, rather than treating unreadable assets as deleted files.
 
 ## Adding a harness
 

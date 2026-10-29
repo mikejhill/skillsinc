@@ -14,6 +14,9 @@ This guide lists every command, option, exit code, and the JSON report format, f
 
 Options go after the command, for example `skillsinc plan --json`.
 
+This reference follows `main`. `--with-guidance` requires 0.3.0 or later; check
+`skillsinc --version` and use the matching release tag for an older installation.
+
 | Option                     | Commands                           | Meaning                                                                                                                       |
 | -------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `--config PATH`            | init, plan, sync, schedule install | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.json`)                                                         |

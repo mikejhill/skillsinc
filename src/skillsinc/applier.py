@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import stat
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -200,14 +202,21 @@ class Applier:
         """
         content = change.content or b""
         target.parent.mkdir(parents=True, exist_ok=True)
-        staging = target.with_name(f".{target.name}.skillsinc-tmp")
-        staging.write_bytes(content)
-        if (change.entry or change.block) and target.is_file():
-            staging.chmod(stat.S_IMODE(target.stat().st_mode))
-        if change.executable:
-            mode = staging.stat().st_mode
-            staging.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        staging.replace(target)
+        descriptor, name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".skillsinc-tmp", dir=target.parent
+        )
+        staging = Path(name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+            if (change.entry or change.block) and target.is_file():
+                staging.chmod(stat.S_IMODE(target.stat().st_mode))
+            if change.executable:
+                mode = staging.stat().st_mode
+                staging.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            staging.replace(target)
+        finally:
+            staging.unlink(missing_ok=True)
 
     @staticmethod
     def _prune(directory: Path, root: Path) -> None:
