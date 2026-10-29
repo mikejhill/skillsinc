@@ -38,7 +38,7 @@ jobs:
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: '24'
-    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
       with:
         script: |
           const { ReleaseBoundary } = require('./scripts/release_boundary.cjs');
@@ -56,7 +56,7 @@ jobs:
         --repo-url="$GITHUB_REPOSITORY" --target-branch=main
       env:
         TOKEN: ${{ github.token }}
-    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
       with:
         script: |
           const { ReleaseBoundary } = require('./scripts/release_boundary.cjs');
@@ -82,7 +82,7 @@ jobs:
           .github/release-tools
           scripts/release_boundary.cjs
         sparse-checkout-cone-mode: false
-    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
       id: target
       env:
         TESTPYPI: ${{ inputs.testpypi || false }}
