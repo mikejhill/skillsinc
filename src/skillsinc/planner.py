@@ -211,7 +211,17 @@ class Planner:
         except ConfigurationError as err:
             return DestinationPlan(destination, errors=(str(err),))
         outside = self._profiles.get(destination.profile).outside
-        diff = DestinationDiff(destination.path, manifest, adopt=adopt, outside=outside)
+        diff = DestinationDiff(
+            destination.path,
+            manifest,
+            adopt=adopt,
+            outside=outside,
+            protect_edits=any(
+                config.sources[name].disabled
+                for route in own_routes
+                for name in route.sources
+            ),
+        )
         entries = {
             path: tuple(found.values()) for path, found in desired.entries.items()
         }
@@ -386,6 +396,10 @@ class Planner:
         selected = self._select(routes, items)
         desired = DesiredState()
         for label, (item, allow_lossy) in sorted(selected.items()):
+            if config.sources[item.source].disables(item):
+                reason = f"disabled by sources.{item.source}.disabled"
+                desired.skipped.append(Skip(label, reason))
+                continue
             if item.refusal is not None:
                 desired.skipped.append(Skip(label, item.refusal))
                 continue

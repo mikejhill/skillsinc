@@ -78,11 +78,12 @@ Required. Must be `1`.
 
 ## `sources.<name>`
 
-| Key       | Required | Default                                                                               | Meaning                                                  |
-| --------- | -------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `path`    | yes      | —                                                                                     | Library directory                                        |
-| `exclude` | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                      |
-| `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory |
+| Key        | Required | Default                                                                               | Meaning                                                           |
+| ---------- | -------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `path`     | yes      | —                                                                                     | Library directory                                                 |
+| `exclude`  | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                               |
+| `disabled` | no       | `[]`                                                                                  | Resource selectors suppressed across every route from this source |
+| `layout`   | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory          |
 
 A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays fail the whole source.
 
@@ -117,6 +118,35 @@ Some harnesses also read another profile's folder: Copilot CLI and VS Code read 
 An item reaching a destination through several routes is distributed once; it is lossy-allowed if any of those routes allows it. Two items that render to the same path, or the same JSON entry, with different content block the destination.
 
 ## Removing things
+
+### Disable resources while preserving their sources
+
+Starting with **0.4.0**, set `sources.<name>.disabled` to suppress individual skills, instructions, agents, prompts, MCP servers, resources, or hooks across every route from that source:
+
+```json
+{
+  "sources": {
+    "library": {
+      "path": "~/my-agent-library",
+      "disabled": ["skills/old-skill", "instructions/old-rule", "resources/old-resource"]
+    }
+  }
+}
+```
+
+This is a source entry within a complete configuration; keep its destinations and routes. Selectors are case-sensitive `kind/name` or `plugins/plugin/kind/name`. Kinds are `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, or `*`; names and plugin names accept glob patterns. Use logical item names, without `.md`, `.instructions.md`, or `.json` extensions. `skills/review` also matches a plugin's skill named `review`; use `plugins/kit/skills/review` to limit it to that plugin. Invalid selectors or non-string lists fail configuration validation.
+
+Precedence is explicit: route `include` selects items; that route's `exclude` drops them; any remaining match from another route can still select them. A source's `disabled` list then overrides **all** routes, including explicit includes and `allow_lossy`. It affects only that named source. Remove a selector to enable the item again. Source files are never edited, moved, or deleted. Disabled items are still read and validated with their source; a broken source still blocks cleanup.
+
+Run `skillsinc plan --verbose` or `skillsinc plan --json` before syncing. Selected disabled items appear under `skipped` with the reason `disabled by sources.<name>.disabled`; proposed removals and ownership releases appear in `changes`. Planning does not apply them. Disabling stops future emission; cleanup happens only on an explicit or already scheduled sync. Unedited managed files, blocks, and JSON/TOML entries are removed. Edited output whose whole managed unit is retired is preserved and released from ownership (`forget`). If a shared block or entry still contains enabled resources, disabling must not overwrite edits to that unit: the destination is blocked for review instead. This conservative guard blocks all updates that would overwrite edits while any routed source has a nonempty `disabled` list, even when route filters also exclude those items or a selector currently matches nothing. Unmanaged content is preserved. Re-enabling does not authorize overwriting released local edits: review any ownership conflict before adopting or restoring source content.
+
+Setting a whole destination's `enabled` to `false` instead freezes it, including cleanup: previously generated content can remain active in its harness. To remove redundant generated content, keep the destination enabled, disable the source resource, inspect the plan, and sync only the intended destinations. Existing scheduled syncs also use the changed configuration; pause them separately before editing if cleanup must wait.
+
+Preserved edited output can also remain active in its harness after a `forget` action. Disabling source emission cannot guarantee deactivation while preserving such live local edits. Review retained files, blocks, or entries and move or remove their local content deliberately after saving it elsewhere when deactivation is required.
+
+Versions through 0.3.x reject the new `disabled` key. Upgrade before adding it. On older versions, use `routes[].exclude` on every applicable route to suppress an item without deleting its source. Before downgrading, translate disabled selectors into exclusions on every applicable route, then remove the new key; simply dropping the key would re-enable those resources.
+
+### Remove distributed output
 
 - Remove an item from a route (or the library): the next sync deletes its
   unedited managed files, blocks, and entries. Locally edited content is left

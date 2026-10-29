@@ -20,6 +20,7 @@ CONFIG_VERSION: Final = 1
 DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
 ALL_ITEMS: Final = ("*/*",)
 PLUGINS: Final = "plugins"
+DISABLED_KINDS: Final = frozenset({"*", *(kind.value for kind in Kind)})
 TOML_RETIRED: Final = (
     "TOML configuration is no longer read; rewrite it as config.json, see"
     " https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md"
@@ -36,6 +37,15 @@ class SourceConfig:
     layout: Mapping[Kind, str]
     exclude: tuple[str, ...] = DEFAULT_EXCLUDE
     plugins: str = PLUGINS
+    disabled: tuple[str, ...] = ()
+
+    def disables(self, item: Customization) -> bool:
+        """Match source-owned items against case-sensitive canonical selectors."""
+        return item.source == self.name and any(
+            fnmatchcase(selector, pattern)
+            for selector in item.selectors
+            for pattern in self.disabled
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,9 +248,34 @@ class ConfigLoader:
             raise ConfigurationError(msg)
         layout, plugins = self._layout(table.table("layout"))
         exclude = table.strings("exclude", DEFAULT_EXCLUDE)
+        disabled = self._disabled(name, table)
         table.finish()
         path = self._environment.expand(raw, base)
-        return SourceConfig(name, path, layout, exclude, plugins)
+        return SourceConfig(name, path, layout, exclude, plugins, disabled)
+
+    @staticmethod
+    def _disabled(name: str, table: Table) -> tuple[str, ...]:
+        """Validate item selectors rather than interpreting them as filesystem paths."""
+        selectors = table.strings("disabled")
+        for selector in selectors:
+            parts = selector.split("/")
+            match parts:
+                case [kind, _] | ["plugins", _, kind, _]:
+                    shaped = kind in DISABLED_KINDS
+                case _:
+                    shaped = False
+            canonical = "\\" not in selector and all(
+                part.strip() and part not in {".", ".."} for part in parts
+            )
+            if not canonical or not shaped:
+                msg = (
+                    f"sources.{name}.disabled: invalid selector {selector!r}; "
+                    "use 'kind/name' or 'plugins/plugin/kind/name' with a supported "
+                    "kind (or '*'), nonempty components, and forward slashes; "
+                    "'.' and '..' components are not allowed"
+                )
+                raise ConfigurationError(msg)
+        return selectors
 
     @staticmethod
     def _layout(table: Table | None) -> tuple[dict[Kind, str], str]:

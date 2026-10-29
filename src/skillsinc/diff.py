@@ -34,11 +34,13 @@ class DestinationDiff:
         *,
         adopt: bool,
         outside: frozenset[str] = frozenset[str](),
+        protect_edits: bool = False,
     ) -> None:
         self._root = root
         self._manifest = manifest
         self._adopt = adopt
         self._outside = outside
+        self._protect_edits = protect_edits
         self._blocks = ManagedBlock()
         self._changes: list[Change] = []
         self._errors: list[str] = []
@@ -94,6 +96,8 @@ class DestinationDiff:
             self._add(action, output, found, "")
         elif not matches:
             note = "overwrites local edits" if found not in {owned, wanted} else ""
+            if note and self._refuse_edited_update(path):
+                return
             self._add(Action.UPDATE, output, found, note)
         elif owned != wanted:
             self._add(Action.TRACK, output, found, "")
@@ -144,6 +148,8 @@ class DestinationDiff:
         elif existing is None:
             note = "restores a deleted managed block"
         elif Digest.of(existing.encode()) != owned.digest:
+            if self._refuse_edited_update(path):
+                return
             note = "overwrites local edits to the block"
         self._block_change(
             action, path, expected, updated, digest, created=created, note=note
@@ -267,7 +273,15 @@ class DestinationDiff:
                 return None
             return (Action.TRACK if found == wanted else Action.ADOPT), ""
         if found != wanted:
-            return Action.UPDATE, ("overwrites local edits" if found != owned else "")
+            edited = found != owned
+            blocked = edited and self._refuse_edited_update(
+                f"{output.path}: entry {output.entry}"
+            )
+            return (
+                None
+                if blocked
+                else (Action.UPDATE, "overwrites local edits" if edited else "")
+            )
         if owned != wanted:
             return Action.TRACK, ""
         return None
@@ -285,6 +299,16 @@ class DestinationDiff:
         return Action.DELETE, ""
 
     # Internals
+
+    def _refuse_edited_update(self, path: str) -> bool:
+        """Block disabling when reconciliation would overwrite owned local edits."""
+        if not self._protect_edits:
+            return False
+        self._errors.append(
+            f"{path}: local edits would be overwritten while disabling resources;"
+            " preserve the edits in the source or restore the managed output first"
+        )
+        return True
 
     def _add(
         self, action: Action, output: FileOutput, expected: str | None, note: str
