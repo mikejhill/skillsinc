@@ -2,6 +2,10 @@
 
 Releases are automatic. Versions follow [SemVer](https://semver.org/) and are computed from [Conventional Commits](https://www.conventionalcommits.org/) on `main` by [release-please](https://github.com/googleapis/release-please).
 
+The manifest sets `always-update` so the generated version branch is rebuilt on
+the current `main` even when a CI-only change leaves its release notes unchanged.
+The version-only diff and single-parent checks still run before any dispatch.
+
 ## How a release happens
 
 1. Pull requests are squash-merged into `main`; the PR title (checked by CI) becomes the commit message.
