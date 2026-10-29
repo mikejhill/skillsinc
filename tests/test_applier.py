@@ -32,6 +32,62 @@ class TestApplier:
             {},
         )
 
+    def test_preserves_unmanaged_staging_name(self, tmp_path: Path) -> None:
+        """Never overwrite an unowned file that resembles a staging filename."""
+        root = tmp_path / "destination"
+        root.mkdir()
+        existing = root / ".file.skillsinc-tmp"
+        existing.write_bytes(b"Unmanaged user content")
+        store = ManifestStore(tmp_path / "state")
+        change = Change(
+            Action.CREATE, "file", None, content=b"new", owned_digest=Digest.of(b"new")
+        )
+
+        results = Applier(store).apply(self.plan(root, (change,)))
+
+        assert results[0].error is None, f"Expected successful write: {results!r}"
+        assert existing.read_bytes() == b"Unmanaged user content", (
+            "Expected unowned staging-name file preserved"
+        )
+        assert (root / "file").read_bytes() == b"new", "Expected planned content"
+        assert sorted(path.name for path in root.iterdir()) == [
+            ".file.skillsinc-tmp",
+            "file",
+        ], "Expected temporary files cleaned up"
+
+    def test_failed_replace_cleans_only_own_temporary_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A refused replacement preserves both user content and the old target."""
+        root = tmp_path / "destination"
+        root.mkdir()
+        (root / "file").write_bytes(b"old")
+        existing = root / ".file.skillsinc-tmp"
+        existing.write_bytes(b"Unmanaged user content")
+        original = Path.replace
+
+        def replace(path: Path, target: str | Path) -> Path:
+            """Fail only the destination replacement, leaving manifest saves alone."""
+            if Path(target) == root / "file":
+                raise PermissionError("replacement refused")
+            return original(path, target)
+
+        monkeypatch.setattr(Path, "replace", replace)
+        change = Change(Action.UPDATE, "file", Digest.of(b"old"), content=b"new")
+        results = Applier(ManifestStore(tmp_path / "state")).apply(
+            self.plan(root, (change,))
+        )
+
+        assert results[0].error is not None, "Expected a failed replacement"
+        assert (root / "file").read_bytes() == b"old", "Expected target preserved"
+        assert existing.read_bytes() == b"Unmanaged user content", (
+            "Expected unowned staging-name file preserved"
+        )
+        assert sorted(path.name for path in root.iterdir()) == [
+            ".file.skillsinc-tmp",
+            "file",
+        ], "Expected only SkillSinc's new temporary file removed"
+
     @pytest.mark.parametrize("action", [Action.CREATE, Action.UPDATE, Action.ADOPT])
     def test_writes_and_records_owned_content(
         self, tmp_path: Path, action: Action

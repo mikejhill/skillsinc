@@ -86,6 +86,53 @@ class TestConfigLoader:
         with pytest.raises(ConfigurationError, match="run `skillsinc init`"):
             ConfigLoader(ProfileRegistry(), environment).load(tmp_path / "missing")
 
+    @pytest.mark.parametrize("suffix", ["", "child"])
+    def test_rejects_aliased_destination_overlap(
+        self, sandbox: Sandbox, tmp_path: Path, suffix: str
+    ) -> None:
+        """Dot-dot aliases cannot hide equal or nested destination directories."""
+        parent = tmp_path / "alias-parent"
+        parent.mkdir()
+        alias = parent / ".." / "destination" / suffix
+        target = tmp_path / "destination"
+        Builder.write_config(
+            sandbox.config_path,
+            sandbox.library,
+            (("alias", "generic", alias), ("target", "generic", target)),
+        )
+
+        with pytest.raises(ConfigurationError, match="overlap") as raised:
+            sandbox.load()
+
+        assert str(alias) in str(raised.value), (
+            f"Expected original alias in diagnostic, got {raised.value}"
+        )
+        assert not target.exists(), "Expected no writes to overlapping destinations"
+
+    @pytest.mark.parametrize(
+        "error", [PermissionError("unavailable"), RuntimeError("symlink loop")]
+    )
+    def test_destination_resolution_failure_is_configuration_error(
+        self,
+        sandbox: Sandbox,
+        monkeypatch: pytest.MonkeyPatch,
+        error: OSError | RuntimeError,
+    ) -> None:
+        """Unresolvable destination paths fail before planning with a useful error."""
+        sandbox.configure()
+        original = Path.resolve
+
+        def fail(path: Path, *, strict: bool = False) -> Path:
+            """Fail only the configured destination without making any links."""
+            if path == sandbox.root:
+                raise error
+            return original(path, strict=strict)
+
+        monkeypatch.setattr(Path, "resolve", fail)
+
+        with pytest.raises(ConfigurationError, match="cannot resolve destination"):
+            sandbox.load()
+
     def test_toml_configuration_reports_migration(
         self, tmp_path: Path, environment: Environment
     ) -> None:

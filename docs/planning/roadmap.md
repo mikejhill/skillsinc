@@ -12,11 +12,14 @@ This is the prioritized list of work after the 2026-10 rebuild, with enough cont
 | Harness locations                        | Verified on Windows on 2026-10-21 for Claude Code, Copilot CLI, and Codex; see [harness profiles](../guides/harness-profiles.md) |
 | Releases                                 | Automated with release-please; see [releasing](../guides/releasing.md)                                                           |
 
+Published releases are alpha releases for developers. The test matrix covers
+Windows, macOS, and Linux filesystem and CLI behavior; it does not establish
+that every harness discovers or applies the generated content on each OS.
+
 ## Next
 
-1. **First release.** Complete the [one-time setup](../guides/releasing.md#one-time-setup), then merge the `chore: release 0.1.0` pull request.
-2. **Remaining native checks.** Confirm that VS Code lists synced instructions, agents, and prompts, that a Claude rule with `paths` loads only for matching files, and that Codex reads the `AGENTS.md` block. Then test on macOS and Linux. Record the results under each profile's "Verified" note in [harness profiles](../guides/harness-profiles.md).
-3. **Content diff in `plan`.** `plan --diff` printing a unified diff per changed file (and for the managed block) so users can review updates, not just paths.
+1. **Remaining native checks.** Confirm that VS Code lists synced instructions, agents, and prompts, that a Claude rule with `paths` loads only for matching files, and that Codex reads the `AGENTS.md` block. Then test on macOS and Linux. Record the results under each profile's "Verified" note in [harness profiles](../guides/harness-profiles.md).
+2. **Content diff in `plan`.** `plan --diff` printing a unified diff per changed file (and for the managed block) so users can review updates, not just paths.
 
 ## Later
 

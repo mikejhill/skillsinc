@@ -292,7 +292,7 @@ class SourceReader:
     def _assets(self, source: SourceConfig, package: Path) -> list[Asset]:
         """Collect a skill's supporting files, skipping excluded names."""
         assets: list[Asset] = []
-        for root, directories, files in os.walk(package):
+        for root, directories, files in os.walk(package, onerror=self._walk_error):
             directories[:] = sorted(
                 name for name in directories if not self._excluded(source, name)
             )
@@ -305,6 +305,11 @@ class SourceReader:
                 executable = bool(mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
                 assets.append(Asset(relative, path.read_bytes(), executable))
         return assets
+
+    @staticmethod
+    def _walk_error(error: OSError) -> None:
+        """Fail the source instead of silently omitting an unreadable subtree."""
+        raise error
 
     @staticmethod
     def _check_skill(name: str, frontmatter: Frontmatter, entry: Path) -> None:
