@@ -79,12 +79,14 @@ test('creates one assigned findings issue with durable run, score and triage evi
   }
 });
 
-test('healthy first result creates no issue and no spam', async () => {
-  const h = harness();
-  const producer = run(1, {conclusion: 'success'});
-  assert.deepEqual((await h.call(producer, summary(producer, 95))).actions, []);
-  assert.equal(h.writes.length, 0);
-});
+for (const score of [85, 95]) {
+  test(`passing score ${score}% creates no issue despite survivors`, async () => {
+    const h = harness();
+    const producer = run(1, {conclusion: 'success'});
+    assert.deepEqual((await h.call(producer, summary(producer, score))).actions, []);
+    assert.equal(h.writes.length, 0);
+  });
+}
 
 test('updates findings in place; duplicate deliveries do not write again', async () => {
   const h = harness();
