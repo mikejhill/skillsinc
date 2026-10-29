@@ -264,3 +264,4 @@ junit.xml
 mutants/
 mutation-results.txt
 mutmut.log
+.github/release-tools/node_modules/

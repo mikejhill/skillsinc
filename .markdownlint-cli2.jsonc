@@ -4,5 +4,5 @@
     "MD048": { "style": "backtick" }
   },
   "globs": ["**/*.md"],
-  "ignores": ["CHANGELOG.md", ".venv/**", "node_modules/**", ".tmp/**", "mutants/**"]
+  "ignores": ["CHANGELOG.md", ".venv/**", "**/node_modules/**", ".tmp/**", "mutants/**"]
 }
