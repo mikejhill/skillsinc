@@ -29,6 +29,11 @@ class PypiReadme:
     # A fenced Mermaid block, and a Markdown link or image target
     MERMAID = re.compile(r"^```mermaid\n(?P<body>.*?)^```\n", re.MULTILINE | re.DOTALL)
     TARGET = re.compile(r"(?P<prefix>\]\()(?P<target>[^)\s]+)\)")
+    PICTURE = re.compile(
+        r'<picture>.*?<img src="(?P<src>[^"]+)" alt="(?P<alt>[^"]+)"[^>]*>'
+        r".*?</picture>",
+        re.DOTALL,
+    )
     ABSOLUTE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#|/)", re.IGNORECASE)
 
     def __init__(self, root: Path) -> None:
@@ -64,7 +69,8 @@ class PypiReadme:
 
     def convert(self, readme: str) -> str:
         """Return the PyPI readme for the text of README.md."""
-        text = self.MERMAID.sub(self._diagram, readme)
+        text = self.PICTURE.sub(self._picture, readme)
+        text = self.MERMAID.sub(self._diagram, text)
         text = self.TARGET.sub(self._absolute, text)
         title, _, rest = text.partition("\n")
         return f"{title}\n\n{NOTICE}\n{rest}"
@@ -81,6 +87,13 @@ class PypiReadme:
             "A Mermaid block in README.md has no matching docs/assets/*.mmd; "
             "save it there and render the SVG (see docs/guides/development.md)"
         )
+
+    def _picture(self, match: re.Match[str]) -> str:
+        """Use the fallback image on PyPI, which does not support picture sources."""
+        source = match.group("src")
+        if not self.ABSOLUTE.match(source):
+            source = f"{RAW}/{source}"
+        return f"![{match.group('alt')}]({source})"
 
     def _absolute(self, match: re.Match[str]) -> str:
         """Return a link or image target made absolute against GitHub."""

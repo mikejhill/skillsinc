@@ -50,7 +50,19 @@ class InitCommand:
 
     def run(self, settings: InitSettings, out: TextIO) -> int:
         """Write the file and tell the user what to do next."""
-        self._starter.write(settings.config_path, settings.source, force=settings.force)
+        self._starter.write(
+            settings.config_path,
+            settings.source,
+            force=settings.force,
+            with_guidance=settings.with_guidance,
+        )
+        if settings.with_guidance:
+            out.write(
+                "Installed SkillSinc guidance in the source library. Edit it there;"
+                " sync distributes it like other library content.\n"
+                "Keep the library versioned in your own Git repository;"
+                " init does not initialize Git or contact a remote.\n"
+            )
         out.write(
             f"Wrote {settings.config_path}\n"
             "Review it, run `skillsinc plan` to preview, then `skillsinc sync`.\n"

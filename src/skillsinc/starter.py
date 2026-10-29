@@ -8,6 +8,7 @@ from typing import Final
 
 from skillsinc.config import TOML_RETIRED
 from skillsinc.exceptions import ConfigurationError
+from skillsinc.guidance import GuidanceInstaller
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
 
@@ -27,7 +28,14 @@ class StarterConfig:
         self._profiles = profiles
         self._environment = environment
 
-    def write(self, path: Path, source: Path | None, *, force: bool) -> str:
+    def write(
+        self,
+        path: Path,
+        source: Path | None,
+        *,
+        force: bool,
+        with_guidance: bool = False,
+    ) -> str:
         """Write the starter configuration to ``path`` and return its text.
 
         Without ``source``, the default library directory is created empty so
@@ -43,14 +51,18 @@ class StarterConfig:
         if path.exists() and not force:
             msg = f"{path} already exists; pass --force to overwrite it"
             raise ConfigurationError(msg)
-        text = self.render(source)
+        text = self.render(source, with_guidance=with_guidance)
+        library = source or self._environment.default_library
+        guidance = GuidanceInstaller()
+        pending = guidance.plan(library, path) if with_guidance else ()
+        guidance.install(pending)
         path.parent.mkdir(parents=True, exist_ok=True)
         if source is None:
             self._environment.default_library.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         return text
 
-    def render(self, source: Path | None) -> str:
+    def render(self, source: Path | None, *, with_guidance: bool = False) -> str:
         """Return starter JSONC, enabling destinations whose harness folder exists."""
         source_path = self._display(source or self._environment.default_library)
         lines = [HEADER.rstrip("\n"), '  "sources": {']
@@ -64,18 +76,29 @@ class StarterConfig:
         )
 
         lines.append('  "destinations": {')
-        detected: list[str] = []
-        for profile in self._profiles.profiles:
-            default = profile.default_path(self._environment)
+        defaults = [
+            (profile, profile.default_path(self._environment))
+            for profile in self._profiles.profiles
+        ]
+        detected = [
+            profile.name
+            for profile, default in defaults
+            if default is not None and default.is_dir()
+        ]
+        if (
+            with_guidance
+            and {"codex", "vscode"}.intersection(detected)
+            and "agents" not in detected
+        ):
+            detected.append("agents")
+        for profile, default in defaults:
             if default is None:
                 continue
-            installed = default.is_dir()
+            installed = profile.name in detected
             prefix = "" if installed else "// "
             note = "" if installed else "  // not found on this machine"
             name = json.dumps(profile.name)
             lines.append(f'    {prefix}{name}: {{ "profile": {name} }},{note}')
-            if installed:
-                detected.append(profile.name)
         lines.append("  },")
 
         targets = ", ".join(json.dumps(name) for name in detected)

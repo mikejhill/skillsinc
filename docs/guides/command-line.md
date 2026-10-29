@@ -18,6 +18,7 @@ Options go after the command, for example `skillsinc plan --json`.
 | -------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `--config PATH`            | init, plan, sync, schedule install | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.json`)                                                         |
 | `--source DIR`             | init                               | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`)                        |
+| `--with-guidance`          | init                               | Add a portable SkillSinc skill and global instruction to that source; no implicit sync, scheduler, or Git operations          |
 | `--force`                  | init                               | Overwrite an existing configuration                                                                                           |
 | `-d`, `--destination NAME` | plan, sync                         | Limit to this destination; repeatable                                                                                         |
 | `--adopt`                  | plan, sync                         | Take ownership of existing files instead of blocking                                                                          |
