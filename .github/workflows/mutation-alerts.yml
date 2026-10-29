@@ -1,0 +1,100 @@
+name: Mutation alerts
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- Validates same-repo default-branch producer; trusted workflow_sha checkout, artifacts are bounded JSON data only.
+    workflows: [Mutation testing]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: mutation-alert-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - name: Validate producing run and locate its data artifact
+        id: boundary
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const {data: repository} = await github.rest.repos.get({owner, repo});
+            const {data: run} = await github.rest.actions.getWorkflowRun({owner, repo, run_id: context.payload.workflow_run.id});
+            const {data: workflow} = await github.rest.actions.getWorkflow({owner, repo, workflow_id: 'mutation.yml'});
+            if (run.repository?.id !== repository.id || run.head_repository?.id !== repository.id
+                || run.head_branch !== repository.default_branch || run.workflow_id !== workflow.id
+                || run.path !== '.github/workflows/mutation.yml' || run.name !== 'Mutation testing'
+                || run.status !== 'completed' || !['push', 'schedule', 'workflow_dispatch'].includes(run.event)) {
+              core.notice('Ignoring a run outside the trusted default-branch mutation workflow.');
+              return;
+            }
+            core.setOutput('eligible', 'true');
+            try {
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {owner, repo, run_id: run.id, per_page: 100});
+              const matches = artifacts.filter(a => a.name === `mutation-results-${run.run_attempt}` && !a.expired);
+              if (matches.length !== 1 || matches[0].size_in_bytes > 20 * 1024 * 1024
+                  || Date.parse(matches[0].created_at) < Date.parse(run.run_started_at)) {
+                core.setOutput('error', 'A unique, current-attempt mutation artifact is missing or invalid.');
+              } else {
+                core.setOutput('artifact', String(matches[0].id));
+              }
+            } catch {
+              core.setOutput('error', 'The mutation artifact inventory could not be read.');
+            }
+      # Only publisher-controlled source is checked out; producer artifacts are JSON data.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.boundary.outputs.eligible == 'true'
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/mutation_alerts.cjs
+          sparse-checkout-cone-mode: false
+      - name: Download the immutable artifact
+        id: download
+        if: steps.boundary.outputs.artifact != ''
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.boundary.outputs.artifact }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/mutation-data
+          merge-multiple: true
+      - name: Publish durable findings or execution failure
+        if: always() && steps.boundary.outputs.eligible == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ARTIFACT_ERROR: ${{ steps.boundary.outputs.error }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          DATA_DIRECTORY: ${{ runner.temp }}/mutation-data
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const {publish} = require('./scripts/mutation_alerts.cjs');
+            const {owner, repo} = context.repo;
+            const {data: repository} = await github.rest.repos.get({owner, repo});
+            const {data: run} = await github.rest.actions.getWorkflowRun({owner, repo, run_id: context.payload.workflow_run.id});
+            let error = process.env.ARTIFACT_ERROR || null;
+            let summary = null;
+            if (!error && process.env.DOWNLOAD_OUTCOME !== 'success') error = 'The mutation artifact could not be downloaded.';
+            if (!error) {
+              try {
+                const file = path.join(process.env.DATA_DIRECTORY, 'mutation-summary.json');
+                const stat = fs.lstatSync(file);
+                if (!stat.isFile() || stat.size > 128 * 1024) throw new Error('invalid summary file');
+                summary = JSON.parse(fs.readFileSync(file, 'utf8'));
+              } catch {
+                error = 'The mutation summary is missing, oversized, or malformed JSON.';
+              }
+            }
+            const result = await publish({github, owner, repo, run, defaultBranch: repository.default_branch, summary, error});
+            core.info(JSON.stringify(result));

@@ -1,54 +1,25 @@
 name: Mutation testing
 
-# Proves the tests catch bugs: mutmut makes small changes to the code and
-# checks that some test fails for each. Pull requests report on the modules
-# they change, in parallel with CI; a weekly run covers the whole package.
-# Runs on Linux, because mutmut forks per mutant.
-#
-# Speed: mutmut keeps each mutant's verdict in mutants/ and retests only the
-# functions whose code changed. Pull requests and pushes to main restore that
-# folder from the cache, so they retest just the changed functions; the weekly
-# run starts fresh and is the source of truth for the score.
-
+# Slow quality feedback runs independently of PR and release checks.
 on:
-  pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "scripts/mutation_report.py"
-      - ".github/workflows/mutation.yml"
-  # Keeps the cached verdicts current, so pull requests start from main's
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "scripts/mutation_report.py"
-      - ".github/workflows/mutation.yml"
+    paths: ["src/**", "tests/**", "pyproject.toml", "uv.lock", "scripts/mutation_report.py", ".github/workflows/mutation*.yml"]
   schedule:
-    - cron: "23 5 * * 1" # Mondays 05:23 UTC
+    - cron: "23 5 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # A newer run replaces an older one; the weekly run is never cancelled by a push
-  group: mutation-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: mutation-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   FORCE_COLOR: "1"
   UV_LOCKED: "1"
   PYTHONUTF8: "1"
-  # Minimum share of mutants the whole package's tests must catch, in percent,
-  # enforced by the weekly run (baseline: 86.7%, 2026-10-21). Raise it as surviving
-  # mutants get tests; never lower it to get a pass. Pull requests report
-  # their modules' score and missed mutants without failing on it.
   MUTATION_FLOOR: "85"
 
 jobs:
@@ -57,80 +28,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
+      - name: Require the default branch
+        env:
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "$REF" = "refs/heads/$DEFAULT_BRANCH"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --group mutation
-      - name: Pick the modules to mutate
-        id: scope
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.base_ref }}
-        run: |
-          if [ "$EVENT" != "pull_request" ]; then
-            echo "patterns=" >> "$GITHUB_OUTPUT"
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          patterns=""
-          for file in $(git diff --name-only --diff-filter=AMR "origin/$BASE...HEAD" -- 'src/skillsinc/*.py'); do
-            module="${file#src/}"
-            module="${module%.py}"
-            module="${module//\//.}"
-            # A package's own mutants are named "<package>.x<function>"
-            case "$module" in
-              *.__init__) patterns="$patterns ${module%.__init__}.x*" ;;
-              *) patterns="$patterns $module.*" ;;
-            esac
-          done
-          tooling=$(git diff --name-only "origin/$BASE...HEAD" -- \
-            .github/workflows/mutation.yml scripts/mutation_report.py \
-            pyproject.toml uv.lock)
-          if [ -z "$patterns" ] && [ -n "$tooling" ]; then
-            # Mutation setup changed: prove it still works on one small module
-            patterns="skillsinc.blocks.*"
-          fi
-          echo "patterns=$patterns" >> "$GITHUB_OUTPUT"
-          if [ -n "$patterns" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No source modules changed; the weekly run covers test-only changes." >> "$GITHUB_STEP_SUMMARY"
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Restore earlier verdicts
-        # The weekly run starts fresh, so its score never rests on a stale verdict
-        if: steps.scope.outputs.run == 'true' && github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'push'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mutants
-          # Verdicts only carry over between runs with the same dependencies and setup
-          key: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-${{ github.run_id }}
+          key: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-
       - name: Run mutmut
-        if: steps.scope.outputs.run == 'true'
-        env:
-          EVENT: ${{ github.event_name }}
-          PATTERNS: ${{ steps.scope.outputs.patterns }}
-        # PATTERNS is word-split on purpose: one mutmut pattern per module
+        id: mutation
         run: |
-          # mutants/complete marks a folder whose every verdict is known except
-          # for changed functions. With it, mutmut needs no patterns: it retests
-          # only what changed. Without it, a pull request tests its whole modules
-          # (naming a pattern makes mutmut retest every mutant it matches).
-          only=""
-          if [ "$EVENT" = "pull_request" ] && [ ! -f mutants/complete ]; then
-            only="$PATTERNS"
-          fi
-          # Keep only the verdicts (*.meta). mutmut never overwrites a copied
-          # file, so stale copies would leave it measuring coverage on old
-          # code; from fresh copies it re-mutates every file and keeps the
-          # verdicts of each function whose code is unchanged. Fresh stats map
-          # tests to the current code.
+          # Preserve verdict metadata, regenerate source copies and test mapping.
           rm -rf mutants/mutmut-stats.json mutants/tests
           if [ -d mutants/src ]; then
             find mutants/src -name '*.py' -delete
@@ -139,41 +61,36 @@ jobs:
               [ -f "${source%.meta}" ] || rm -f "$meta"
             done
           fi
-          # shellcheck disable=SC2086
-          uv run --group mutation mutmut run --max-children "$(nproc)" $only > mutmut.log 2>&1 || {
+          uv run --group mutation mutmut run --max-children "$(nproc)" > mutmut.log 2>&1 || {
             tail -n 200 mutmut.log
             exit 1
           }
-          if [ -z "$only" ]; then touch mutants/complete; fi
+          touch mutants/complete
           tail -n 3 mutmut.log
           uv run --group mutation mutmut results --all true > mutation-results.txt
       - name: Save verdicts for later runs
-        # Also after a failure or cancellation: mutmut records each verdict as
-        # it goes, so the next run resumes instead of starting over
-        if: always() && steps.scope.outputs.run == 'true'
+        if: always() && steps.mutation.outcome != 'skipped'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mutants
-          key: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-${{ github.run_id }}
-      - name: Report the score (enforce the floor on whole-package runs)
-        if: steps.scope.outputs.run == 'true'
-        env:
-          EVENT: ${{ github.event_name }}
-          PATTERNS: ${{ steps.scope.outputs.patterns }}
+          key: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Report complete full-package results
+        if: steps.mutation.outcome == 'success'
         run: |
           set -o pipefail
-          # Cached verdicts are only reported; the weekly fresh run is the gate
-          floor=0
-          if [ "$EVENT" = "schedule" ] || [ "$EVENT" = "workflow_dispatch" ]; then floor="$MUTATION_FLOOR"; fi
-          # shellcheck disable=SC2086
           uv run --group mutation python scripts/mutation_report.py mutation-results.txt \
-            --fail-under "$floor" --show-diffs 25 ${PATTERNS:+--only $PATTERNS} | tee -a "$GITHUB_STEP_SUMMARY"
+            --fail-under "$MUTATION_FLOOR" --show-diffs 25 \
+            --json-output mutation-summary.json --commit "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --scope full-package | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload results
-        if: always() && steps.scope.outputs.run == 'true'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mutation-results
+          name: mutation-results-${{ github.run_attempt }}
           path: |
+            mutation-summary.json
             mutation-results.txt
             mutmut.log
           if-no-files-found: ignore
+          retention-days: 30
