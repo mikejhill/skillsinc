@@ -39,6 +39,11 @@ MAX_PERCENT: Final = 100
 TELEMETRY_THRESHOLD: Final = 85.0
 COMMIT_SHA: Final = re.compile(r"[0-9a-fA-F]{40}")
 RUN_ID: Final = re.compile(r"[1-9][0-9]{0,19}")
+OUTCOME_POLICY: Final = (
+    "Caught includes killed, timeout, caught by type check, and segfault. "
+    "No tests and suspicious outcomes count as missed. "
+    "Enforced gates require nonempty, fully classified results."
+)
 
 
 class MutationSummary(TypedDict):
@@ -243,9 +248,7 @@ class MutationReport:
             f"{overall.total} classified, {len(overall.unclassified)} unclassified, "
             f"{overall.candidates} selected candidate outcomes.",
             "",
-            "Caught includes killed, timeout, caught by type check, and segfault. "
-            "No tests and suspicious outcomes count as missed. "
-            "Enforced gates require nonempty, fully classified results.",
+            OUTCOME_POLICY,
             "",
             "Outcomes: "
             + (
