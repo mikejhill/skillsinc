@@ -42,13 +42,15 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --group mutation
-      - name: Restore earlier verdicts
+      - name: Resume verdicts only for this immutable commit
         if: github.event_name == 'push'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mutants
-          key: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-
+          # mutmut can retain function verdicts when only tests or callers change.
+          # Restrict resume to identical source/test/config input, never another SHA.
+          key: mutmut-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: mutmut-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-
       - name: Run mutmut
         id: mutation
         run: |
@@ -73,7 +75,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mutants
-          key: mutmut-v1-${{ hashFiles('uv.lock', 'pyproject.toml', '.github/workflows/mutation.yml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: mutmut-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Report complete full-package results
         if: steps.mutation.outcome == 'success'
         run: |

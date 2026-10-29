@@ -8,7 +8,7 @@ Mutation testing takes substantially longer than the normal quality gates. PR it
 
 ## Decision
 
-Run full-package mutation testing on default-branch pushes, weekly, and explicit default-branch manual dispatches. It is independent of PR and release checks. Preserve running jobs and verdict caches. Require a nonempty, fully classified report before claiming a score meets the target.
+Run full-package mutation testing on default-branch pushes, weekly, and explicit default-branch manual dispatches. It is independent of PR and release checks. Preserve running jobs and verdict caches. Restrict cached verdict reuse to the same immutable commit and runner OS/architecture so test-only changes, changed callers, or changed fixtures cannot reuse old decisions. Dependency/setup-only cache keys are insufficient because mutmut can retain results for unchanged function hashes. Weekly and manual runs remain fresh. Require a nonempty, fully classified report before claiming a score meets the target.
 
 A separate serialized publisher runs after mutation completion, including cancellation. It has issue-write permission; the producer has only content-read permission. Before accessing artifacts, the publisher refetches and validates the repository, workflow identity, event, default branch, and completed run. It checks out only publisher-controlled source at its own workflow SHA. Artifacts are immutable-ID, attempt-bound data; only a bounded ordinary JSON file is parsed, never executed. This boundary justifies the narrow `dangerous-triggers` suppression on the publisher's `workflow_run` trigger.
 
