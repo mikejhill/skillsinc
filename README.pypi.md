@@ -29,6 +29,7 @@ your source library versioned, and inspect a plan before enabling scheduled sync
 - **Nothing is written without a plan.** `skillsinc plan` previews current file actions; `skillsinc sync` calculates a fresh plan and checks files again before applying it.
 - **Lossy conversions are opt-in.** If a harness cannot represent a field (for example, Claude ignores Copilot `tools` lists), the item is skipped until the route sets `allow_lossy = true`.
 - **A broken source never deletes anything.** If a library cannot be read completely, its destinations are left untouched.
+- **Disable resources without deleting originals.** From 0.4.0, a source's `disabled` selectors suppress items across every route. [Preview cleanup and preserve local edits](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md#disable-resources-while-preserving-their-sources) before syncing.
 
 ## Install
 

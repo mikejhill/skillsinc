@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from tests.conftest import Builder, Sandbox
 
-from skillsinc.config import ConfigLoader, RouteConfig, Table
+from skillsinc.config import ConfigLoader, RouteConfig, SourceConfig, Table
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.models import Kind
 from skillsinc.paths import Environment
@@ -179,8 +181,202 @@ class TestConfigLoader:
         assert config.sources["x"].plugins == "kits", (
             f"Expected kits plugin folder, got {config.sources['x']!r}"
         )
+        assert config.sources["x"].disabled == (), (
+            f"Expected no disabled resources by default, got {config.sources['x']!r}"
+        )
         assert config.destinations["claude"].enabled is False, (
             f"Expected disabled Claude, got {config.destinations!r}"
+        )
+
+
+class TestSourceDisabled:
+    """Canonical source selectors disable items without changing authored files."""
+
+    @staticmethod
+    def load(
+        tmp_path: Path, environment: Environment, disabled: object
+    ) -> SourceConfig:
+        """Load only a synthetic source definition with the supplied disabled field."""
+        path = tmp_path / "disabled.json"
+        data = {
+            "version": 1,
+            "sources": {"library": {"path": "library", "disabled": disabled}},
+        }
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return (
+            ConfigLoader(ProfileRegistry(), environment).load(path).sources["library"]
+        )
+
+    def test_loads_disabled_selectors_as_immutable_source_state(
+        self, tmp_path: Path, environment: Environment
+    ) -> None:
+        """The source retains canonical selectors, independent of filename excludes."""
+        selectors = [f"{kind.value}/sample" for kind in Kind]
+        selectors += [
+            "plugins/kit/agents/reviewer",
+            "plugins/k[ia]t/*/sam?le",
+            "*/*",
+            "resources/guide.v2",
+        ]
+        source = self.load(tmp_path, environment, selectors)
+
+        assert source.disabled == tuple(selectors), (
+            f"Expected source disable selectors {selectors!r}, got {source.disabled!r}"
+        )
+        assert source.exclude == Builder.source(tmp_path).exclude, (
+            f"Expected filename excludes unchanged, got {source.exclude!r}"
+        )
+
+    @pytest.mark.parametrize("kind", list(Kind))
+    def test_every_resource_kind_can_be_disabled(
+        self, tmp_path: Path, kind: Kind
+    ) -> None:
+        """All authored item kinds use their same canonical kind/name identity."""
+        source = replace(Builder.source(tmp_path), disabled=(f"{kind.value}/sample",))
+
+        assert source.disables(Builder.item(kind=kind)), (
+            f"Expected {kind.value}/sample to be disabled"
+        )
+        assert not source.disables(Builder.item(kind=kind, name="sample-other")), (
+            f"Expected exact selector to keep {kind.value}/sample-other enabled"
+        )
+
+    @pytest.mark.parametrize(
+        ("pattern", "expected"),
+        [
+            ("skills/sample", True),
+            ("skills/sam*", True),
+            ("skills/s?mple", True),
+            ("skills/[st]ample", True),
+            ("*/*", True),
+            ("instructions/sample", False),
+            ("skills/Sample", False),
+            ("skills/sample-extra", False),
+            ("plugins/kit/skills/sample", False),
+        ],
+    )
+    def test_source_selectors_match_case_sensitive_route_globs(
+        self, tmp_path: Path, pattern: str, *, expected: bool
+    ) -> None:
+        """Case, kind, and exact identities remain meaningful alongside globs."""
+        source = replace(Builder.source(tmp_path), disabled=(pattern,))
+
+        assert source.disables(Builder.item()) is expected, (
+            f"Expected {pattern!r} to disable skills/sample: {expected}"
+        )
+
+    @pytest.mark.parametrize("kind", list(Kind))
+    def test_plugin_alias_supports_globs_without_matching_unrelated_items(
+        self, tmp_path: Path, kind: Kind
+    ) -> None:
+        """A plugin-qualified wildcard selector remains restricted to that plugin."""
+        source = replace(Builder.source(tmp_path), disabled=("plugins/k?t/*/sam*",))
+
+        assert source.disables(Builder.item(kind=kind, plugin="kit")), (
+            f"Expected plugin kit's {kind} item to match its qualified selector"
+        )
+        assert not source.disables(Builder.item(kind=kind, plugin="other")), (
+            "Expected a different plugin to remain enabled"
+        )
+        assert not source.disables(Builder.item(kind=kind)), (
+            "Expected ordinary items with the same identity to remain enabled"
+        )
+
+    def test_disabled_selectors_are_source_scoped(self, tmp_path: Path) -> None:
+        """An identically named item from another source is never disabled here."""
+        source = replace(Builder.source(tmp_path), disabled=("*/*",))
+
+        assert not source.disables(Builder.item(source="other")), (
+            "Expected selectors to affect only the source that owns the setting"
+        )
+
+    def test_plain_selector_also_matches_a_plugin_item(self, tmp_path: Path) -> None:
+        """As with route filters, a plugin item retains its kind/name alias."""
+        source = replace(Builder.source(tmp_path), disabled=("skills/sample",))
+
+        assert source.disables(Builder.item(plugin="kit")), (
+            "Expected the unqualified selector to match the plugin item's alias"
+        )
+
+    def test_legacy_positional_constructor_keeps_existing_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Appending the field preserves existing positional SourceConfig callers."""
+        layout = {kind: kind.value for kind in Kind}
+        source = SourceConfig("library", tmp_path, layout, ("ignored",), "kits")
+
+        assert (source.exclude, source.plugins, source.disabled) == (
+            ("ignored",),
+            "kits",
+            (),
+        ), f"Expected backwards-compatible source defaults, got {source!r}"
+        assert not source.disables(Builder.item()), (
+            "Expected nothing disabled by default"
+        )
+
+    def test_empty_disabled_list_keeps_resources_enabled(
+        self, tmp_path: Path, environment: Environment
+    ) -> None:
+        """Removing all selectors reversibly restores ordinary source selection."""
+        source = self.load(tmp_path, environment, [])
+
+        assert source.disabled == (), (
+            f"Expected empty source disabled state: {source!r}"
+        )
+        assert not source.disables(Builder.item()), (
+            "Expected an empty list to disable none"
+        )
+
+    @pytest.mark.parametrize(
+        "disabled",
+        [None, "skills/foo", True, 1, {}, [""], [1], [None], ["skills/foo", 2]],
+    )
+    def test_rejects_wrong_disabled_field_types(
+        self, tmp_path: Path, environment: Environment, disabled: object
+    ) -> None:
+        """Wrong container and element types identify the exact source setting."""
+        with pytest.raises(ConfigurationError, match=r"sources\.library\.disabled"):
+            self.load(tmp_path, environment, disabled)
+
+    @pytest.mark.parametrize(
+        "selector",
+        [
+            "skills",
+            "skills/",
+            "skills/ ",
+            "/skills/foo",
+            "skills//foo",
+            "skills/foo/bar",
+            "plugin/kit/skills/foo",
+            "plugins/kit/skills",
+            "plugins//skills/foo",
+            "plugins/kit/skills/",
+            "plugins/kit/unknown/foo",
+            "unknown/foo",
+            "sk*/foo",
+            "skills\\foo",
+            "plugins\\kit\\skills\\foo",
+            "skills/..",
+            "plugins/../skills/foo",
+            "plugins/./skills/foo",
+            "skills/.",
+            "../foo",
+            "C:/skills/foo",
+            "//server/skills/foo",
+            "plugins/kit/skills/foo/bar",
+        ],
+    )
+    def test_rejects_noncanonical_disabled_selectors(
+        self, tmp_path: Path, environment: Environment, selector: str
+    ) -> None:
+        """Malformed paths and unknown kinds fail early with repair guidance."""
+        with pytest.raises(
+            ConfigurationError, match=r"sources\.library\.disabled"
+        ) as error:
+            self.load(tmp_path, environment, [selector])
+
+        assert "kind/name" in str(error.value), (
+            f"Expected canonical selector guidance, got {error.value}"
         )
 
 

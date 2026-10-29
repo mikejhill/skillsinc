@@ -640,8 +640,7 @@ def backend(scheduler: Scheduler, runner: Runner, environment: Environment) -> B
             return SystemdTimer(runner, environment)
         case Scheduler.CRON:
             return Cron(runner)
-        case _:
-            return assert_never(scheduler)
+    return assert_never(scheduler)
 
 
 def interpreter(executable: Path, platform: str) -> Path:

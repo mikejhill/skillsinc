@@ -42,7 +42,12 @@ settings.register_profile(
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
 # Test layers, by location; select one with ``pytest -m <layer>``
-LAYERS = {"e2e": "e2e", "perf": "perf", "test_journeys.py": "integration"}
+LAYERS = {
+    "e2e": "e2e",
+    "perf": "perf",
+    "test_journeys.py": "integration",
+    "test_resource_disable.py": "integration",
+}
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

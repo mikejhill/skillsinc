@@ -153,6 +153,85 @@ class TestDestinationDiff:
             f"Expected {action} with note {note!r}, got {(changes, errors)!r}"
         )
 
+    @pytest.mark.parametrize("protect", [False, True])
+    def test_disabling_guard_protects_edited_files(
+        self, tmp_path: Path, *, protect: bool
+    ) -> None:
+        """Guarded updates preserve owned edits without changing normal sync policy."""
+        (tmp_path / "file").write_bytes(b"local edits")
+        manifest = Manifest("target", str(tmp_path), {"file": Digest.of(b"old")})
+
+        changes, errors = DestinationDiff(
+            tmp_path, manifest, adopt=False, protect_edits=protect
+        ).compare({"file": FileOutput("file", b"new")}, {})
+
+        if protect:
+            assert changes == (), f"Expected edited update refused: {changes!r}"
+            assert "while disabling resources" in errors[0], (
+                f"Expected disabling safety diagnostic: {errors!r}"
+            )
+        else:
+            assert errors == (), f"Expected ordinary drift repair: {errors!r}"
+            assert changes[0].note == "overwrites local edits", (
+                f"Expected normal overwrite warning: {changes!r}"
+            )
+        assert (tmp_path / "file").read_bytes() == b"local edits", (
+            "Expected comparison not to modify the file"
+        )
+
+    def test_disabling_guard_allows_unedited_source_updates(
+        self, tmp_path: Path
+    ) -> None:
+        """Preservation does not prevent updating unchanged managed content."""
+        (tmp_path / "file").write_bytes(b"old")
+        manifest = Manifest("target", str(tmp_path), {"file": Digest.of(b"old")})
+
+        changes, errors = DestinationDiff(
+            tmp_path, manifest, adopt=False, protect_edits=True
+        ).compare({"file": FileOutput("file", b"new")}, {})
+
+        assert errors == (), f"Expected unedited update allowed: {errors!r}"
+        assert changes[0].action is Action.UPDATE, (
+            f"Expected source update: {changes!r}"
+        )
+
+    @pytest.mark.parametrize("protect", [False, True])
+    def test_disabling_guard_protects_edited_shared_blocks(
+        self, tmp_path: Path, *, protect: bool
+    ) -> None:
+        """A shared block with remaining contributors cannot lose local edits."""
+        original = ManagedBlock.build((("one", "First"), ("two", "Second")))
+        edited = original.replace("Second", "Locally edited second")
+        raw = ("Outside user text.\n" + edited + "\n").encode()
+        (tmp_path / "AGENTS.md").write_bytes(raw)
+        manifest = Manifest(
+            "target",
+            str(tmp_path),
+            blocks={
+                "AGENTS.md": OwnedBlock(
+                    Digest.of(original.encode()), created_file=False
+                )
+            },
+        )
+
+        changes, errors = DestinationDiff(
+            tmp_path, manifest, adopt=False, protect_edits=protect
+        ).compare({}, {"AGENTS.md": (("two", "Second"),)})
+
+        if protect:
+            assert changes == (), f"Expected edited block refused: {changes!r}"
+            assert "while disabling resources" in errors[0], (
+                f"Expected disabling safety diagnostic: {errors!r}"
+            )
+        else:
+            assert errors == (), f"Expected ordinary block update: {errors!r}"
+            assert changes[0].note == "overwrites local edits to the block", (
+                f"Expected normal block warning: {changes!r}"
+            )
+        assert (tmp_path / "AGENTS.md").read_bytes() == raw, (
+            "Expected comparison to preserve shared-file bytes"
+        )
+
     @pytest.mark.parametrize("path", ["../escape", "directory"])
     def test_unsafe_or_directory_paths_block(self, tmp_path: Path, path: str) -> None:
         """Reject escaping paths and directories at expected file locations."""
@@ -294,6 +373,86 @@ class TestDestinationDiff:
         assert changes == (), f"Expected decoding conflict, got {(changes, errors)!r}"
         assert "cannot read" in errors[0], (
             f"Expected decoding conflict, got {(changes, errors)!r}"
+        )
+
+
+class TestDisablingEntryGuard:
+    """Shared configuration formats preserve edited ownership units on disabling."""
+
+    @pytest.mark.parametrize("protect", [False, True])
+    @pytest.mark.parametrize(
+        ("path", "container", "original", "desired", "current"),
+        [
+            (
+                "servers.json",
+                "servers",
+                {"command": "old"},
+                {"command": "new"},
+                b'{"servers":{"sample":{"command":"edited"}}}',
+            ),
+            (
+                "mcp.json",
+                "servers",
+                {"command": "old"},
+                {"command": "new"},
+                b'// User comment\n{"servers":{"sample":{"command":"edited"}}}',
+            ),
+            (
+                "config.toml",
+                "mcp_servers",
+                {"command": "old"},
+                {"command": "new"},
+                b'# User comment\n[mcp_servers.sample]\ncommand = "edited"\n',
+            ),
+            (
+                "settings.json",
+                "hooks",
+                [{"command": "one"}, {"command": "two"}],
+                [{"command": "two"}],
+                b'{"hooks":{"sample":[{"command":"one"},{"command":"two"},{"command":"local"}]}}',
+            ),
+        ],
+    )
+    def test_edited_entries_cannot_be_overwritten_when_guarded(  # noqa: PLR0913 - format matrix
+        self,
+        tmp_path: Path,
+        *,
+        path: str,
+        container: str,
+        original: JsonValue,
+        desired: JsonValue,
+        current: bytes,
+        protect: bool,
+    ) -> None:
+        """JSON, JSONC, TOML and merged arrays follow the same edit protection."""
+        (tmp_path / path).write_bytes(current)
+        entry = f"{container}/sample"
+        manifest = Manifest(
+            "target",
+            str(tmp_path),
+            entries={
+                path: OwnedEntries(
+                    created_file=False, keys={entry: JsonDocument.digest(original)}
+                ),
+            },
+        )
+
+        changes, errors = DestinationDiff(
+            tmp_path, manifest, adopt=False, protect_edits=protect
+        ).compare({}, {}, {path: (EntryOutput(path, container, "sample", desired),)})
+
+        if protect:
+            assert changes == (), f"Expected edited entry refused: {changes!r}"
+            assert "while disabling resources" in errors[0], (
+                f"Expected disabling safety diagnostic: {errors!r}"
+            )
+        else:
+            assert errors == (), f"Expected ordinary entry update: {errors!r}"
+            assert changes[0].note == "overwrites local edits", (
+                f"Expected normal entry warning: {changes!r}"
+            )
+        assert (tmp_path / path).read_bytes() == current, (
+            "Expected comparison to preserve shared configuration bytes"
         )
 
 
