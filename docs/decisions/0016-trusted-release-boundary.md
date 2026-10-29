@@ -1,4 +1,4 @@
-# 0014: Bind release tests, artifacts and publication to one reviewed commit
+# 0016: Bind release tests, artifacts and publication to one reviewed commit
 
 - **Status:** Proposed
 - **Date:** 2026-10-22

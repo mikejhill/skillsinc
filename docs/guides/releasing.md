@@ -26,6 +26,11 @@ While the version is below 1.0, breaking changes bump the minor version.
 
 release-please runs as its exact-version npm CLI with every transitive package integrity-locked in `.github/release-tools/package-lock.json`. Installation disables package scripts. No personal access token is used.
 
+Dependabot proposes weekly updates for that lock. The required **Security** check
+audits its dependency graph without installing packages or running lifecycle scripts,
+and fails on moderate or higher npm advisories. CodeQL and the Python dependency audit
+remain separate checks.
+
 ## One-time setup
 
 These need the repository owner; the workflows cannot do them.
@@ -47,3 +52,7 @@ The `Protected main` ruleset needs no bypass: release-please changes `main` only
 The release tag must resolve to the workflow commit and be an ancestor of `main`. Reusable CI checks out that immutable SHA, the distribution build checks out the same SHA, and publishers consume the artifact ID from that build in the same run. The provenance context therefore identifies the tested and packaged commit. An unpublished older tag cannot be backfilled from a newer main run; retry its original release run instead. Existing PyPI and TestPyPI environment approval settings remain in force.
 
 The workflow fails closed if the generated version PR contains source, workflow, dependency, rename, executable or symlink changes. Review unexpected generator changes before updating the validator. Dispatch checks still have the ordinary CI permissions; the native CodeQL upload retains its existing narrow permission and analysis mode. Check association for a newly generated bot PR must be verified before relying on unattended releases. No release PR is automatically merged.
+
+The expected generated branch is `release-please--branches--main--components--skillsinc`,
+matching the configured `skillsinc` package. Changing the package or generator's branch
+format requires updating and testing the exact branch validator before releasing.

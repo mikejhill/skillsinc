@@ -20,7 +20,7 @@ for (const [name, mutate] of [
   ["missing version", f => f.after[".release-please-manifest.json"] = '{".":"$(bad)"}'],
   ["unchanged version", f => f.after = { ...f.before }],
 ]) test(`reject ${name}`, () => { const f = fixture(); mutate(f); assert.throws(() => B.files(f.files, f.before, f.after)); });
-const pr = () => ({ state: "open", user: { id: 41898282, login: "github-actions[bot]" }, head: { repo: { full_name: "mikejhill/skillsinc" }, ref: "release-please--branches--main", sha: other }, base: { repo: { full_name: "mikejhill/skillsinc" }, ref: "main", sha } });
+const pr = () => ({ state: "open", user: { id: 41898282, login: "github-actions[bot]" }, head: { repo: { full_name: "mikejhill/skillsinc" }, ref: "release-please--branches--main--components--skillsinc", sha: other }, base: { repo: { full_name: "mikejhill/skillsinc" }, ref: "main", sha } });
 test("accept verified version PR identity", () => B.identity(pr(), "mikejhill/skillsinc", sha));
 for (const [name, mutate] of [
   ["fork", p => p.head.repo.full_name = "attacker/skillsinc"],
@@ -53,4 +53,77 @@ test('release API failures do not become an empty release', async () => {
     getContent:async()=>({data:{type:'file',encoding:'base64',size:20,content:Buffer.from('{".":"0.2.2"}').toString('base64')}}),
     getReleaseByTag:async()=>{throw Object.assign(new Error('denied'),{status:403});}
   }}}}, false));
+});
+
+const generated = () => {
+  const f = fixture();
+  const versionPr = { ...pr(), number: 41 };
+  versionPr.head.ref = 'release-please--branches--main--components--skillsinc';
+  const calls = [];
+  const rest = {
+    repos: {
+      getBranch: async () => ({ data: { commit: { sha } } }),
+      getContent: async ({ path, ref }) => {
+        const content = (ref === sha ? f.before : f.after)[path];
+        return { data: { type: 'file', encoding: 'base64', size: content.length,
+          content: Buffer.from(content).toString('base64') } };
+      },
+    },
+    pulls: {
+      list: async args => {
+        calls.push(['lookup', args]);
+        return { data: args.head === `mikejhill:${versionPr.head.ref}` ? [{ number: 41 }] : [] };
+      },
+      get: async () => ({ data: versionPr }),
+      listFiles: () => {},
+    },
+    git: {
+      getCommit: async () => ({ data: { parents: [{ sha }], tree: { sha } } }),
+      getTree: async () => ({ data: { truncated: false, tree: f.files.map(file =>
+        ({ path: file.filename, mode: '100644', type: 'blob' })) } }),
+      getRef: async () => ({ data: { object: { sha: versionPr.head.sha } } }),
+    },
+    actions: { createWorkflowDispatch: async args => calls.push(['dispatch', args]) },
+  };
+  return { f, versionPr, calls, rest,
+    github: { rest, paginate: async () => f.files },
+    core: { info: message => calls.push(['info', message]) } };
+};
+
+test('dispatches CI and Security for the actual component version branch', async () => {
+  const g = generated();
+  await B.versionPr({ context: ctx(), github: g.github, core: g.core });
+  assert.deepEqual(g.calls.filter(([kind]) => kind === 'dispatch').map(([, args]) =>
+    [args.workflow_id, args.ref]), [
+    ['ci.yml', g.versionPr.head.ref], ['security.yml', g.versionPr.head.ref],
+  ]);
+});
+
+test('version workflow rejects executable generated files before dispatch', async () => {
+  const g = generated();
+  g.rest.git.getTree = async () => ({ data: { truncated: false, tree:
+    g.f.files.map(file => ({ path: file.filename, mode: '100755', type: 'blob' })) } });
+  await assert.rejects(B.versionPr({ context: ctx(), github: g.github, core: g.core }));
+  assert.equal(g.calls.filter(([kind]) => kind === 'dispatch').length, 0);
+});
+
+test('version workflow rejects a branch moving after verification', async () => {
+  const g = generated();
+  g.rest.git.getRef = async () => ({ data: { object: { sha } } });
+  await assert.rejects(B.versionPr({ context: ctx(), github: g.github, core: g.core }));
+  assert.equal(g.calls.filter(([kind]) => kind === 'dispatch').length, 0);
+});
+
+test('publication exports the same verified SHA for CI and the package build', async () => {
+  const outputs = {};
+  const getContent = async () => ({ data: { type: 'file', encoding: 'base64', size: 20,
+    content: Buffer.from('{".":"0.2.2"}').toString('base64') } });
+  await B.releaseTarget({ context: ctx(), core: { setOutput: (k, v) => outputs[k] = v },
+    github: { rest: { repos: {
+      getContent,
+      getReleaseByTag: async () => ({ data: { tag_name: 'v0.2.2', assets: [] } }),
+      getCommit: async () => ({ data: { sha } }),
+      compareCommitsWithBasehead: async () => ({ data: { merge_base_commit: { sha } } }),
+    } } } }, false);
+  assert.deepEqual(outputs, { sha, version: '0.2.2', tag: 'v0.2.2', mode: 'pypi' });
 });

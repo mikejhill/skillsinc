@@ -18,3 +18,13 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: ci
+  - package-ecosystem: npm
+    directory: /.github/release-tools
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: ci
+    groups:
+      release-tooling:
+        patterns: ["*"]

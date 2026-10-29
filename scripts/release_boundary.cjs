@@ -2,6 +2,7 @@
 
 // Data-only release checks; this module never loads SkillSinc or PR code.
 const assert = require("node:assert/strict");
+const RELEASE_BRANCH = "release-please--branches--main--components--skillsinc";
 
 class ReleaseBoundary {
   static version(value) {
@@ -22,7 +23,7 @@ class ReleaseBoundary {
     assert.equal(pr.user.login, "github-actions[bot]");
     assert.equal(pr.head.repo.full_name, repository, "Cross-repository PR rejected");
     assert.equal(pr.base.repo.full_name, repository);
-    assert.equal(pr.head.ref, "release-please--branches--main", "Unexpected release branch");
+    assert.equal(pr.head.ref, RELEASE_BRANCH, "Unexpected release branch");
     assert.equal(pr.base.ref, "main");
     assert.equal(pr.base.sha, baseSha, "main changed; prepare from the new main run");
     this.sha(pr.head.sha);
@@ -89,7 +90,7 @@ class ReleaseBoundary {
 
   static async versionPr({ github, context, core }) {
     await this.context({ github, context });
-    const args = { ...context.repo, base: "main", head: "mikejhill:release-please--branches--main", state: "open", per_page: 100 };
+    const args = { ...context.repo, base: "main", head: `${context.repo.owner}:${RELEASE_BRANCH}`, state: "open", per_page: 100 };
     const { data: found } = await github.rest.pulls.list(args);
     if (found.length === 0) { core.info("No generated version PR"); return; }
     assert.equal(found.length, 1);
