@@ -56,13 +56,13 @@ Editors treat a `.json` file as strict JSON and may flag comments. In VS Code, a
 
 ## Optional self-management guidance
 
-`skillsinc init --with-guidance` adds `skills/skillsinc/SKILL.md` and
+Starting with 0.3.0, `skillsinc init --with-guidance` adds `skills/skillsinc/SKILL.md` and
 `instructions/skillsinc.instructions.md` to the selected source. These are
 ordinary library files: edit them there, review `skillsinc plan`, and explicitly
 run `skillsinc sync` to distribute them. No configuration schema key is added.
-When Codex or VS Code is detected, opt-in enables an `agents` destination for
-shared skill discovery, even if `~/.agents` has not yet been created. Init does
-not create that destination directory.
+When Codex or VS Code is detected, init enables an `agents` destination for
+shared skill discovery, even without this option and even if `~/.agents` has
+not yet been created. Init does not create that destination directory.
 
 The option does not create Git history or contact a remote. Keep the library in
 your own local Git repository and review eligible files before committing or
@@ -85,6 +85,10 @@ Required. Must be `1`.
 | `layout`  | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory |
 
 A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays fail the whole source.
+
+An error scanning a nested skill directory also fails the whole source. Its
+destinations stay unchanged, so an unreadable asset directory is never treated
+as an intentional removal of its files.
 
 ## `destinations.<name>`
 
@@ -114,9 +118,39 @@ An item reaching a destination through several routes is distributed once; it is
 
 ## Removing things
 
-- Remove an item from a route (or the library): the next sync deletes its files.
+- Remove an item from a route (or the library): the next sync deletes its
+  unedited managed files, blocks, and entries. Locally edited content is left
+  in place and released from ownership; review the plan for `forget` actions.
 - Set `"enabled": false`: the destination is left exactly as it is.
 - Point a destination at a new `path`: the plan refuses until you delete the old manifest named in the error, which releases the old files without deleting them.
+
+To remove distributed content while keeping the source library, leave the
+destination enabled and remove it from the routes. Run `skillsinc plan`, review
+the proposed deletions and releases, then `skillsinc sync`. Remove the destination
+from the configuration only after that cleanup. Disabling or deleting a
+destination from the configuration does not clean its files.
+
+SkillSinc has no automatic backup or rollback. Before adopting existing content
+or editing routes, copy any files you may want to restore and keep the source
+library under version control. To recover a prior library version, stop the
+scheduled sync with `skillsinc schedule remove`, restore the intended source
+version, inspect `skillsinc plan`, and sync when the result is correct. A
+destination edit to content that is still routed is overwritten by the source;
+copy that edit into the library first if you intend to keep it.
+
+To uninstall the tool, remove the scheduled job while the executable is still
+available, then use the package manager that installed it:
+
+```bash
+skillsinc schedule remove
+uv tool uninstall skillsinc
+```
+
+The package manager does not remove your library, configuration, manifests, or
+distributed content. Keep ownership records if you intend to reinstall or resume
+management; removing them makes existing output unmanaged. Older releases may
+not understand a newer configuration or manifest: preserve both before a
+downgrade, use documentation for that version, and preview before syncing.
 
 ## Migrating from TOML
 

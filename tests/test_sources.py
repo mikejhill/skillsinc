@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -56,6 +58,25 @@ class TestSourceReader:
         """Reject missing sources so they cannot be mistaken for deletions."""
         with pytest.raises(SourceError, match="directory not found"):
             SourceReader().read(Builder.source(tmp_path / "absent"))
+
+    @pytest.mark.parametrize("relative", ["", "references"])
+    def test_unreadable_asset_directory_fails_entire_source(
+        self, library: Path, monkeypatch: pytest.MonkeyPatch, relative: str
+    ) -> None:
+        """Directory scan failures must not turn omitted assets into deletions."""
+        unreadable = library / "skills/sample" / relative
+        original = os.scandir
+
+        def fail(path: str) -> Iterator[os.DirEntry[str]]:
+            """Simulate a scan error without changing filesystem permissions."""
+            if Path(path) == unreadable:
+                raise PermissionError("synthetic directory scan failure")
+            return original(path)
+
+        monkeypatch.setattr(os, "scandir", fail)
+
+        with pytest.raises(SourceError, match="synthetic directory scan failure"):
+            SourceReader().read(Builder.source(library))
 
     @pytest.mark.parametrize(
         ("content", "message"),

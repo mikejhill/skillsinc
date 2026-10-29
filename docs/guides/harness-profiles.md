@@ -2,6 +2,15 @@
 
 This guide lists exactly what each profile writes and which conversions lose information. Use it to decide which routes need `allow_lossy = true`.
 
+## Verification scope
+
+SkillSinc is alpha software. CI exercises generated files and CLI behavior on
+Windows, macOS, and Linux; it does not launch those harnesses. The dated notes
+below distinguish native discovery checks from file inspection. Native
+verification on macOS and Linux remains outstanding, as do VS Code discovery,
+Claude path-scoped rules, and Codex loading of the managed `AGENTS.md` block.
+Treat those integrations as unverified until a dated native check records them.
+
 ## Conventions
 
 - **exact**: the library file is copied byte for byte.

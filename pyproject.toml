@@ -138,4 +138,4 @@ pytest_add_cli_args_test_selection = ["tests/"]
 pytest_add_cli_args = ["-p", "no:randomly", "-p", "no:cacheprovider", "-m", "not e2e and not perf"]
 mutate_only_covered_lines = true
 # Files tests read beside the code
-also_copy = ["examples/"]
+also_copy = ["examples/", "scripts/"]

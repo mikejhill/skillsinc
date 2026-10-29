@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import stat
 import sys
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,49 @@ from tests.conftest import Builder, Sandbox
 
 from skillsinc.lock import StateLock
 from skillsinc.manifest import ManifestStore
+
+
+class TestSourceScanFailure:
+    """A failed traversal preserves previously delivered files and ownership."""
+
+    @pytest.mark.parametrize("command", ["plan", "sync"])
+    def test_unreadable_assets_preserve_every_destination(
+        self, sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, command: str
+    ) -> None:
+        """Refuse partial libraries instead of deleting assets omitted by os.walk."""
+        other = sandbox.environment.home / "other"
+        Builder.write_config(
+            sandbox.config_path,
+            sandbox.library,
+            (("target", "generic", sandbox.root), ("other", "generic", other)),
+        )
+        assert sandbox.run("sync")[0] == 0, "Expected initial sync to succeed"
+        before = {
+            path: path.read_bytes()
+            for root in (sandbox.root, other, sandbox.environment.state_directory)
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+        unreadable = sandbox.library / "skills/sample/references"
+        original = os.scandir
+
+        def fail(path: str) -> Iterator[os.DirEntry[str]]:
+            """Refuse exactly one source subtree during the next run."""
+            if Path(path) == unreadable:
+                raise PermissionError("synthetic directory scan failure")
+            return original(path)
+
+        monkeypatch.setattr(os, "scandir", fail)
+
+        status, output = sandbox.run(command)
+
+        assert status == 1, f"Expected failed source exit 1, got {status}: {output}"
+        assert "synthetic directory scan failure" in output, (
+            f"Expected source traversal error, got {output}"
+        )
+        assert all(path.read_bytes() == content for path, content in before.items()), (
+            "Expected every destination file and ownership manifest unchanged"
+        )
 
 
 class TestApplication:

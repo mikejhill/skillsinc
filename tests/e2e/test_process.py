@@ -7,6 +7,7 @@ import shutil
 from importlib.metadata import version
 from pathlib import Path
 
+import pytest
 from tests.e2e.conftest import Cli, Harnesses
 
 from skillsinc.jsonc import Jsonc
@@ -67,6 +68,64 @@ class TestEntryPoint:
 
 class TestFirstRun:
     """Process-level onboarding, explicit distribution, and convergence."""
+
+    def test_inherited_harness_overrides_cannot_escape_the_test_home(
+        self, home: Path, library: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Process fixtures isolate user-specific harness paths and Python imports."""
+        outside = home.parent / "inherited-harness"
+        outside.mkdir()
+        for name in ("CLAUDE_CONFIG_DIR", "COPILOT_HOME", "CODEX_HOME"):
+            monkeypatch.setenv(name, str(outside))
+        monkeypatch.setenv("PYTHONPATH", str(outside))
+        (home / ".codex").mkdir()
+        cli = Cli(home)
+
+        result = cli.run("init", "--source", str(library))
+
+        assert result.status == 0, f"Expected isolated initialization: {result!r}"
+        assert cli.run("sync").status == 0, "Expected isolated sync"
+        assert list(outside.iterdir()) == [], "Expected inherited paths untouched"
+        assert (home / ".agents/skills/review/SKILL.md").is_file(), (
+            "Expected synthetic home skill discovery"
+        )
+
+    def test_codex_only_init_installs_authored_skills(
+        self, cli: Cli, library: Path
+    ) -> None:
+        """Ordinary initialization connects Codex to shared skill discovery."""
+        (cli.home / ".codex").mkdir()
+        before = (library / "skills/review/SKILL.md").read_bytes()
+
+        init = cli.run("init", "--source", str(library))
+        assert init.status == 0, f"Expected first-run init: {init!r}"
+        assert not (cli.home / ".agents").exists(), "Expected no implicit sync"
+        sync = cli.run("sync")
+
+        assert sync.status == 0, f"Expected first-run sync: {sync!r}"
+        assert (cli.home / ".agents/skills/review/SKILL.md").read_bytes() == before, (
+            "Expected Codex's shared skill installed without optional guidance"
+        )
+
+    def test_sync_preserves_unmanaged_staging_name(
+        self, cli: Cli, library: Path
+    ) -> None:
+        """A new skill cannot consume an existing unowned temporary-looking file."""
+        (cli.home / ".agents").mkdir()
+        assert cli.run("init", "--source", str(library)).status == 0
+        existing = cli.home / ".agents/skills/review/.SKILL.md.skillsinc-tmp"
+        existing.parent.mkdir(parents=True)
+        existing.write_bytes(b"Unmanaged user content")
+
+        result = cli.run("sync")
+
+        assert result.status == 0, f"Expected safe first sync: {result!r}"
+        assert existing.read_bytes() == b"Unmanaged user content", (
+            "Expected the unowned file preserved without --adopt"
+        )
+        assert (existing.parent / "SKILL.md").read_bytes() == (
+            library / "skills/review/SKILL.md"
+        ).read_bytes(), "Expected authored content installed"
 
     def test_aliased_config_cannot_overwrite_guidance(self, cli: Cli) -> None:
         """Reject parent-component aliases before creating either guidance file."""

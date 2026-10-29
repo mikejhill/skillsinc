@@ -63,6 +63,12 @@ Each test gets a layer marker from its location; select one with `pytest -m <lay
 
 Mutation testing (`poe mutate`, `mutation.yml`) changes the code in small ways and checks that a test fails for each change. A surviving mutant marks behavior no test checks: add a test that kills it. The baseline is 86.7% with a floor of 85%; raise `MUTATION_FLOOR` in `mutation.yml` as the score rises, and never lower it.
 
+The mutation workspace copies `examples/` and `scripts/` through
+`tool.mutmut.also_copy`, because tests read scheduling examples and run the PyPI
+README generator beside the package. Keep support files in that list when
+adding tests; missing support files prevent the baseline run from reaching a
+mutation score.
+
 Rules:
 
 - Tests never touch the real home directory. Use the `environment` fixture (fake home under `tmp_path`, absolute `XDG_CONFIG_HOME`/`XDG_STATE_HOME`) or `Sandbox`.

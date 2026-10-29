@@ -51,7 +51,7 @@ class StarterConfig:
         if path.exists() and not force:
             msg = f"{path} already exists; pass --force to overwrite it"
             raise ConfigurationError(msg)
-        text = self.render(source, with_guidance=with_guidance)
+        text = self.render(source)
         library = source or self._environment.default_library
         guidance = GuidanceInstaller()
         pending = guidance.plan(library, path) if with_guidance else ()
@@ -62,7 +62,7 @@ class StarterConfig:
         path.write_text(text, encoding="utf-8")
         return text
 
-    def render(self, source: Path | None, *, with_guidance: bool = False) -> str:
+    def render(self, source: Path | None) -> str:
         """Return starter JSONC, enabling destinations whose harness folder exists."""
         source_path = self._display(source or self._environment.default_library)
         lines = [HEADER.rstrip("\n"), '  "sources": {']
@@ -85,11 +85,7 @@ class StarterConfig:
             for profile, default in defaults
             if default is not None and default.is_dir()
         ]
-        if (
-            with_guidance
-            and {"codex", "vscode"}.intersection(detected)
-            and "agents" not in detected
-        ):
+        if {"codex", "vscode"}.intersection(detected) and "agents" not in detected:
             detected.append("agents")
         for profile, default in defaults:
             if default is None:

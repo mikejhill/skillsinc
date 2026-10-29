@@ -309,9 +309,20 @@ class ConfigLoader:
     @staticmethod
     def _check_overlaps(config: Config) -> None:
         """Destinations may not share or nest directories; ownership would clash."""
-        destinations = sorted(config.destinations.values(), key=lambda d: d.path)
-        for first, second in pairwise(destinations):
-            if second.path == first.path or second.path.is_relative_to(first.path):
+        destinations: list[tuple[Path, DestinationConfig]] = []
+        for destination in config.destinations.values():
+            try:
+                resolved = destination.path.resolve()
+            except (OSError, RuntimeError) as err:
+                msg = (
+                    f"cannot resolve destination '{destination.name}'"
+                    f" ({destination.path}): {err}"
+                )
+                raise ConfigurationError(msg) from err
+            destinations.append((resolved, destination))
+        destinations.sort(key=lambda entry: entry[0])
+        for (first_path, first), (second_path, second) in pairwise(destinations):
+            if second_path == first_path or second_path.is_relative_to(first_path):
                 msg = (
                     f"destinations '{first.name}' and '{second.name}' overlap"
                     f" ({first.path} and {second.path})"
