@@ -204,7 +204,7 @@ class ManifestStore:
                 manifest belongs to another path.
         """
         manifest = self._load(destination, str(root))
-        if manifest.root != str(root):
+        if Path(manifest.root) != root:
             path = self.path(destination)
             moved = path if path.is_file() else self.journal_path(destination)
             msg = (
