@@ -241,9 +241,10 @@ class ManifestStore:
         if path.is_file() and not path.read_bytes().endswith(b"\n"):
             os.truncate(path, path.read_bytes().rfind(b"\n") + 1)
         if not path.is_file() or not path.stat().st_size:
-            path.write_text(
-                json.dumps({"root": manifest.root}) + "\n", encoding="utf-8"
-            )
+            header = {"root": manifest.root}
+            if manifest.config:
+                header["config"] = manifest.config
+            path.write_text(json.dumps(header) + "\n", encoding="utf-8")
         with path.open("a", encoding="utf-8", newline="\n") as stream:
             yield Journal(manifest, stream)
 
@@ -288,6 +289,8 @@ class ManifestStore:
                 msg = f"it is for {header['root']}, the manifest for {manifest.root}"
                 raise ValueError(msg)  # noqa: TRY301 — reported below
             manifest.root = header["root"]
+            if isinstance(header.get("config"), str):
+                manifest.config = header["config"]
             for line in lines[1:]:
                 step: object = json.loads(line)
                 if not isinstance(step, list):

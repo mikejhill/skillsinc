@@ -221,7 +221,8 @@ disappears; another existing configuration's manifests are left alone. A
 manifest with no known owner (written before 0.6.0 and never synced since, or
 recorded by a configuration file that no longer exists) prints a warning and is
 never touched; sync once with the configuration that owns it, or delete the
-named manifest to release its files. Renaming a destination that keeps its
+named manifest to release its files. A removed destination whose folder is now a configured source is blocked, never
+cleaned. Renaming a destination that keeps its
 path blocks the old name's cleanup instead of deleting files the new name
 needs: rename `<old>.json` in the manifests folder to `<new>.json`, as the
 error explains.

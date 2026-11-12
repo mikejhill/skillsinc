@@ -141,7 +141,11 @@ class Planner:
         """
         owner = self._config_key(config)
         configured = [
-            destination.path.resolve() for destination in config.destinations.values()
+            (f"destination '{destination.name}'", destination.path.resolve())
+            for destination in config.destinations.values()
+        ] + [
+            (f"source '{source.name}'", source.path.resolve())
+            for source in config.sources.values()
         ]
         plans: list[DestinationPlan] = []
         unknown: list[str] = []
@@ -166,25 +170,31 @@ class Planner:
         return tuple(plans), tuple(unknown)
 
     def _retire(
-        self, manifest: Manifest, configured: Sequence[Path]
+        self, manifest: Manifest, configured: Sequence[tuple[str, Path]]
     ) -> DestinationPlan:
-        """Plan the destruction of one removed destination's owned output."""
+        """Plan the destruction of one removed destination's owned output.
+
+        A root that overlaps a configured destination (usually a rename) or
+        a configured source (an output directory turned into a library) is
+        blocked rather than destroyed.
+        """
         root = Path(manifest.root)
         destination = DestinationConfig(manifest.destination, "", root)
         resolved = root.resolve()
-        if any(
-            resolved == other
-            or resolved.is_relative_to(other)
-            or other.is_relative_to(resolved)
-            for other in configured
-        ):
-            reason = (
-                f"removed destination '{manifest.destination}' owns files under"
-                f" {root}, which a configured destination also uses. If you renamed"
-                f" it, rename {self._store.path(manifest.destination)} to the new"
-                " name; otherwise delete it to release the files"
-            )
-            return DestinationPlan(destination, errors=(reason,), retired=True)
+        for label, other in configured:
+            if (
+                resolved == other
+                or resolved.is_relative_to(other)
+                or other.is_relative_to(resolved)
+            ):
+                manifest_path = self._store.path(manifest.destination)
+                reason = (
+                    f"removed destination '{manifest.destination}' owns files under"
+                    f" {root}, which configured {label} also uses. If you renamed"
+                    f" the destination, rename {manifest_path} to the new name;"
+                    " otherwise delete it to release the files"
+                )
+                return DestinationPlan(destination, errors=(reason,), retired=True)
         beside = frozenset(
             path
             for path in (*manifest.files, *manifest.blocks, *manifest.entries)

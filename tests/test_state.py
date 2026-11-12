@@ -9,7 +9,7 @@ import pytest
 from tests.conftest import Sandbox
 
 from skillsinc.exceptions import ConfigurationError
-from skillsinc.manifest import ManifestStore
+from skillsinc.manifest import ManifestStore, Ownership
 
 pytestmark = pytest.mark.integration
 
@@ -389,3 +389,46 @@ class TestRemovedDestinations:
 
         assert status == 1, output
         assert "config must be a string" in output
+
+    def test_removed_destination_turned_into_a_source_is_kept(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Retiring never deletes files from a directory now read as a library."""
+        StateCase.configure(sandbox, ("target", "old"))
+        assert sandbox.run("sync")[0] == 0
+        old = Path(StateCase.root(sandbox, "old"))
+        data = json.loads(sandbox.config_path.read_text(encoding="utf-8"))
+        del data["destinations"]["old"]
+        data["routes"][0]["destinations"] = ["target"]
+        data["sources"]["promoted"] = {"path": old.as_posix()}
+        sandbox.config_path.write_text(json.dumps(data), encoding="utf-8")
+
+        status, output = sandbox.run("sync")
+
+        assert status == 1, output
+        assert "which configured source 'promoted' also uses" in output
+        assert (old / "skills" / "sample" / "SKILL.md").is_file()
+
+    def test_interrupted_first_sync_keeps_its_configuration_owner(
+        self, sandbox: Sandbox
+    ) -> None:
+        """A journal replayed without a saved manifest still names its owner."""
+        StateCase.configure(sandbox, ("target", "old"))
+        assert sandbox.run("sync")[0] == 0
+        store = ManifestStore(sandbox.environment.state_directory)
+        saved = store.recorded("old")
+        store.path("old").unlink()
+        manifest = store.load("old", Path(saved.root))
+        manifest.config = saved.config
+        with store.journal(manifest) as journal:
+            journal.record(
+                [Ownership(path, digest) for path, digest in saved.files.items()]
+            )
+        assert not store.path("old").exists()
+        StateCase.configure(sandbox, ("target",))
+
+        status, output = sandbox.run("sync")
+
+        assert status == 0, output
+        assert StateCase.skills(sandbox, "old") == []
+        assert "old" not in store.names()
