@@ -48,11 +48,27 @@ TEMPORARY_PYTHON = (
 )
 
 
+def ignore_state(state: Path) -> None:
+    """Keep a project's state directory out of version control.
+
+    Manifests record what this checkout's syncs wrote, so they never belong
+    in the repository; a ``.gitignore`` inside the directory ignores it whole.
+    """
+    state.mkdir(parents=True, exist_ok=True)
+    ignore = state / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text(
+            "# SkillSinc state for this checkout; never commit it\n*\n",
+            encoding="utf-8",
+        )
+
+
 class InitCommand:
     """Write a starter configuration."""
 
     def __init__(self, profiles: ProfileRegistry, environment: Environment) -> None:
         self._starter = StarterConfig(profiles, environment)
+        self._environment = environment
 
     def run(self, settings: InitSettings, out: TextIO) -> int:
         """Write the file and tell the user what to do next."""
@@ -61,6 +77,7 @@ class InitCommand:
             settings.source,
             force=settings.force,
             with_guidance=settings.with_guidance,
+            project=self._environment.working_directory if settings.project else None,
         )
         if settings.with_guidance:
             out.write(
@@ -72,8 +89,18 @@ class InitCommand:
         out.write(
             f"Wrote {settings.config_path}\n"
             "Review it, run `skillsinc plan` to preview, then `skillsinc sync`.\n"
-            "To keep destinations in sync, run `skillsinc schedule install`.\n"
         )
+        if settings.project:
+            out.write(
+                "Inside this project, plan and sync use this file; pass --user for"
+                " your user configuration.\n"
+                "Commit the file; SkillSinc keeps .config/skillsinc/state out of"
+                " Git.\n"
+            )
+        else:
+            out.write(
+                "To keep destinations in sync, run `skillsinc schedule install`.\n"
+            )
         return 0
 
 
@@ -89,9 +116,11 @@ class PlanCommand:
         config = ConfigLoader(self._profiles, self._environment).load(
             settings.config_path
         )
-        store = ManifestStore(self._environment.state_directory)
+        profiles = self._profiles.scoped(config.project)
+        state = config.state_directory(self._environment)
+        store = ManifestStore(state, config.project)
         reader = SourceReader(remotes=RemoteCache(self._environment))
-        planner = Planner(self._profiles, reader, store, self._environment)
+        planner = Planner(profiles, reader, store, self._environment)
         reporter = Reporter(verbose=settings.verbose)
 
         if not settings.apply:
@@ -105,7 +134,9 @@ class PlanCommand:
             )
             return 0 if plan.ok else 1
 
-        lock = StateLock(self._environment.state_directory / "sync.lock")
+        if config.project is not None:
+            ignore_state(state)
+        lock = StateLock(state / "sync.lock")
         with lock:
             plan = planner.plan(
                 config, only=settings.destinations, adopt=settings.adopt

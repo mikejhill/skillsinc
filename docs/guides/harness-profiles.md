@@ -20,6 +20,21 @@ Treat those integrations as unverified until a dated native check records them.
 - Resources are `resources/<name>.md` reference files, copied byte for byte and never parsed; see [decision 0003](../decisions/0003-resources-and-claude-imports.md).
 - Hooks are `hooks/<name>.json` files in the [Copilot CLI hook format](https://docs.github.com/en/copilot/reference/hooks-reference): `{"version": 1, "hooks": {"<event>": [<hook>, ...]}}`. Event names may be camelCase (`preToolUse`, Copilot's payload) or PascalCase (`PreToolUse`, the Claude-compatible payload); see [decision 0006](../decisions/0006-hooks.md).
 
+## Project folders
+
+In a [project configuration](projects.md) each profile defaults to a folder in the project, and a few files move to where the harness reads them in a repository ([decision 0021](../decisions/0021-project-configurations.md)). Conversions are otherwise identical to the sections below.
+
+| Profile   | Project folder | Differences from the user layout                                                                                                                |
+| --------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude`  | `.claude/`     | MCP servers go to `.mcp.json` at the project root instead of `~/.claude.json`                                                                   |
+| `copilot` | `.github/`     | MCP servers go to `mcp.json`; prompts are written to `prompts/<name>.prompt.md` for VS Code; skills a `claude` destination delivers are skipped |
+| `vscode`  | `.vscode/`     | Only MCP servers (`mcp.json`, `servers`); VS Code reads instructions, agents, prompts, and skills from `.github`                                |
+| `codex`   | `.codex/`      | Instructions go to the managed block in `AGENTS.md` at the project root                                                                         |
+| `agents`  | `.agents/`     | none                                                                                                                                            |
+| `generic` | none           | `path` is required                                                                                                                              |
+
+Codex loads `.codex/` only in trusted projects. Copilot CLI and VS Code read `.claude/skills` and `.agents/skills` in a repository as well as `.github/skills`.
+
 ## Plugins
 
 Library plugins (`plugins/<plugin>/`, Claude Code layout) are expanded into skills, agents, prompts, and MCP servers before any profile sees them ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)). Each harness then receives the parts it supports, without the plugin namespace (`kit:reviewer` becomes `reviewer`).

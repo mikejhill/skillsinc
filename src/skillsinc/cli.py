@@ -9,7 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Final
 
-from skillsinc.paths import Environment
+from skillsinc.paths import PROJECT_CONFIG, Environment
 from skillsinc.schedule import (
     DEFAULT_INTERVAL,
     Scheduler,
@@ -54,21 +54,17 @@ class CommandLine:
                 log_level=log_level,
             )
 
-        config_path = Path(args.config) if args.config else None
-        config_path = config_path or self._environment.default_config_file
+        if command == "init":
+            return self._init(args, log_level)
+        if args.config and args.user:
+            self._parser.error("--config and --user cannot be combined")
+        config_path = (
+            Path(args.config)
+            if args.config
+            else self._environment.config_file(user=bool(args.user))
+        )
         if command == "status":
             return StatusSettings(config_path, bool(args.json), log_level)
-        if command == "init":
-            source = Path(args.source) if args.source else None
-            if source is not None and not source.expanduser().is_dir():
-                self._parser.error(f"--source is not a directory: {source}")
-            return InitSettings(
-                config_path,
-                source,
-                bool(args.force),
-                log_level,
-                bool(args.with_guidance),
-            )
         return PlanSettings(
             config_path=config_path,
             apply=command == "sync",
@@ -78,6 +74,28 @@ class CommandLine:
             verbose=bool(args.verbose),
             log_level=log_level,
             log_file=Path(args.log_file) if args.log_file else None,
+        )
+
+    def _init(self, args: argparse.Namespace, log_level: str) -> InitSettings:
+        """Return ``init`` settings; ``--project`` targets the working directory."""
+        source = Path(args.source) if args.source else None
+        if source is not None and not source.expanduser().is_dir():
+            self._parser.error(f"--source is not a directory: {source}")
+        project = bool(args.project)
+        if args.config:
+            config_path = Path(args.config)
+        elif project:
+            directory = self._environment.working_directory / PROJECT_CONFIG
+            config_path = directory / "config.json"
+        else:
+            config_path = self._environment.default_config_file
+        return InitSettings(
+            config_path,
+            source,
+            bool(args.force),
+            log_level,
+            bool(args.with_guidance),
+            project,
         )
 
     def _build_parser(self) -> argparse.ArgumentParser:
@@ -103,7 +121,15 @@ class CommandLine:
         configured.add_argument(
             "--config",
             metavar="PATH",
-            help=f"config file (default: {self._environment.default_config_file})",
+            help="config file (default: the nearest"
+            f" {PROJECT_CONFIG.as_posix()}/config.json above the working directory,"
+            f" else {self._environment.default_config_file})",
+        )
+        discovered = argparse.ArgumentParser(add_help=False)
+        discovered.add_argument(
+            "--user",
+            action="store_true",
+            help="use the user config even inside a project",
         )
 
         commands = parser.add_subparsers(
@@ -113,6 +139,13 @@ class CommandLine:
             "init", parents=[configured], help="write a starter configuration"
         )
         init.add_argument("--source", metavar="DIR", help="your customization library")
+        init.add_argument(
+            "--project",
+            action="store_true",
+            help="write a project config at"
+            f" ./{PROJECT_CONFIG.as_posix()}/config.json that syncs into this"
+            " directory",
+        )
         init.add_argument(
             "--with-guidance",
             action="store_true",
@@ -126,7 +159,9 @@ class CommandLine:
             ("plan", "show what a sync would change, without writing"),
             ("sync", "apply the plan to every enabled destination"),
         ):
-            command = commands.add_parser(name, parents=[configured], help=summary)
+            command = commands.add_parser(
+                name, parents=[configured, discovered], help=summary
+            )
             command.add_argument(
                 "-d",
                 "--destination",
@@ -157,7 +192,7 @@ class CommandLine:
 
         status = commands.add_parser(
             "status",
-            parents=[configured],
+            parents=[configured, discovered],
             help="show each source's state, including remote refresh failures",
         )
         status.add_argument("--json", action="store_true", help="print a JSON report")

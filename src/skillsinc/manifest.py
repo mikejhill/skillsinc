@@ -6,7 +6,7 @@ import json
 import os
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -159,10 +159,16 @@ class Journal:
 
 
 class ManifestStore:
-    """Load and atomically save manifests under the state directory."""
+    """Load and atomically save manifests under the state directory.
 
-    def __init__(self, directory: Path) -> None:
+    With a ``base`` (a project root), paths inside it are recorded relative to
+    it, so the project's state stays valid when the project is moved or
+    renamed; they are absolute again once loaded.
+    """
+
+    def __init__(self, directory: Path, base: Path | None = None) -> None:
         self._directory = directory
+        self._base = base
 
     def path(self, destination: str) -> Path:
         """Return the manifest file for ``destination``."""
@@ -225,7 +231,12 @@ class ManifestStore:
         path = self.path(manifest.destination)
         path.parent.mkdir(parents=True, exist_ok=True)
         staging = path.with_suffix(".json.tmp")
-        staging.write_text(manifest.to_json(), encoding="utf-8")
+        stored = replace(
+            manifest,
+            root=self._relative(manifest.root),
+            config=self._relative(manifest.config, resolved=True),
+        )
+        staging.write_text(stored.to_json(), encoding="utf-8")
         staging.replace(path)
         self.journal_path(manifest.destination).unlink(missing_ok=True)
 
@@ -241,14 +252,35 @@ class ManifestStore:
         if path.is_file() and not path.read_bytes().endswith(b"\n"):
             os.truncate(path, path.read_bytes().rfind(b"\n") + 1)
         if not path.is_file() or not path.stat().st_size:
-            header = {"root": manifest.root}
+            header = {"root": self._relative(manifest.root)}
             if manifest.config:
-                header["config"] = manifest.config
+                header["config"] = self._relative(manifest.config, resolved=True)
             path.write_text(json.dumps(header) + "\n", encoding="utf-8")
         with path.open("a", encoding="utf-8", newline="\n") as stream:
             yield Journal(manifest, stream)
 
     # Internals
+
+    def _relative(self, path: str, *, resolved: bool = False) -> str:
+        """Return ``path`` relative to the base when inside it, using ``/``.
+
+        A ``resolved`` path (the configuration's) is compared with the
+        resolved base, as it was resolved itself.
+        """
+        if self._base is None or not path:
+            return path
+        base = self._base.resolve() if resolved else self._base
+        candidate = Path(path)
+        if not candidate.is_absolute() or not candidate.is_relative_to(base):
+            return path
+        return candidate.relative_to(base).as_posix() or "."
+
+    def _absolute(self, path: str, *, resolved: bool = False) -> str:
+        """Return a recorded ``path`` made absolute against the base."""
+        if self._base is None or not path or Path(path).is_absolute():
+            return path
+        base = self._base.resolve() if resolved else self._base
+        return os.path.normpath(base / path)
 
     def _load(self, destination: str, root: str | None) -> Manifest:
         """Read the saved manifest and replay its journal; empty at ``root``."""
@@ -259,6 +291,8 @@ class ManifestStore:
             try:
                 data: object = json.loads(path.read_text(encoding="utf-8"))
                 manifest = self._parse(destination, data)
+                manifest.root = self._absolute(manifest.root)
+                manifest.config = self._absolute(manifest.config, resolved=True)
             except (OSError, ValueError, KeyError, TypeError) as err:
                 msg = f"ownership manifest is unreadable: {path} ({err})"
                 raise ConfigurationError(msg) from err
@@ -285,12 +319,13 @@ class ManifestStore:
             if not isinstance(header, dict) or not isinstance(header.get("root"), str):
                 msg = "the first line does not name the destination root"
                 raise ValueError(msg)  # noqa: TRY004, TRY301 — reported below
-            if saved and header["root"] != manifest.root:
-                msg = f"it is for {header['root']}, the manifest for {manifest.root}"
+            root = self._absolute(header["root"])
+            if saved and root != manifest.root:
+                msg = f"it is for {root}, the manifest for {manifest.root}"
                 raise ValueError(msg)  # noqa: TRY301 — reported below
-            manifest.root = header["root"]
+            manifest.root = root
             if isinstance(header.get("config"), str):
-                manifest.config = header["config"]
+                manifest.config = self._absolute(header["config"], resolved=True)
             for line in lines[1:]:
                 step: object = json.loads(line)
                 if not isinstance(step, list):

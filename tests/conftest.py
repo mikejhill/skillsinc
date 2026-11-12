@@ -198,6 +198,8 @@ def environment(tmp_path: Path) -> Environment:
             "XDG_STATE_HOME": str(tmp_path / "state"),
         },
         sys.platform,
+        # Project discovery starts here, never in the checkout running the tests
+        tmp_path,
     )
 
 

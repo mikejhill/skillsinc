@@ -22,6 +22,7 @@ from skillsinc.profiles.base import Profile
 from skillsinc.profiles.hooks import ClaudeHooks
 
 CLAUDE_JSON: Final = ".claude.json"
+PROJECT_MCP: Final = "../.mcp.json"
 INSTRUCTION_POLICY: Final = LossPolicy(
     carried=frozenset({"applyTo"}), ignored=frozenset({"name", "description"})
 )
@@ -49,10 +50,11 @@ class ClaudeProfile(Profile):
         Kind.HOOK: Support.CONVERTED,
         Kind.RESOURCE: Support.EXACT,
     }
-    outside: ClassVar[frozenset[str]] = frozenset({"../.claude.json"})
+    outside: ClassVar[frozenset[str]] = frozenset({"../.claude.json", PROJECT_MCP})
+    project_folder: ClassVar[str] = ".claude"
 
     @override
-    def default_path(self, environment: Environment) -> Path:
+    def user_path(self, environment: Environment) -> Path:
         """Return ``$CLAUDE_CONFIG_DIR`` or ``~/.claude``."""
         return environment.directory("CLAUDE_CONFIG_DIR", environment.home / ".claude")
 
@@ -77,9 +79,12 @@ class ClaudeProfile(Profile):
 
         Claude Code keeps it in ``$CLAUDE_CONFIG_DIR`` when that is set, and
         beside the default ``~/.claude`` directory (``~/.claude.json``) otherwise.
+        A project's servers go in ``.mcp.json`` at the project root.
         """
         if path != CLAUDE_JSON:
             return path
+        if self.project is not None:
+            return PROJECT_MCP
         configured = environment.directory("CLAUDE_CONFIG_DIR", Path())
         if configured.is_absolute() or root != environment.home / ".claude":
             return path

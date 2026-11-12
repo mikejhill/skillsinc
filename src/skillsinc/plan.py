@@ -105,6 +105,8 @@ class Plan:
     """Sources read from a last good copy because refreshing them failed."""
     config: str = ""
     """The configuration file recorded in the manifests this plan saves."""
+    project: str = ""
+    """The project root of a project configuration, or empty for the user's."""
 
     @property
     def ok(self) -> bool:

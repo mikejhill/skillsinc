@@ -69,13 +69,45 @@ class Profile(ABC):
     """Kinds the harness also loads from other profiles' default directories."""
     covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = dict[str, frozenset[Kind]]()
     """Kinds left out when another profile's default directory receives them."""
+    project_folder: ClassVar[str] = ""
+    """The folder the harness reads in a project, or empty if it has none."""
+    project_also_reads: ClassVar[Mapping[str, frozenset[Kind]] | None] = None
+    """``also_reads`` in a project, when it differs from the user level."""
+    project_covered_by: ClassVar[Mapping[str, frozenset[Kind]] | None] = None
+    """``covered_by`` in a project, when it differs from the user level."""
 
-    def __init__(self) -> None:
+    def __init__(self, project: Path | None = None) -> None:
         self._codec = FrontmatterCodec()
+        self.project = project
+        """The project root this profile writes into, or None for the user level."""
+
+    def scoped(self, project: Path | None) -> Profile:
+        """Return this profile for ``project``, or for the user level when None."""
+        return type(self)(project)
+
+    def default_path(self, environment: Environment) -> Path | None:
+        """Return the directory the harness reads at this profile's scope."""
+        if self.project is None:
+            return self.user_path(environment)
+        if not self.project_folder:
+            return None
+        return self.project / self.project_folder
 
     @abstractmethod
-    def default_path(self, environment: Environment) -> Path | None:
+    def user_path(self, environment: Environment) -> Path | None:
         """Return the harness's user-level directory, or None if it has none."""
+
+    def reads(self) -> Mapping[str, frozenset[Kind]]:
+        """Return ``also_reads`` for this profile's scope."""
+        if self.project is not None and self.project_also_reads is not None:
+            return self.project_also_reads
+        return self.also_reads
+
+    def covering(self) -> Mapping[str, frozenset[Kind]]:
+        """Return ``covered_by`` for this profile's scope."""
+        if self.project is not None and self.project_covered_by is not None:
+            return self.project_covered_by
+        return self.covered_by
 
     @abstractmethod
     def render(self, item: Customization) -> Rendering:

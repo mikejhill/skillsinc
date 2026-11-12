@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Final
 
 from skillsinc.config import TOML_RETIRED
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.guidance import GuidanceInstaller
-from skillsinc.paths import Environment
+from skillsinc.paths import PROJECT_CONFIG, Environment, absolute
 from skillsinc.profiles.registry import ProfileRegistry
 
 HEADER: Final = """\
@@ -19,6 +20,13 @@ HEADER: Final = """\
 {
   "version": 1,
 """
+PROJECT_NOTE: Final = (
+    "  // Project configuration: destinations without a path default to the harness's",
+    "  // folder in this project (.claude, .github, .vscode, .codex, .agents),"
+    " relative",
+    "  // paths resolve against the project root, and state is kept in"
+    " .config/skillsinc/state.",
+)
 
 
 class StarterConfig:
@@ -35,6 +43,7 @@ class StarterConfig:
         *,
         force: bool,
         with_guidance: bool = False,
+        project: Path | None = None,
     ) -> str:
         """Write the starter configuration to ``path`` and return its text.
 
@@ -51,7 +60,7 @@ class StarterConfig:
         if path.exists() and not force:
             msg = f"{path} already exists; pass --force to overwrite it"
             raise ConfigurationError(msg)
-        text = self.render(source)
+        text = self.render(source, project=project, path=path)
         library = source or self._environment.default_library
         guidance = GuidanceInstaller()
         pending = guidance.plan(library, path) if with_guidance else ()
@@ -62,10 +71,28 @@ class StarterConfig:
         path.write_text(text, encoding="utf-8")
         return text
 
-    def render(self, source: Path | None) -> str:
-        """Return starter JSONC, enabling destinations whose harness folder exists."""
+    def render(
+        self,
+        source: Path | None,
+        *,
+        project: Path | None = None,
+        path: Path | None = None,
+    ) -> str:
+        """Return starter JSONC, enabling destinations whose harness folder exists.
+
+        A ``project`` starter lists the harnesses that have a project folder;
+        their destinations default to that folder in the project. Written
+        anywhere but ``<project>/.config/skillsinc/``, it names the project
+        root explicitly, so it never loads as a user configuration.
+        """
         source_path = self._display(source or self._environment.default_library)
-        lines = [HEADER.rstrip("\n"), '  "sources": {']
+        lines = [HEADER.rstrip("\n")]
+        if project is not None:
+            lines.extend(PROJECT_NOTE)
+            root = None if path is None else self._project_key(project, path)
+            if root is not None:
+                lines.append(f'  "project": {json.dumps(root)},')
+        lines.append('  "sources": {')
         if source is None:
             lines.append(
                 "    // Default library. Add skills/, instructions/, agents/,"
@@ -87,12 +114,17 @@ class StarterConfig:
         ]
         if {"codex", "vscode"}.intersection(detected) and "agents" not in detected:
             detected.append("agents")
+        if project is not None and "vscode" in detected and "copilot" not in detected:
+            # In a project VS Code reads instructions, agents, and prompts from .github
+            detected.append("copilot")
         for profile, default in defaults:
-            if default is None:
+            if default is None or (project is not None and not profile.project_folder):
                 continue
             installed = profile.name in detected
             prefix = "" if installed else "// "
             note = "" if installed else "  // not found on this machine"
+            if project is not None and installed:
+                note = f"  // {profile.project_folder}/"
             name = json.dumps(profile.name)
             lines.append(f'    {prefix}{name}: {{ "profile": {name} }},{note}')
         lines.append("  },")
@@ -117,6 +149,15 @@ class StarterConfig:
             ]
         )
         return "\n".join(lines)
+
+    @staticmethod
+    def _project_key(project: Path, path: Path) -> str | None:
+        """Return the ``project`` value for a file outside the usual location."""
+        config = absolute(path)
+        root = absolute(project)
+        if config.parent == root / PROJECT_CONFIG:
+            return None
+        return Path(os.path.relpath(root, config.parent)).as_posix()
 
     def _display(self, path: Path) -> str:
         """Return ``path`` with forward slashes and ``~`` for the home directory."""
