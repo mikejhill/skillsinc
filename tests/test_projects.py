@@ -224,7 +224,7 @@ class TestProjectScope:
         assert config.project == project, f"Got {config.project}"
         assert config.destinations["claude"].path == project / ".claude"
 
-    @pytest.mark.parametrize("value", ["", "missing"])
+    @pytest.mark.parametrize("value", ["   ", "missing"])
     def test_project_key_must_name_a_directory(
         self, environment: Environment, tmp_path: Path, value: str
     ) -> None:

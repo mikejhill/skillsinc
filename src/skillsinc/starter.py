@@ -89,7 +89,7 @@ class StarterConfig:
         lines = [HEADER.rstrip("\n")]
         if project is not None:
             lines.extend(PROJECT_NOTE)
-            root = self._project_key(project, path)
+            root = None if path is None else self._project_key(project, path)
             if root is not None:
                 lines.append(f'  "project": {json.dumps(root)},')
         lines.append('  "sources": {')
@@ -151,10 +151,8 @@ class StarterConfig:
         return "\n".join(lines)
 
     @staticmethod
-    def _project_key(project: Path, path: Path | None) -> str | None:
+    def _project_key(project: Path, path: Path) -> str | None:
         """Return the ``project`` value for a file outside the usual location."""
-        if path is None:
-            return None
         config = absolute(path)
         root = absolute(project)
         if config.parent == root / PROJECT_CONFIG:
