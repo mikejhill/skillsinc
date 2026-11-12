@@ -52,4 +52,15 @@ class ScheduleSettings:
     log_level: str
 
 
-type Settings = InitSettings | PlanSettings | ProfilesSettings | ScheduleSettings
+@dataclass(frozen=True, slots=True)
+class StatusSettings:
+    """Settings for ``skillsinc status``."""
+
+    config_path: Path
+    json_output: bool
+    log_level: str
+
+
+type Settings = (
+    InitSettings | PlanSettings | ProfilesSettings | ScheduleSettings | StatusSettings
+)

@@ -104,6 +104,14 @@ my-agent-library/
 └── plugins/<plugin>/                 # Claude Code plugin layout, expanded into the kinds above
 ```
 
+A library can also live in a Git repository, public or private. Name it instead of a path, and SkillSinc keeps a cached checkout current at the cost of one `git ls-remote` per run, serving the last good copy if the remote is unreachable (**requires 0.5.0 or later**):
+
+```jsonc
+"sources": { "public": { "github": "mikejhill/agent-skills" } }
+```
+
+See [remote sources](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md#remote-sources).
+
 `INTENT.md`, `*.intent.md`, and hidden files are never distributed. A plugin's `skills/`, `agents/`, `commands/`, and `.mcp.json` are synced as skills, agents, prompts, and MCP servers; everything else in it (hooks, scripts, LSP servers) is reported as a loss. See [decision 0005](https://github.com/mikejhill/skillsinc/blob/main/docs/decisions/0005-plugins-expand-into-kinds.md).
 
 ## What each harness receives
@@ -126,6 +134,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](https://gith
 | `skillsinc init`     | Write a starter configuration                             |
 | `skillsinc plan`     | Show every change a sync would make; write nothing        |
 | `skillsinc sync`     | Apply the plan                                            |
+| `skillsinc status`   | Show each source's state, including remote failures       |
 | `skillsinc profiles` | List harness profiles and what each kind becomes          |
 | `skillsinc schedule` | `install`, `remove`, or show `status` of a scheduled sync |
 
@@ -166,6 +175,7 @@ to retire a destination or remove distributed content deliberately.
 - [Decision: edit VS Code's JSONC mcp.json in place](https://github.com/mikejhill/skillsinc/blob/main/docs/decisions/0008-jsonc-edits-in-place.md)
 - [Decision: one copy of each item per harness](https://github.com/mikejhill/skillsinc/blob/main/docs/decisions/0009-one-copy-per-harness.md)
 - [Decision: MCP server options and per-profile overrides](https://github.com/mikejhill/skillsinc/blob/main/docs/decisions/0010-mcp-server-options.md)
+- [Decision: remote Git sources](https://github.com/mikejhill/skillsinc/blob/main/docs/decisions/0019-remote-git-sources.md)
 - [Contributing](https://github.com/mikejhill/skillsinc/blob/main/CONTRIBUTING.md) · [Security](https://github.com/mikejhill/skillsinc/blob/main/SECURITY.md) · [Changelog](https://github.com/mikejhill/skillsinc/blob/main/CHANGELOG.md)
 
 ## License

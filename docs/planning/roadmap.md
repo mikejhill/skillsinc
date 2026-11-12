@@ -30,4 +30,4 @@ that every harness discovers or applies the generated content on each OS.
 
 ## Not planned
 
-Watch mode, OS login services, Git source fetching, and transformation plugins. See [decision 0001](../decisions/0001-rebuild-scope.md); reinstating any of them needs a new decision record.
+Watch mode, OS login services, and transformation plugins. See [decision 0001](../decisions/0001-rebuild-scope.md); reinstating any of them needs a new decision record. Git source fetching was reinstated by [decision 0019](../decisions/0019-remote-git-sources.md).

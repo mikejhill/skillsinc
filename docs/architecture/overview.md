@@ -26,6 +26,7 @@ graph LR
 | ----------------------------- | ----------------------------------------------------------------------- |
 | `config`                      | Parse and validate `config.json` (JSONC) into frozen dataclasses        |
 | `sources`                     | Read a library completely, expanding plugins, or raise `SourceError`    |
+| `remote`                      | Refresh Git sources into last-known-good cached checkouts               |
 | `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back           |
 | `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses     |
 | `planner`                     | Select items per route, render, apply loss policy, detect clashes       |
@@ -74,6 +75,7 @@ A profile may also write entries into files it declares beside its root (`Profil
 - Writes use a unique, exclusively created sibling temporary file, then `Path.replace` swaps it in. Existing files that happen to use a temporary-file name are not reused. A failed write cleans up its own staging file.
 - Every applied step (one write, with all the entries it carries) is appended as one line to a journal beside the manifest (`<destination>.journal`), and the manifest is saved once when the destination finishes. Loading replays recorded journal steps after an interruption. Replacement is atomic per file; a destination is not one transaction, and there is no automatic rollback or backup of prior content.
 - Planning refuses paths that pass through a symlink or junction beneath a destination root. A declared file beside the root must not be a link either; any other `..` path is refused.
+- A remote source whose refresh fails is read from its last good checkout; with no checkout it fails like a missing directory. Checkouts are replaced only after a complete fetch and checkout ([decision 0019](../decisions/0019-remote-git-sources.md)).
 - An error scanning a nested source directory fails the whole source. Destinations depending on that source stay unchanged, rather than treating unreadable assets as deleted files.
 
 ## Adding a harness

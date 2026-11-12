@@ -8,6 +8,9 @@ Each measurement takes the best of a few runs. Run with ``uv run poe perf``.
 from __future__ import annotations
 
 import io
+import json
+import os
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -35,6 +38,9 @@ SCALING_LIMIT: Final = 3.0
 # issue #25 measured about 10x.
 FIRST_SYNC_GROWTH: Final = 4
 FIRST_SYNC_SCALING_LIMIT: Final = 7.0
+# Extra seconds a converged plan may spend checking an unchanged remote
+# source (one `git ls-remote`, decision 0019)
+REMOTE_CHECK_ALLOWANCE: Final = 1.0
 
 
 def _write_library(root: Path, size: int) -> Path:
@@ -161,4 +167,49 @@ def test_converged_plan_scales_linearly(tmp_path: Path, size: int) -> None:
 
     assert ratio < SCALING_LIMIT, (
         f"Expected under {SCALING_LIMIT}x time for 2x items, got {ratio:.2f}x"
+    )
+
+
+def test_unchanged_remote_source_adds_one_cheap_check(tmp_path: Path) -> None:
+    """A converged plan of a remote library costs about one ``ls-remote`` more."""
+    library = _write_library(tmp_path / "library", SIZE)
+    identity = ["-c", "user.name=Perf", "-c", "user.email=perf@example.invalid"]
+    remote = tmp_path / "remote.git"
+    for argv in (
+        ["init", "--quiet", "--initial-branch=main", str(library)],
+        ["-C", str(library), "add", "--all"],
+        ["-C", str(library), *identity, "commit", "--quiet", "-m", "library"],
+        ["clone", "--quiet", "--bare", str(library), str(remote)],
+    ):
+        subprocess.run(["git", *argv], check=True, capture_output=True)  # noqa: S603, S607
+    environment = Environment(
+        tmp_path / "home",
+        {
+            **os.environ,
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        },
+        sys.platform,
+    )
+    environment.home.mkdir()
+    destinations = tuple((name, name, environment.home / name) for name in PROFILES)
+    config = tmp_path / "config.json"
+    Builder.write_config(config, library, destinations, allow_lossy=True)
+    # Drop the leading comment line Builder writes
+    data = json.loads(config.read_text(encoding="utf-8").split("\n", 1)[1])
+    data["sources"]["library"] = {"git": str(remote)}
+    config.write_text(json.dumps(data), encoding="utf-8")
+
+    def run(command: str) -> int:
+        out = io.StringIO()
+        argv = [command, "--config", str(config)]
+        return Application(environment, out=out).run(argv)
+
+    assert run("sync") == 0, "Expected the first sync from the remote to succeed"
+
+    elapsed = _best(lambda: run("plan"))
+
+    budget = CONVERGED_PLAN_BUDGET + REMOTE_CHECK_ALLOWANCE
+    assert elapsed < budget, (
+        f"Expected a converged remote plan under {budget}s, took {elapsed:.2f}s"
     )

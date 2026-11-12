@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from fnmatch import fnmatchcase
 from itertools import pairwise
 from pathlib import Path
@@ -15,12 +18,17 @@ from skillsinc.jsonc import Jsonc
 from skillsinc.models import Customization, Kind
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
+from skillsinc.schedule import parse_interval
 
 CONFIG_VERSION: Final = 1
 DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
 ALL_ITEMS: Final = ("*/*",)
 PLUGINS: Final = "plugins"
 DISABLED_KINDS: Final = frozenset({"*", *(kind.value for kind in Kind)})
+GITHUB_REPOSITORY: Final = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
+COMMIT: Final = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+CREDENTIALS: Final = re.compile(r"^[a-z][a-z0-9+.-]*://[^/@]*:[^/@]*@", re.IGNORECASE)
+LOCATIONS: Final = ("path", "github", "git")
 TOML_RETIRED: Final = (
     "TOML configuration is no longer read; rewrite it as config.json, see"
     " https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md"
@@ -29,8 +37,38 @@ TOML_RETIRED: Final = (
 
 
 @dataclass(frozen=True, slots=True)
+class RemoteConfig:
+    """Where a remote source's Git repository lives and which commit to read."""
+
+    url: str
+    label: str
+    """How reports name the repository: ``owner/repo`` or the URL."""
+    ref: str | None = None
+    """Branch, tag, or full commit SHA; None follows the remote's ``HEAD``."""
+    subdirectory: str = ""
+    refresh: timedelta = timedelta(0)
+    """Shortest time between remote checks; zero checks on every run."""
+    github: bool = False
+
+    @property
+    def pinned(self) -> bool:
+        """Return True if ``ref`` names one immutable commit."""
+        return self.ref is not None and COMMIT.match(self.ref) is not None
+
+    def cache_key(self, name: str) -> str:
+        """Return the cache directory name: the source name plus a digest."""
+        digest = hashlib.sha256(f"{self.url}\n{self.ref or ''}".encode()).hexdigest()
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+        return f"{safe}-{digest[:12]}"
+
+
+@dataclass(frozen=True, slots=True)
 class SourceConfig:
-    """A local library directory of authored customizations."""
+    """A library of authored customizations: a local directory or a Git remote.
+
+    For a remote source, ``path`` is its cache directory; the reader asks
+    the remote cache which checkout to read.
+    """
 
     name: str
     path: Path
@@ -38,6 +76,7 @@ class SourceConfig:
     exclude: tuple[str, ...] = DEFAULT_EXCLUDE
     plugins: str = PLUGINS
     disabled: tuple[str, ...] = ()
+    remote: RemoteConfig | None = None
 
     def disables(self, item: Customization) -> bool:
         """Match source-owned items against case-sensitive canonical selectors."""
@@ -243,15 +282,120 @@ class ConfigLoader:
     def _source(self, name: str, table: Table, base: Path) -> SourceConfig:
         """Build one source."""
         raw = table.string("path")
-        if raw is None:
-            msg = f"sources.{name}.path is required"
+        remote = self._remote(name, table)
+        if raw is None and remote is None:
+            msg = (
+                f"sources.{name}.path is required, unless github or git names a remote"
+            )
+            raise ConfigurationError(msg)
+        if raw is not None and remote is not None:
+            msg = f"sources.{name} needs exactly one of {', '.join(LOCATIONS)}"
             raise ConfigurationError(msg)
         layout, plugins = self._layout(table.table("layout"))
         exclude = table.strings("exclude", DEFAULT_EXCLUDE)
         disabled = self._disabled(name, table)
         table.finish()
-        path = self._environment.expand(raw, base)
-        return SourceConfig(name, path, layout, exclude, plugins, disabled)
+        if remote is not None:
+            path = self._environment.remote_cache / remote.cache_key(name)
+        else:
+            path = self._environment.expand(str(raw), base)
+        return SourceConfig(name, path, layout, exclude, plugins, disabled, remote)
+
+    @classmethod
+    def _remote(cls, name: str, table: Table) -> RemoteConfig | None:
+        """Build a source's remote settings, or None for a local source."""
+        where = f"sources.{name}"
+        github = table.string("github")
+        url = table.string("git")
+        ref = table.string("ref")
+        subdirectory = table.string("subdirectory")
+        refresh = table.string("refresh")
+        if github is None and url is None:
+            extra = [
+                key
+                for key, value in (
+                    ("ref", ref),
+                    ("subdirectory", subdirectory),
+                    ("refresh", refresh),
+                )
+                if value is not None
+            ]
+            if extra:
+                msg = f"{where}: {', '.join(extra)} applies only to github or git"
+                raise ConfigurationError(msg)
+            return None
+        if github is not None and url is not None:
+            msg = f"{where} needs exactly one of {', '.join(LOCATIONS)}"
+            raise ConfigurationError(msg)
+        if github is not None:
+            if not GITHUB_REPOSITORY.match(github) or github.endswith(".git"):
+                msg = f"{where}.github: expected 'owner/repo', got {github!r}"
+                raise ConfigurationError(msg)
+            url, label = f"https://github.com/{github}.git", github
+        else:
+            url, label = cls._url(where, str(url)), str(url)
+        return RemoteConfig(
+            url=url,
+            label=label,
+            ref=cls._ref(where, ref),
+            subdirectory=cls._subdirectory(where, subdirectory or ""),
+            refresh=cls._refresh(where, refresh),
+            github=github is not None,
+        )
+
+    @staticmethod
+    def _url(where: str, url: str) -> str:
+        """Refuse URLs that embed a password; Git's credentials belong elsewhere."""
+        if CREDENTIALS.match(url):
+            msg = (
+                f"{where}.git: do not put credentials in the URL; use a Git"
+                " credential helper, an SSH key, or GH_TOKEN for github sources"
+            )
+            raise ConfigurationError(msg)
+        if url.startswith("-") or any(char.isspace() for char in url):
+            msg = f"{where}.git: invalid repository URL {url!r}"
+            raise ConfigurationError(msg)
+        return url
+
+    @staticmethod
+    def _ref(where: str, ref: str | None) -> str | None:
+        """Refuse refs Git would read as an option or that cannot name a ref."""
+        if ref is not None and (
+            ref.startswith("-")
+            or any(char.isspace() or char in "~^:?*[\\" for char in ref)
+            or ".." in ref
+        ):
+            msg = f"{where}.ref: invalid branch, tag, or commit {ref!r}"
+            raise ConfigurationError(msg)
+        return ref
+
+    @staticmethod
+    def _subdirectory(where: str, subdirectory: str) -> str:
+        """Return a relative, forward-slash path inside the repository."""
+        parts = [part for part in subdirectory.split("/") if part]
+        if (
+            "\\" in subdirectory
+            or subdirectory.startswith("/")
+            or any(part in {".", ".."} for part in parts)
+            or ":" in subdirectory
+        ):
+            msg = (
+                f"{where}.subdirectory: expected a relative path inside the"
+                f" repository using '/', got {subdirectory!r}"
+            )
+            raise ConfigurationError(msg)
+        return "/".join(parts)
+
+    @staticmethod
+    def _refresh(where: str, refresh: str | None) -> timedelta:
+        """Parse the minimum time between remote checks."""
+        if refresh is None:
+            return timedelta(0)
+        try:
+            return parse_interval(refresh)
+        except ValueError as err:
+            msg = f"{where}.refresh: {err}"
+            raise ConfigurationError(msg) from err
 
     @staticmethod
     def _disabled(name: str, table: Table) -> tuple[str, ...]:

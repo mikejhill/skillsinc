@@ -78,18 +78,53 @@ Required. Must be `1`.
 
 ## `sources.<name>`
 
-| Key        | Required | Default                                                                               | Meaning                                                           |
-| ---------- | -------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `path`     | yes      | —                                                                                     | Library directory                                                 |
-| `exclude`  | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                               |
-| `disabled` | no       | `[]`                                                                                  | Resource selectors suppressed across every route from this source |
-| `layout`   | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory          |
+| Key        | Required | Default                                                                               | Meaning                                                               |
+| ---------- | -------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `path`     | one of   | —                                                                                     | Library directory                                                     |
+| `github`   | one of   | —                                                                                     | GitHub repository `owner/repo`; see [remote sources](#remote-sources) |
+| `git`      | one of   | —                                                                                     | Any Git URL; see [remote sources](#remote-sources)                    |
+| `exclude`  | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                                   |
+| `disabled` | no       | `[]`                                                                                  | Resource selectors suppressed across every route from this source     |
+| `layout`   | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory              |
 
 A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays fail the whole source.
 
 An error scanning a nested skill directory also fails the whole source. Its
 destinations stay unchanged, so an unreadable asset directory is never treated
 as an intentional removal of its files.
+
+### Remote sources
+
+Starting with **0.5.0**, a source can name a Git repository instead of a local directory ([decision 0019](../decisions/0019-remote-git-sources.md)). Give exactly one of `path`, `github`, or `git`:
+
+```jsonc
+"sources": {
+  "public": { "github": "mikejhill/agent-skills" },
+  "team": {
+    "github": "acme/agent-library",     // public or private
+    "ref": "main",                      // branch, tag, or full commit SHA
+    "subdirectory": "library",          // the library inside the repository
+    "refresh": "15m",                   // check the remote at most this often
+  },
+  "gitlab": { "git": "https://gitlab.com/acme/skills.git" },
+}
+```
+
+| Key            | Default             | Meaning                                                                    |
+| -------------- | ------------------- | -------------------------------------------------------------------------- |
+| `ref`          | the remote's `HEAD` | Branch, tag, `refs/...` name, or full 40-character commit SHA              |
+| `subdirectory` | repository root     | Relative path, using `/`, of the library inside the repository             |
+| `refresh`      | every run           | Shortest time between remote checks, such as `15m` or `1h` (at least `1m`) |
+
+`layout`, `exclude`, and `disabled` apply inside the checkout as for a local library. Remote sources need `git` on `PATH`.
+
+**Cost.** A refresh runs one `git ls-remote` for the ref: one HTTPS round trip of a few kilobytes, well within any host's limits even every five minutes. If the commit is unchanged, nothing is downloaded or rewritten. A new commit is fetched shallowly (`--depth 1`) into a cache under `$XDG_STATE_HOME/skillsinc/remotes/`, which keeps earlier objects, so only changed files travel. A full commit SHA in `ref` never contacts the remote once cached. `refresh` skips even the `ls-remote` until the interval has passed; a failed refresh is retried on the next run regardless.
+
+**Authentication.** SkillSinc never prompts, so scheduled runs fail fast instead of hanging. For `github` sources it uses the first of `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token` (when the GitHub CLI is signed in), passed to Git through its environment, never on a command line or in the cache. Otherwise, and for `git` sources, Git's own credential helper (Git Credential Manager, the macOS keychain, `gh auth setup-git`) or SSH keys apply; an SSH key needs no passphrase or must be loaded in an agent the scheduler can reach. A token needs read access to the repository's contents (a fine-grained token with "Contents: read", or a classic token with `repo` for private repositories). Credentials in a `git` URL are refused. On Windows, Task Scheduler runs see saved user variables only: save a token with `setx GH_TOKEN …`, or rely on `gh` or Git Credential Manager.
+
+**Failures.** A failed refresh never deletes anything. When a checkout is cached, the source is read from that last good commit and the run continues; the report prints a `warning:` line (JSON: `source_warnings`) and the run exits 1, so the scheduler's last result and the sync log show the problem. Without any cached checkout, the source fails like a missing directory and its destinations stay unchanged. `skillsinc status` shows each remote's commit, last check, last success, consecutive failures, and the last error with a remedy. GitHub reports a private repository the credentials cannot see as "repository not found"; SkillSinc treats that as an authentication problem.
+
+Deleting `$XDG_STATE_HOME/skillsinc/remotes/` is safe; the next run fetches again. Versions through 0.4.x reject `github` and `git`.
 
 ## `destinations.<name>`
 
