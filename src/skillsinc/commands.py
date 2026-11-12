@@ -14,7 +14,8 @@ from skillsinc.manifest import ManifestStore
 from skillsinc.paths import Environment
 from skillsinc.planner import Planner
 from skillsinc.profiles.registry import ProfileRegistry
-from skillsinc.report import Reporter
+from skillsinc.remote import RemoteCache
+from skillsinc.report import Reporter, SourceStatus
 from skillsinc.schedule import (
     VARIABLES,
     Backend,
@@ -29,7 +30,12 @@ from skillsinc.schedule import (
     format_interval,
     interpreter,
 )
-from skillsinc.settings import InitSettings, PlanSettings, ScheduleSettings
+from skillsinc.settings import (
+    InitSettings,
+    PlanSettings,
+    ScheduleSettings,
+    StatusSettings,
+)
 from skillsinc.sources import SourceReader
 from skillsinc.starter import StarterConfig
 
@@ -84,7 +90,8 @@ class PlanCommand:
             settings.config_path
         )
         store = ManifestStore(self._environment.state_directory)
-        planner = Planner(self._profiles, SourceReader(), store, self._environment)
+        reader = SourceReader(remotes=RemoteCache(self._environment))
+        planner = Planner(self._profiles, reader, store, self._environment)
         reporter = Reporter(verbose=settings.verbose)
 
         if not settings.apply:
@@ -111,6 +118,29 @@ class PlanCommand:
             out.write(reporter.results_text(results))
         failed = any(result.error is not None for result in results)
         return 0 if plan.ok and not failed else 1
+
+
+class StatusCommand:
+    """Report each source's health without contacting any remote."""
+
+    def __init__(self, profiles: ProfileRegistry, environment: Environment) -> None:
+        self._profiles = profiles
+        self._environment = environment
+
+    def run(self, settings: StatusSettings, out: TextIO) -> int:
+        """Print source states; exit 1 when any source needs attention."""
+        config = ConfigLoader(self._profiles, self._environment).load(
+            settings.config_path
+        )
+        cache = RemoteCache(self._environment)
+        states = [SourceStatus.of(source, cache) for source in config.sources.values()]
+        reporter = Reporter()
+        out.write(
+            reporter.status_json(states)
+            if settings.json_output
+            else reporter.status_text(states)
+        )
+        return 0 if all(state.healthy for state in states) else 1
 
 
 class ProfilesCommand:

@@ -6,7 +6,8 @@ This guide shows how to run `skillsinc sync` on a schedule. SkillSinc has no res
 
 - Install SkillSinc as a tool (`uv tool install skillsinc`). The scheduled job runs the Python that ran `schedule install`, so run it from that installation. `install` refuses a Python in uv's cache (`uvx`, `uv run --with`), which uv may delete.
 - Run `skillsinc plan` and one interactive `skillsinc sync` first. A scheduled run never passes `--adopt`, so unmanaged files block their destination until you decide.
-- Exit code 1 means a source failed, a destination was blocked, or another run held the lock; check the log.
+- Exit code 1 means a source failed, a remote source was served from its cache, a destination was blocked, or another run held the lock; check the log.
+- With remote sources, check `skillsinc status` (exit 1 when a refresh is failing) from a monitoring job or shell prompt to catch expired credentials. Make credentials available to the scheduler: see [remote sources](configuration.md#remote-sources).
 
 ## `skillsinc schedule`
 

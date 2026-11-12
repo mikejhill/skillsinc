@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import asdict, dataclass
 from typing import Final
 
 from skillsinc.applier import DestinationResult
+from skillsinc.config import SourceConfig
 from skillsinc.models import Kind
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
 from skillsinc.profiles.base import Profile
+from skillsinc.remote import RemoteCache
 
 REPORT_VERSION: Final = 1
 SKILL_FILE_DEPTH: Final = 3  # skills/<name>/<file>
@@ -21,6 +24,71 @@ SYMBOLS: Final = {
     Action.TRACK: "=",
     Action.FORGET: "?",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class SourceStatus:
+    """One source's health for ``skillsinc status``."""
+
+    name: str
+    type: str
+    """``local``, ``github``, or ``git``."""
+    location: str
+    state: str
+    """``ok``, ``missing``, ``not-fetched``, or ``failing``."""
+    library: str | None = None
+    ref: str | None = None
+    commit: str | None = None
+    updated_at: str | None = None
+    checked_at: str | None = None
+    succeeded_at: str | None = None
+    failures: int = 0
+    error: str | None = None
+    category: str | None = None
+    hint: str | None = None
+
+    @property
+    def healthy(self) -> bool:
+        """Return True unless the source is missing or its last refresh failed."""
+        return self.state in {"ok", "not-fetched"}
+
+    @classmethod
+    def of(cls, source: SourceConfig, cache: RemoteCache) -> SourceStatus:
+        """Describe ``source`` from disk alone, without contacting a remote."""
+        remote = source.remote
+        if remote is None:
+            found = source.path.is_dir()
+            return cls(
+                source.name,
+                "local",
+                str(source.path),
+                "ok" if found else "missing",
+                library=str(source.path),
+            )
+        stored = cache.state(source)
+        library = cache.library(source)
+        if stored.failing:
+            state = "failing"
+        elif library is None:
+            state = "not-fetched"
+        else:
+            state = "ok"
+        return cls(
+            source.name,
+            "github" if remote.github else "git",
+            remote.label,
+            state,
+            library=None if library is None else str(library),
+            ref=remote.ref,
+            commit=stored.commit,
+            updated_at=stored.updated_at,
+            checked_at=stored.checked_at,
+            succeeded_at=stored.succeeded_at,
+            failures=stored.failures,
+            error=stored.error,
+            category=stored.category,
+            hint=stored.hint,
+        )
 
 
 class Reporter:
@@ -36,6 +104,7 @@ class Reporter:
         lines: list[str] = [
             f"error: {message}" for message in plan.source_errors.values()
         ]
+        lines.extend(f"warning: {message}" for message in plan.source_warnings.values())
         for destination in plan.destinations:
             lines.extend(self._destination_text(destination))
         if not plan.destinations:
@@ -57,6 +126,7 @@ class Reporter:
             "ok": plan.ok and all(result.error is None for result in outcome.values()),
             "applied": results is not None,
             "source_errors": dict(plan.source_errors),
+            "source_warnings": dict(plan.source_warnings),
             "warnings": list(plan.warnings),
             "destinations": [
                 self._destination_json(
@@ -77,6 +147,69 @@ class Reporter:
         )
 
     # Profiles
+
+    @staticmethod
+    def status_text(states: Sequence[SourceStatus]) -> str:
+        """Return each source's state, with the error and remedy when failing."""
+        lines: list[str] = []
+        for status in states:
+            ref = f" (ref {status.ref})" if status.ref is not None else ""
+            lines.append(f"{status.name}: {status.type} {status.location}{ref}")
+            details: list[tuple[str, str | None]] = [
+                ("state", Reporter._state_label(status))
+            ]
+            if status.type != "local":
+                commit = status.commit[:12] if status.commit is not None else None
+                details += [
+                    ("commit", commit),
+                    ("updated", status.updated_at),
+                    ("last checked", status.checked_at),
+                    ("last success", status.succeeded_at),
+                    ("error", status.error),
+                    ("fix", status.hint),
+                ]
+            lines.extend(
+                f"  {label}: {value}" for label, value in details if value is not None
+            )
+        if not states:
+            lines.append("No sources are configured.")
+        failing = [status.name for status in states if not status.healthy]
+        lines.append("")
+        lines.append(
+            f"Needs attention: {', '.join(failing)}."
+            if failing
+            else "All sources are healthy."
+        )
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def status_json(states: Sequence[SourceStatus]) -> str:
+        """Return each source's state as versioned JSON."""
+        data = {
+            "version": REPORT_VERSION,
+            "ok": all(status.healthy for status in states),
+            "sources": [
+                {**asdict(status), "healthy": status.healthy} for status in states
+            ],
+        }
+        return json.dumps(data, indent=2) + "\n"
+
+    @staticmethod
+    def _state_label(status: SourceStatus) -> str:
+        """Return a readable state."""
+        if status.state == "failing":
+            plural = "es" if status.failures != 1 else ""
+            serving = (
+                "serving the cached copy"
+                if status.library is not None
+                else "nothing cached yet"
+            )
+            return f"failing ({status.failures} failed refresh{plural}; {serving})"
+        if status.state == "not-fetched":
+            return "not fetched yet; `skillsinc sync` fetches it"
+        if status.state == "missing":
+            return "directory not found"
+        return "ok"
 
     @staticmethod
     def profiles_text(profiles: Sequence[Profile]) -> str:

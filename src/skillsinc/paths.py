@@ -70,6 +70,11 @@ class Environment:
         """Return the directory holding ownership manifests and the run lock."""
         return self.state_home / "skillsinc"
 
+    @property
+    def remote_cache(self) -> Path:
+        """Return the directory holding one cache per remote source."""
+        return self.state_directory / "remotes"
+
 
 def destination_file(root: Path, path: str) -> Path:
     """Return the file at destination-relative ``path``.

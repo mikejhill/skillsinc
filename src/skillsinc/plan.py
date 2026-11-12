@@ -99,12 +99,16 @@ class Plan:
     source_errors: Mapping[str, str]
     warnings: tuple[str, ...] = ()
     """Problems that do not block a sync, such as a harness loading an item twice."""
+    source_warnings: Mapping[str, str] = field(default_factory=dict)
+    """Sources read from a last good copy because refreshing them failed."""
 
     @property
     def ok(self) -> bool:
-        """Return True if no source failed and no destination is blocked."""
-        return not self.source_errors and not any(
-            destination.blocked for destination in self.destinations
+        """Return True if every source was read fresh and no destination is blocked."""
+        return (
+            not self.source_errors
+            and not self.source_warnings
+            and not any(destination.blocked for destination in self.destinations)
         )
 
     @property

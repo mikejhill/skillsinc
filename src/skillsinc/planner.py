@@ -106,6 +106,11 @@ class Planner:
                 name: error for name, error in failures.items() if name in used
             },
             warnings=self._duplicates(plans),
+            source_warnings={
+                name: warning
+                for name, warning in self._reader.warnings.items()
+                if name in used
+            },
         )
 
     # Steps

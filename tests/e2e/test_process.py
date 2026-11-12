@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from importlib.metadata import version
 from pathlib import Path
 
@@ -427,3 +428,52 @@ class TestScheduling:
 
         assert result.status == 2, f"Expected exit 2, got {result!r}"
         assert "from 1m to 31d" in result.stderr, f"Expected the range: {result!r}"
+
+
+class TestRemoteSource:
+    """A Git remote as a source, through the installed command (decision 0019)."""
+
+    @staticmethod
+    def _publish(library: Path, remote: Path) -> None:
+        """Commit ``library`` and push it to a new bare repository."""
+        identity = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid"]
+        for argv in (
+            ["init", "--quiet", "--initial-branch=main", str(library)],
+            ["-C", str(library), "add", "--all"],
+            ["-C", str(library), *identity, "commit", "--quiet", "-m", "library"],
+            ["clone", "--quiet", "--bare", str(library), str(remote)],
+        ):
+            subprocess.run(["git", *argv], check=True, capture_output=True)  # noqa: S603, S607
+
+    def test_sync_from_remote_survives_an_outage(
+        self, cli: Cli, library: Path, tmp_path: Path
+    ) -> None:
+        """Remote items sync; an unreachable remote keeps them and exits 1."""
+        remote = tmp_path / "remote.git"
+        self._publish(library, remote)
+        config = {
+            "version": 1,
+            "sources": {"shared": {"git": str(remote)}},
+            "destinations": {"claude": {}},
+            "routes": [{"sources": ["shared"], "destinations": ["claude"]}],
+        }
+        cli.config_file.parent.mkdir(parents=True)
+        cli.config_file.write_text(json.dumps(config), encoding="utf-8")
+
+        first = cli.run("sync")
+        healthy = cli.run("status", "--json")
+
+        assert first.status == 0, f"Expected exit 0, got {first!r}"
+        skill = cli.home / ".claude" / "skills" / "review" / "SKILL.md"
+        assert skill.is_file(), f"Expected {skill} synced from the remote"
+        assert healthy.json()["ok"] is True, f"Expected healthy status: {healthy!r}"
+
+        remote.rename(remote.with_name("moved.git"))
+        outage = cli.run("sync")
+        failing = cli.run("status")
+
+        assert outage.status == 1, f"Expected exit 1, got {outage!r}"
+        assert "Using cached commit" in outage.stdout, f"Expected a warning: {outage!r}"
+        assert skill.is_file(), "Expected the cached copy to keep the skill"
+        assert failing.status == 1, f"Expected status to exit 1: {failing!r}"
+        assert "Needs attention: shared." in failing.stdout, f"Got {failing!r}"

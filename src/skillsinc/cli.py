@@ -22,6 +22,7 @@ from skillsinc.settings import (
     ProfilesSettings,
     ScheduleSettings,
     Settings,
+    StatusSettings,
 )
 
 LOG_LEVELS: Final = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -55,6 +56,8 @@ class CommandLine:
 
         config_path = Path(args.config) if args.config else None
         config_path = config_path or self._environment.default_config_file
+        if command == "status":
+            return StatusSettings(config_path, bool(args.json), log_level)
         if command == "init":
             source = Path(args.source) if args.source else None
             if source is not None and not source.expanduser().is_dir():
@@ -152,6 +155,12 @@ class CommandLine:
                 " printing them",
             )
 
+        status = commands.add_parser(
+            "status",
+            parents=[configured],
+            help="show each source's state, including remote refresh failures",
+        )
+        status.add_argument("--json", action="store_true", help="print a JSON report")
         commands.add_parser(
             "profiles",
             parents=[common],

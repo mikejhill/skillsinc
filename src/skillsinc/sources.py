@@ -24,6 +24,7 @@ from skillsinc.models import (
     JsonValue,
     Kind,
 )
+from skillsinc.remote import RemoteCache
 
 logger = logging.getLogger(__name__)
 
@@ -77,19 +78,32 @@ PLUGIN_VARIABLE: Final = re.compile(
 class SourceReader:
     """Read one library directory completely, or raise ``SourceError``."""
 
-    def __init__(self, codec: FrontmatterCodec | None = None) -> None:
+    def __init__(
+        self,
+        codec: FrontmatterCodec | None = None,
+        remotes: RemoteCache | None = None,
+    ) -> None:
         self._codec = codec or FrontmatterCodec()
+        self._remotes = remotes
+        self._warnings: dict[str, str] = {}
+
+    @property
+    def warnings(self) -> dict[str, str]:
+        """Return non-fatal problems by source, such as a remote served from cache."""
+        return dict(self._warnings)
 
     def read(self, source: SourceConfig) -> tuple[Customization, ...]:
         """Return every customization in ``source``, sorted by selector.
 
         A missing kind directory means "none of that kind". A missing root or
         any unreadable item fails the whole source, because a partial read
-        would look like deletions.
+        would look like deletions. A remote source is read from its cached
+        checkout, refreshed first when due.
 
         Raises:
             SourceError: If the library cannot be read completely and unambiguously.
         """
+        source = self._locate(source)
         if not source.path.is_dir():
             msg = f"source '{source.name}': directory not found: {source.path}"
             raise SourceError(msg)
@@ -123,6 +137,23 @@ class SourceReader:
         self._check_unique(source, items)
         logger.debug("Read %d items from source %s", len(items), source.name)
         return tuple(sorted(items, key=lambda item: item.selector))
+
+    def _locate(self, source: SourceConfig) -> SourceConfig:
+        """Point a remote source at its cached checkout; keep a local one.
+
+        Raises:
+            SourceError: If no remote cache is configured or no checkout exists.
+        """
+        self._warnings.pop(source.name, None)
+        if source.remote is None:
+            return source
+        if self._remotes is None:
+            msg = f"source '{source.name}': remote sources are not available here"
+            raise SourceError(msg)
+        checkout = self._remotes.checkout(source)
+        if checkout.warning is not None:
+            self._warnings[source.name] = checkout.warning
+        return replace(source, path=checkout.path)
 
     # Kinds
 

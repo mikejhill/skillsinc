@@ -15,12 +15,19 @@ from skillsinc.commands import (
     PlanCommand,
     ProfilesCommand,
     ScheduleCommand,
+    StatusCommand,
 )
 from skillsinc.exceptions import AppError, ConfigurationError
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schedule import Runner
-from skillsinc.settings import InitSettings, PlanSettings, ScheduleSettings, Settings
+from skillsinc.settings import (
+    InitSettings,
+    PlanSettings,
+    ScheduleSettings,
+    Settings,
+    StatusSettings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +107,10 @@ class Application:
             )
         if isinstance(settings, PlanSettings):
             return PlanCommand(self._profiles, self._environment).run(
+                settings, self._out
+            )
+        if isinstance(settings, StatusSettings):
+            return StatusCommand(self._profiles, self._environment).run(
                 settings, self._out
             )
         if isinstance(settings, ScheduleSettings):
