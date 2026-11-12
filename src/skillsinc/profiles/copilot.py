@@ -15,6 +15,9 @@ COPY_PATHS: Final = {
     Kind.RESOURCE: "resources/{name}.md",
     Kind.HOOK: "hooks/{name}.json",
 }
+PROJECT_VSCODE_REFUSAL: Final = (
+    "in a project VS Code reads it from .github; route it to a copilot destination"
+)
 VSCODE_REFUSALS: Final = {
     Kind.SKILL: "VS Code reads skills from copilot or agents destinations",
     Kind.RESOURCE: "route resources to a claude or copilot destination",
@@ -34,6 +37,15 @@ class CopilotProfile(Profile):
         "agents": frozenset({Kind.SKILL}),
     }
     covered_by: ClassVar[Mapping[str, frozenset[Kind]]] = also_reads
+    project_folder: ClassVar[str] = ".github"
+    # In a repository Copilot also reads .claude/skills and .agents/skills
+    project_also_reads: ClassVar[Mapping[str, frozenset[Kind]] | None] = {
+        "agents": frozenset({Kind.SKILL}),
+        "claude": frozenset({Kind.SKILL}),
+    }
+    project_covered_by: ClassVar[Mapping[str, frozenset[Kind]] | None] = (
+        project_also_reads
+    )
     summary: ClassVar[str] = (
         "Copilot CLI: skills/, instructions/, agents/, resources/, hooks/,"
         " mcp-config.json"
@@ -49,7 +61,7 @@ class CopilotProfile(Profile):
     }
 
     @override
-    def default_path(self, environment: Environment) -> Path:
+    def user_path(self, environment: Environment) -> Path:
         """Return ``$COPILOT_HOME`` or ``~/.copilot``."""
         return environment.directory("COPILOT_HOME", environment.home / ".copilot")
 
@@ -65,6 +77,9 @@ class CopilotProfile(Profile):
                 rendering = self.agent(
                     item, COPY_PATHS[item.kind].format(name=item.name)
                 )
+            case Kind.PROMPT if self.project is not None:
+                # .github/prompts is the repository's prompt folder for VS Code
+                rendering = self.prompt(item, f"prompts/{item.name}.prompt.md")
             case Kind.PROMPT:
                 rendering = self.refuse_kind(
                     item, "route prompts to a vscode destination"
@@ -85,7 +100,8 @@ class CopilotProfile(Profile):
         if isinstance(parts, Rendering):
             return parts
         server = {**parts.fields, **parts.overrides}
-        entry = EntryOutput("mcp-config.json", "mcpServers", item.name, server)
+        path = "mcp-config.json" if self.project is None else "mcp.json"
+        entry = EntryOutput(path, "mcpServers", item.name, server)
         return Rendering(entries=(entry,), losses=tuple(parts.losses))
 
     def _instruction(self, item: Customization) -> Rendering:
@@ -123,9 +139,19 @@ class VSCodeProfile(Profile):
         Kind.RESOURCE: Support.UNSUPPORTED,
     }
     outside: ClassVar[frozenset[str]] = frozenset({"../mcp.json"})
+    project_folder: ClassVar[str] = ".vscode"
+    # In a workspace VS Code reads .github instructions, agents, and prompts
+    project_also_reads: ClassVar[Mapping[str, frozenset[Kind]] | None] = {
+        "copilot": frozenset({Kind.SKILL, Kind.INSTRUCTION, Kind.AGENT, Kind.PROMPT}),
+        "agents": frozenset({Kind.SKILL}),
+        "claude": frozenset({Kind.SKILL}),
+    }
+    project_covered_by: ClassVar[Mapping[str, frozenset[Kind]] | None] = dict[
+        str, frozenset[Kind]
+    ]()
 
     @override
-    def default_path(self, environment: Environment) -> Path:
+    def user_path(self, environment: Environment) -> Path:
         """Return the stable VS Code ``User/prompts`` folder for this platform."""
         if environment.platform == "win32":
             fallback = environment.home / "AppData" / "Roaming"
@@ -138,7 +164,17 @@ class VSCodeProfile(Profile):
 
     @override
     def render(self, item: Customization) -> Rendering:
-        """Copy ``item`` verbatim with the suffix VS Code expects."""
+        """Copy ``item`` verbatim with the suffix VS Code expects.
+
+        In a project the destination is ``.vscode``, which holds only
+        ``mcp.json``; VS Code reads the rest from ``.github``.
+        """
+        if self.project is not None:
+            return self._workspace(item)
+        return self._prompts_folder(item)
+
+    def _prompts_folder(self, item: Customization) -> Rendering:
+        """Write ``item`` into the user ``prompts`` folder."""
         match item.kind:
             case Kind.INSTRUCTION:
                 return self.copy_file(item, f"{item.name}.instructions.md")
@@ -151,3 +187,9 @@ class VSCodeProfile(Profile):
             case Kind.SKILL | Kind.HOOK | Kind.RESOURCE:
                 return self.refuse_kind(item, VSCODE_REFUSALS[item.kind])
         return assert_never(item.kind)
+
+    def _workspace(self, item: Customization) -> Rendering:
+        """Write a server into a project's ``.vscode/mcp.json``; refuse the rest."""
+        if item.kind is Kind.MCP:
+            return self.server_entry(item, "mcp.json", "servers")
+        return self.refuse_kind(item, PROJECT_VSCODE_REFUSAL)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.profiles.base import Profile
 from skillsinc.profiles.claude import ClaudeProfile
@@ -23,6 +25,12 @@ class ProfileRegistry:
             GenericProfile(),
         )
         self._profiles = {profile.name: profile for profile in profiles or defaults}
+
+    def scoped(self, project: Path | None) -> ProfileRegistry:
+        """Return these profiles for ``project``, or for the user level when None."""
+        return ProfileRegistry(
+            tuple(profile.scoped(project) for profile in self._profiles.values())
+        )
 
     @property
     def profiles(self) -> tuple[Profile, ...]:

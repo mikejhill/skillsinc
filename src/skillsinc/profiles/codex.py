@@ -30,6 +30,7 @@ INSTRUCTION_POLICY: Final = LossPolicy(
 AGENT_POLICY: Final = LossPolicy(carried=frozenset({"name", "description"}))
 AGENT_NAME_INVALID: Final = re.compile(r"[^a-z0-9]")
 LINE_END: Final = re.compile(r"\r+\n")
+PROJECT_AGENTS: Final = "../AGENTS.md"
 
 # Library server fields Codex reads, per transport, and their Codex names
 STDIO_FIELDS: Final = {"command": "command", "args": "args", "env": "env", "cwd": "cwd"}
@@ -54,6 +55,8 @@ class CodexProfile(Profile):
     summary: ClassVar[str] = (
         "Codex: AGENTS.md block, agents/<name>.toml, config.toml mcp_servers"
     )
+    outside: ClassVar[frozenset[str]] = frozenset({PROJECT_AGENTS})
+    project_folder: ClassVar[str] = ".codex"
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.UNSUPPORTED,
         Kind.INSTRUCTION: Support.CONVERTED,
@@ -65,7 +68,7 @@ class CodexProfile(Profile):
     }
 
     @override
-    def default_path(self, environment: Environment) -> Path:
+    def user_path(self, environment: Environment) -> Path:
         """Return ``$CODEX_HOME`` or ``~/.codex``."""
         return environment.directory("CODEX_HOME", environment.home / ".codex")
 
@@ -74,7 +77,9 @@ class CodexProfile(Profile):
         """Merge instructions and servers into shared files; write agent files."""
         if item.kind is Kind.SKILL:
             return self.refuse_kind(
-                item, "Codex reads user skills from an agents destination (~/.agents)"
+                item,
+                "Codex reads skills from an agents destination"
+                f" ({'~/.agents' if self.project is None else '.agents'})",
             )
         if item.kind is Kind.MCP:
             return self.server(item)
@@ -101,7 +106,9 @@ class CodexProfile(Profile):
             scope = ", ".join(f"`{glob}`" for glob in globs)
             body = f"Applies when working with files matching {scope}.\n\n{body}"
             losses.append("applyTo becomes advisory text; Codex loads it every session")
-        return Rendering(blocks=(BlockOutput("AGENTS.md", body),), losses=tuple(losses))
+        # A project's AGENTS.md sits at its root, beside .codex
+        agents = "AGENTS.md" if self.project is None else PROJECT_AGENTS
+        return Rendering(blocks=(BlockOutput(agents, body),), losses=tuple(losses))
 
     # Agents
 

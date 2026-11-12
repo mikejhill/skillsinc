@@ -16,7 +16,7 @@ from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.jsonc import Jsonc
 from skillsinc.models import Customization, Kind
-from skillsinc.paths import Environment
+from skillsinc.paths import PROJECT_CONFIG, PROJECT_STATE, Environment, absolute
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schedule import parse_interval
 
@@ -161,6 +161,18 @@ class Config:
     sources: Mapping[str, SourceConfig]
     destinations: Mapping[str, DestinationConfig]
     routes: tuple[RouteConfig, ...]
+    project: Path | None = None
+    """The project root for a project configuration, or None for the user's."""
+
+    def state_directory(self, environment: Environment) -> Path:
+        """Return where this configuration keeps its manifests and run lock.
+
+        A project keeps its own under ``.config/skillsinc/state`` so its
+        destinations never share manifests with the user's or another project's.
+        """
+        if self.project is None:
+            return environment.state_directory
+        return self.project / PROJECT_STATE
 
 
 class Table:
@@ -288,24 +300,53 @@ class ConfigLoader:
         if version != CONFIG_VERSION:
             msg = f"{path}: unsupported version {version!r} (expected {CONFIG_VERSION})"
             raise ConfigurationError(msg)
-        base = path.parent
+        project = self._project(path, root.string("project"))
+        base = project or path.parent
+        profiles = self._profiles.scoped(project)
         sources = {
             name: self._source(name, table, base)
             for name, table in root.tables("sources").items()
         }
         destinations = {
-            name: self._destination(name, table, base)
+            name: self._destination(name, table, base, profiles)
             for name, table in root.tables("destinations").items()
         }
         routes = tuple(self._route(table) for table in root.table_list("routes"))
         root.finish()
 
-        config = Config(path, sources, destinations, routes)
+        config = Config(path, sources, destinations, routes, project)
         self._check_references(config)
         self._check_overlaps(config)
         return config
 
     # Sections
+
+    def _project(self, path: Path, raw: str | None) -> Path | None:
+        """Return the project root this configuration belongs to, if any.
+
+        A file at ``<root>/.config/skillsinc/config.json`` belongs to ``<root>``
+        by convention, except the user configuration in the home directory.
+        ``project`` names the root explicitly, relative to the file.
+
+        Raises:
+            ConfigurationError: If the named root is not a directory.
+        """
+        resolved = absolute(path)
+        if raw is not None:
+            if not raw.strip():
+                msg = f"{path}: project: expected a directory, got an empty string"
+                raise ConfigurationError(msg)
+            root = absolute(self._environment.expand(raw, resolved.parent))
+            if not root.is_dir():
+                msg = f"{path}: project: {root} is not a directory"
+                raise ConfigurationError(msg)
+            return root
+        if self._environment.is_user_config(resolved):
+            return None
+        root = resolved.parent.parent.parent
+        conventional = resolved.parent == root / PROJECT_CONFIG
+        home = absolute(self._environment.home)
+        return root if conventional and root != home else None
 
     def _source(self, name: str, table: Table, base: Path) -> SourceConfig:
         """Build one source."""
@@ -480,10 +521,15 @@ class ConfigLoader:
         table.finish()
         return layout, plugins
 
-    def _destination(self, name: str, table: Table, base: Path) -> DestinationConfig:
-        """Build one destination, defaulting its path from the profile."""
+    def _destination(
+        self, name: str, table: Table, base: Path, profiles: ProfileRegistry
+    ) -> DestinationConfig:
+        """Build one destination, defaulting its path from the profile.
+
+        In a project the default is the profile's folder in the project.
+        """
         profile_name = table.string("profile", name) or name
-        profile = self._profiles.get(profile_name)
+        profile = profiles.get(profile_name)
         raw = table.string("path")
         enabled = table.boolean("enabled", default=True)
         table.finish()
@@ -492,8 +538,10 @@ class ConfigLoader:
         else:
             default = profile.default_path(self._environment)
             if default is None:
+                scope = " in a project" if profile.project is not None else ""
                 msg = (
-                    f"destinations.{name}.path is required for profile '{profile.name}'"
+                    f"destinations.{name}.path is required for profile"
+                    f" '{profile.name}'{scope}"
                 )
                 raise ConfigurationError(msg)
             path = default

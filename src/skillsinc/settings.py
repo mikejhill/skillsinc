@@ -17,6 +17,7 @@ class InitSettings:
     force: bool
     log_level: str
     with_guidance: bool = False
+    project: bool = False
 
 
 @dataclass(frozen=True, slots=True)

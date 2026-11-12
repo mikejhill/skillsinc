@@ -16,6 +16,7 @@ class AgentsProfile(Profile):
 
     name: ClassVar[str] = "agents"
     summary: ClassVar[str] = "Shared Agent Skills home: skills/"
+    project_folder: ClassVar[str] = ".agents"
     support: ClassVar[Mapping[Kind, Support]] = {
         Kind.SKILL: Support.EXACT,
         Kind.INSTRUCTION: Support.UNSUPPORTED,
@@ -27,7 +28,7 @@ class AgentsProfile(Profile):
     }
 
     @override
-    def default_path(self, environment: Environment) -> Path:
+    def user_path(self, environment: Environment) -> Path:
         """Return ``~/.agents``."""
         return environment.home / ".agents"
 
@@ -47,7 +48,7 @@ class GenericProfile(Profile):
     support: ClassVar[Mapping[Kind, Support]] = dict.fromkeys(Kind, Support.EXACT)
 
     @override
-    def default_path(self, environment: Environment) -> None:
+    def user_path(self, environment: Environment) -> None:
         """Return None: a generic destination always needs an explicit path."""
         return
 

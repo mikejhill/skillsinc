@@ -113,6 +113,7 @@ class Planner:
                 *unknown,
             ),
             config=self._config_key(config),
+            project="" if config.project is None else str(config.project),
             source_warnings={
                 name: warning
                 for name, warning in self._reader.warnings.items()
@@ -286,7 +287,7 @@ class Planner:
         self, config: Config, destination: DestinationConfig
     ) -> list[DestinationConfig]:
         """Return enabled default-path destinations that may cover this one's items."""
-        covered_by = self._profiles.get(destination.profile).covered_by
+        covered_by = self._profiles.get(destination.profile).covering()
         if not covered_by or not self._at_default(destination):
             return []
         return [
@@ -411,7 +412,7 @@ class Planner:
         self, reader: DestinationPlan, plans: Sequence[DestinationPlan]
     ) -> dict[str, list[str]]:
         """Map each item ``reader``'s harness loads to the destinations it is in."""
-        also_reads = self._profiles.get(reader.destination.profile).also_reads
+        also_reads = self._profiles.get(reader.destination.profile).reads()
         seen: dict[str, list[str]] = defaultdict(list)
         if self._at_default(reader.destination):
             for label in reader.delivered:
@@ -441,7 +442,7 @@ class Planner:
         there, so a copy is never removed before its replacement exists.
         """
         for other in self._candidates(config, destination):
-            kinds = self._profiles.get(destination.profile).covered_by[other.profile]
+            kinds = self._profiles.get(destination.profile).covering()[other.profile]
             plan = covers.plans.get(other.name)
             if (
                 plan is None

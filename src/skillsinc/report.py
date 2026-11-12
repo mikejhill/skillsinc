@@ -101,9 +101,8 @@ class Reporter:
 
     def plan_text(self, plan: Plan, *, applied: bool) -> str:
         """Return a readable plan, one section per destination."""
-        lines: list[str] = [
-            f"error: {message}" for message in plan.source_errors.values()
-        ]
+        lines: list[str] = [f"Project: {plan.project}"] if plan.project else []
+        lines.extend(f"error: {message}" for message in plan.source_errors.values())
         lines.extend(f"warning: {message}" for message in plan.source_warnings.values())
         for destination in plan.destinations:
             lines.extend(self._destination_text(destination))
@@ -125,6 +124,7 @@ class Reporter:
             "version": REPORT_VERSION,
             "ok": plan.ok and all(result.error is None for result in outcome.values()),
             "applied": results is not None,
+            "project": plan.project or None,
             "source_errors": dict(plan.source_errors),
             "source_warnings": dict(plan.source_warnings),
             "warnings": list(plan.warnings),

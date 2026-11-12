@@ -18,22 +18,24 @@ Options go after the command, for example `skillsinc plan --json`.
 This reference follows `main`. `--with-guidance` requires 0.3.0 or later; check
 `skillsinc --version` and use the matching release tag for an older installation.
 
-| Option                     | Commands                                   | Meaning                                                                                                                       |
-| -------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `--config PATH`            | init, plan, sync, status, schedule install | Configuration file (default `$XDG_CONFIG_HOME/skillsinc/config.json`)                                                         |
-| `--source DIR`             | init                                       | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`)                        |
-| `--with-guidance`          | init                                       | Add a portable SkillSinc skill and global instruction to that source; no implicit sync, scheduler, or Git operations          |
-| `--force`                  | init                                       | Overwrite an existing configuration                                                                                           |
-| `-d`, `--destination NAME` | plan, sync                                 | Limit to this destination; repeatable                                                                                         |
-| `--adopt`                  | plan, sync                                 | Take ownership of existing files instead of blocking                                                                          |
-| `--json`                   | plan, sync, status                         | Print the JSON report instead of text                                                                                         |
-| `-v`, `--verbose`          | plan, sync                                 | List unsupported items, accepted losses, and every skill file                                                                 |
-| `--log-file PATH`          | plan, sync                                 | Append the report and diagnostics to PATH under a timestamped header instead of printing them; rotates to `PATH.1` past 1 MiB |
-| `--interval DURATION`      | schedule install                           | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS` (default `1h`)                                                    |
-| `--dry-run`                | schedule install                           | Print the scheduler definition without registering it                                                                         |
-| `--scheduler NAME`         | schedule                                   | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default                                             |
-| `--log-level LEVEL`        | all                                        | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                                                   |
-| `--version`                | none                                       | Print the version                                                                                                             |
+| Option                     | Commands                                   | Meaning                                                                                                                                                                                                     |
+| -------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--config PATH`            | init, plan, sync, status, schedule install | Configuration file (default: the nearest `.config/skillsinc/config.json` above the working directory, else `$XDG_CONFIG_HOME/skillsinc/config.json`; `init` and `schedule install` skip the project lookup) |
+| `--user`                   | plan, sync, status                         | Use the user configuration even inside a [project](projects.md)                                                                                                                                             |
+| `--project`                | init                                       | Write `./.config/skillsinc/config.json`, a project configuration for the working directory                                                                                                                  |
+| `--source DIR`             | init                                       | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`)                                                                                                      |
+| `--with-guidance`          | init                                       | Add a portable SkillSinc skill and global instruction to that source; no implicit sync, scheduler, or Git operations                                                                                        |
+| `--force`                  | init                                       | Overwrite an existing configuration                                                                                                                                                                         |
+| `-d`, `--destination NAME` | plan, sync                                 | Limit to this destination; repeatable                                                                                                                                                                       |
+| `--adopt`                  | plan, sync                                 | Take ownership of existing files instead of blocking                                                                                                                                                        |
+| `--json`                   | plan, sync, status                         | Print the JSON report instead of text                                                                                                                                                                       |
+| `-v`, `--verbose`          | plan, sync                                 | List unsupported items, accepted losses, and every skill file                                                                                                                                               |
+| `--log-file PATH`          | plan, sync                                 | Append the report and diagnostics to PATH under a timestamped header instead of printing them; rotates to `PATH.1` past 1 MiB                                                                               |
+| `--interval DURATION`      | schedule install                           | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS` (default `1h`)                                                                                                                                  |
+| `--dry-run`                | schedule install                           | Print the scheduler definition without registering it                                                                                                                                                       |
+| `--scheduler NAME`         | schedule                                   | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default                                                                                                                           |
+| `--log-level LEVEL`        | all                                        | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                                                                                                                                 |
+| `--version`                | none                                       | Print the version                                                                                                                                                                                           |
 
 ## Exit codes
 
@@ -46,7 +48,7 @@ This reference follows `main`. `--with-guidance` requires 0.3.0 or later; check
 
 `status` exits 1 when a local source directory is missing or a remote source's last refresh failed, else 0; it never contacts a remote. `schedule status` exits 0 when a job is registered and 1 when not; `schedule remove` exits 0 either way.
 
-A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` exit 1. Locks older than one hour are treated as stale.
+A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`, or `.config/skillsinc/state/sync.lock` in a project) makes an overlapping `sync` exit 1. Locks older than one hour are treated as stale.
 
 ## Plan symbols
 
@@ -68,6 +70,7 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
   "version": 1,
   "ok": true,
   "applied": false,
+  "project": null,
   "source_errors": {},
   "source_warnings": {},
   "destinations": [
@@ -95,6 +98,7 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
 | ------------------------ | --------------------------------------------------------------------- |
 | `ok`                     | False if any source failed, destination blocked, or apply step failed |
 | `applied`                | True for `sync`                                                       |
+| `project`                | Project root of a project configuration, else null                    |
 | `source_errors`          | Source name to error message                                          |
 | `source_warnings`        | Source name to warning: a remote served from its last good checkout   |
 | `warnings`               | Non-blocking problems, such as an `include` selector matching nothing |

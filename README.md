@@ -39,6 +39,7 @@ graph LR
 - **Lossy conversions are opt-in.** If a harness cannot represent a field (for example, Claude ignores Copilot `tools` lists), the item is skipped until the route sets `allow_lossy = true`.
 - **A broken source never deletes anything.** If a library cannot be read completely, its destinations are left untouched.
 - **Pick only what you want.** From 0.6.0, a source's `include` selectors take just the named skills (or other resources) from a library or GitHub repository. [Select specific resources](docs/guides/configuration.md#select-specific-resources).
+- **Per-project syncs.** From 0.6.0, a repository's `.config/skillsinc/config.json` syncs chosen resources into that repository's `.claude/`, `.github/`, `AGENTS.md`, and `.mcp.json`, with its own state; run it from a task such as `poe sync-skills`. [Project configurations](docs/guides/projects.md).
 - **Removing a destination cleans it up.** From 0.6.0, a destination deleted from the configuration has its managed output removed on the next sync, like Terraform destroying a resource removed from its configuration.
 - **Disable resources without deleting originals.** From 0.4.0, a source's `disabled` selectors suppress items across every route. [Preview cleanup and preserve local edits](docs/guides/configuration.md#disable-resources-while-preserving-their-sources) before syncing.
 
@@ -149,7 +150,7 @@ Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/
 | `skillsinc profiles` | List harness profiles and what each kind becomes          |
 | `skillsinc schedule` | `install`, `remove`, or show `status` of a scheduled sync |
 
-`plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, and `--config PATH`. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
+`plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, `--config PATH`, and `--user`. Inside a project with `.config/skillsinc/config.json`, they use that file. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
 ## Editing, recovery, and uninstalling
 
@@ -170,6 +171,7 @@ to retire a destination or remove distributed content deliberately.
 - [Brand assets and usage](docs/brand/README.md)
 
 - [Configuration reference](docs/guides/configuration.md)
+- [Project configurations](docs/guides/projects.md)
 - [Command-line reference](docs/guides/command-line.md)
 - [Scheduling](docs/guides/scheduling.md)
 - [Development guide](docs/guides/development.md)
@@ -187,6 +189,7 @@ to retire a destination or remove distributed content deliberately.
 - [Decision: one copy of each item per harness](docs/decisions/0009-one-copy-per-harness.md)
 - [Decision: MCP server options and per-profile overrides](docs/decisions/0010-mcp-server-options.md)
 - [Decision: remote Git sources](docs/decisions/0019-remote-git-sources.md)
+- [Decision: project configurations](docs/decisions/0021-project-configurations.md)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License

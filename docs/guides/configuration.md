@@ -8,9 +8,11 @@ The file keeps the `.json` extension but is read as JSONC: JSON plus `//` and `/
 
 | Item        | Default                                                   | Override                             |
 | ----------- | --------------------------------------------------------- | ------------------------------------ |
-| Config file | `$XDG_CONFIG_HOME/skillsinc/config.json` (`~/.config`)    | `--config PATH`                      |
+| Config file | `$XDG_CONFIG_HOME/skillsinc/config.json` (`~/.config`)    | `--config PATH`, or a project file   |
 | Library     | `$XDG_CONFIG_HOME/skillsinc/library/` (written by `init`) | `init --source DIR`, or `path` below |
 | State       | `$XDG_STATE_HOME/skillsinc/` (`~/.local/state`)           | `XDG_STATE_HOME`                     |
+
+Inside a directory tree containing `.config/skillsinc/config.json`, `plan`, `sync`, and `status` use that **project configuration** instead, with destinations, relative paths, and state inside the project; `--user` forces the user file. See [project configurations](projects.md).
 
 The XDG variables are honoured on Windows and macOS too. Relative paths in the file resolve against the file's directory; `~` expands to the home directory. Unknown keys are errors, so typos never pass silently.
 
@@ -75,6 +77,10 @@ of regenerating the config. See [the decision](../decisions/0014-optional-self-m
 ## `version`
 
 Required. Must be `1`.
+
+## `project`
+
+Optional. A directory, relative to the file, that makes this a [project configuration](projects.md) rooted there. A file at `<root>/.config/skillsinc/config.json` is already a project configuration for `<root>` and needs no key. Starting with 0.6.0.
 
 ## `sources.<name>`
 

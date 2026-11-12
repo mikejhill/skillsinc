@@ -7,6 +7,18 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
+
+PROJECT_CONFIG: Final = Path(".config") / "skillsinc"
+"""Where a project keeps its configuration, relative to the project root."""
+PROJECT_STATE: Final = PROJECT_CONFIG / "state"
+"""Where a project keeps its manifests and run lock, relative to its root."""
+CONFIG_NAMES: Final = ("config.json", "config.jsonc")
+
+
+def absolute(path: Path) -> Path:
+    """Return ``path`` absolute and normalized, without resolving links."""
+    return Path(os.path.normpath(path.absolute()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,11 +28,18 @@ class Environment:
     home: Path
     variables: Mapping[str, str]
     platform: str
+    cwd: Path | None = None
+    """The working directory projects are discovered from; None is the process's."""
 
     @classmethod
     def current(cls) -> Environment:
         """Capture the running process's environment."""
         return cls(home=Path.home(), variables=dict(os.environ), platform=sys.platform)
+
+    @property
+    def working_directory(self) -> Path:
+        """Return the absolute directory project discovery starts from."""
+        return absolute(self.cwd or Path.cwd())
 
     def directory(self, variable: str, fallback: Path) -> Path:
         """Return the absolute path named by ``variable``, else ``fallback``."""
@@ -56,7 +75,44 @@ class Environment:
         That is ``config.json`` (read as JSONC), or ``config.jsonc`` when only
         that one exists, as early builds wrote.
         """
+        return self._config_in(self.config_home / "skillsinc")
+
+    def is_user_config(self, path: Path) -> bool:
+        """Return True if ``path`` is the user configuration file."""
         directory = self.config_home / "skillsinc"
+        return any(
+            absolute(path) == absolute(directory / name) for name in CONFIG_NAMES
+        )
+
+    def project_config(self) -> Path | None:
+        """Return the nearest project configuration above the working directory.
+
+        Each directory from the working directory upward is checked for
+        ``.config/skillsinc/config.json`` (or ``config.jsonc``). The home
+        directory is not a project: its ``.config/skillsinc`` is the user
+        configuration, so the search stops below it.
+        """
+        home = absolute(self.home)
+        for directory in (self.working_directory, *self.working_directory.parents):
+            if directory == home:
+                return None
+            candidate = self._config_in(directory / PROJECT_CONFIG)
+            if candidate.is_file() and not self.is_user_config(candidate):
+                return candidate
+        return None
+
+    def config_file(self, *, user: bool = False) -> Path:
+        """Return the configuration used when ``--config`` is not given.
+
+        That is the nearest project configuration, unless ``user`` is set or
+        there is none, in which case it is the user configuration.
+        """
+        project = None if user else self.project_config()
+        return project or self.default_config_file
+
+    @staticmethod
+    def _config_in(directory: Path) -> Path:
+        """Return ``config.json`` in ``directory``, or an early ``config.jsonc``."""
         preferred, early = directory / "config.json", directory / "config.jsonc"
         return early if early.is_file() and not preferred.exists() else preferred
 

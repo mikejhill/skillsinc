@@ -17,21 +17,21 @@ skillsinc schedule status                  # interval, command, last result
 skillsinc schedule remove                  # unregister
 ```
 
-| Option                 | Actions | Meaning                                                                                         |
-| ---------------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| `--interval DURATION`  | install | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS`; 1 minute to 31 days (default `1h`) |
-| `--config PATH`        | install | Pass this configuration to every run (default: the usual lookup)                                |
-| `--dry-run`            | install | Print the definition without registering it                                                     |
-| `--scheduler NAME`     | all     | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default               |
+| Option                | Actions | Meaning                                                                                                 |
+| --------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `--interval DURATION` | install | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS`; 1 minute to 31 days (default `1h`)         |
+| `--config PATH`       | install | Pass this configuration to every run (default: the user configuration; jobs never run inside a project) |
+| `--dry-run`           | install | Print the definition without registering it                                                             |
+| `--scheduler NAME`    | all     | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default                       |
 
 `install` is idempotent: running it again replaces the definition, for example with a new interval. `remove` exits 0 even if nothing was registered. `status` exits 0 when a job is registered and 1 when not.
 
-| OS      | Scheduler (default)                   | Definition                                                         | Runs                                          | Log                                      |
-| ------- | ------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- | ---------------------------------------- |
-| Windows | Task Scheduler                        | Task `SkillSinc sync`                                              | At logon, then every interval                 | `$XDG_STATE_HOME\skillsinc\sync.log`     |
-| macOS   | launchd                               | `~/Library/LaunchAgents/io.github.mikejhill.skillsinc.plist`       | At login, then every interval                 | `$XDG_STATE_HOME/skillsinc/sync.log`     |
-| Linux   | systemd user timer                    | `skillsinc.service`, `skillsinc.timer` in `~/.config/systemd/user` | 1 minute after login, then every interval     | `journalctl --user -u skillsinc.service` |
-| Linux   | cron (no systemd user session)        | One crontab line ending in `# skillsinc schedule`                  | Every interval (must divide an hour or a day) | `$XDG_STATE_HOME/skillsinc/sync.log`     |
+| OS      | Scheduler (default)            | Definition                                                         | Runs                                          | Log                                      |
+| ------- | ------------------------------ | ------------------------------------------------------------------ | --------------------------------------------- | ---------------------------------------- |
+| Windows | Task Scheduler                 | Task `SkillSinc sync`                                              | At logon, then every interval                 | `$XDG_STATE_HOME\skillsinc\sync.log`     |
+| macOS   | launchd                        | `~/Library/LaunchAgents/io.github.mikejhill.skillsinc.plist`       | At login, then every interval                 | `$XDG_STATE_HOME/skillsinc/sync.log`     |
+| Linux   | systemd user timer             | `skillsinc.service`, `skillsinc.timer` in `~/.config/systemd/user` | 1 minute after login, then every interval     | `journalctl --user -u skillsinc.service` |
+| Linux   | cron (no systemd user session) | One crontab line ending in `# skillsinc schedule`                  | Every interval (must divide an hour or a day) | `$XDG_STATE_HOME/skillsinc/sync.log`     |
 
 `$XDG_STATE_HOME` defaults to `~/.local/state` on every platform. The log gets a `--- <time> skillsinc sync` header per run and moves to `sync.log.1` once it passes 1 MiB.
 
@@ -51,11 +51,11 @@ Task Scheduler cannot carry variables: tasks read your saved user variables. If 
 
 The files in [`examples/scheduling/`](../../examples/scheduling/) do the same by hand, for people who want to edit a definition (for example to add a calendar schedule or run a Windows task while logged off). They assume the `skillsinc` executable at `~/.local/bin/skillsinc`; use the path from `uv tool dir --bin`.
 
-| OS      | Files                                    | Runs                     | Log                                       |
-| ------- | ---------------------------------------- | ------------------------ | ----------------------------------------- |
-| Windows | `Register-SkillSincTask.ps1`             | At logon, then hourly    | `$XDG_STATE_HOME\skillsinc\sync.log`      |
-| macOS   | `io.github.mikejhill.skillsinc.plist`    | At load, then hourly     | `~/Library/Logs/skillsinc.log`            |
-| Linux   | `skillsinc.service`, `skillsinc.timer`   | Hourly, catching up      | `journalctl --user -u skillsinc.service`  |
+| OS      | Files                                  | Runs                  | Log                                      |
+| ------- | -------------------------------------- | --------------------- | ---------------------------------------- |
+| Windows | `Register-SkillSincTask.ps1`           | At logon, then hourly | `$XDG_STATE_HOME\skillsinc\sync.log`     |
+| macOS   | `io.github.mikejhill.skillsinc.plist`  | At load, then hourly  | `~/Library/Logs/skillsinc.log`           |
+| Linux   | `skillsinc.service`, `skillsinc.timer` | Hourly, catching up   | `journalctl --user -u skillsinc.service` |
 
 They use the same task name, agent label, and unit names as `skillsinc schedule`, so `schedule remove` also removes them and `schedule install` replaces them.
 
