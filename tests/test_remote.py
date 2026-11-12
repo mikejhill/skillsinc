@@ -20,7 +20,7 @@ from typing import override
 import pytest
 
 from skillsinc.__main__ import Application
-from skillsinc.config import Config, ConfigLoader, RemoteConfig, SourceConfig
+from skillsinc.config import Config, ConfigLoader, RemoteConfig, SourceConfig, mask
 from skillsinc.exceptions import ConfigurationError, SourceError
 from skillsinc.lock import StateLock
 from skillsinc.models import Kind
@@ -33,7 +33,6 @@ from skillsinc.remote import (
     Ran,
     RemoteCache,
     RemoteState,
-    mask,
 )
 from skillsinc.sources import SourceReader
 
@@ -260,7 +259,9 @@ class TestRemoteConfiguration:
             ({"github": "a/b", "git": "x"}, "exactly one of path, github, git"),
             ({"github": "nope"}, "expected 'owner/repo'"),
             ({"github": "a/b.git"}, "expected 'owner/repo'"),
-            ({"git": "https://me:secret@host/r.git"}, "credentials in the URL"),
+            ({"git": "https://me:secret@host/r.git"}, "credentials or a user"),
+            ({"git": "https://TOKEN123@host/r.git"}, "credentials or a user"),
+            ({"git": "ssh://me:secret@host/r.git"}, "credentials or a user"),
             ({"git": "--upload-pack=x"}, "invalid repository URL"),
             ({"git": "has space"}, "invalid repository URL"),
             ({"github": "a/b", "ref": "-x"}, "invalid branch"),
@@ -282,6 +283,27 @@ class TestRemoteConfiguration:
         """Ambiguous, unsafe, or malformed remote settings fail validation."""
         with pytest.raises(ConfigurationError, match=message):
             self._load(loader, tmp_path, source)
+
+    def test_rejected_credentials_are_never_echoed(
+        self, loader: ConfigLoader, tmp_path: Path
+    ) -> None:
+        """A token in a URL does not appear in the validation error."""
+        with pytest.raises(ConfigurationError) as caught:
+            self._load(loader, tmp_path, {"git": "https://ghp_SECRET@host/r.git"})
+
+        assert "ghp_SECRET" not in str(caught.value)
+
+    @pytest.mark.parametrize(
+        "url", ["ssh://git@example.com/team/lib.git", "git@example.com:team/lib.git"]
+    )
+    def test_ssh_user_names_are_allowed(
+        self, loader: ConfigLoader, tmp_path: Path, url: str
+    ) -> None:
+        """An SSH login name is not a secret and stays in the label."""
+        source = self._load(loader, tmp_path, {"git": url}).sources["s"]
+
+        assert source.remote is not None
+        assert source.remote.label == url
 
     def test_cache_key_depends_on_url_and_ref(self) -> None:
         """Changing the URL or ref starts a fresh cache; odd names are made safe."""
@@ -339,17 +361,34 @@ class TestRefresh:
     def test_new_commit_replaces_the_checkout(
         self, git_environment: Environment, repository: Repository
     ) -> None:
-        """A pushed change is fetched, and the old checkout is removed."""
+        """A pushed change is fetched; the old checkout outlives a grace period.
+
+        A concurrent run may still be reading the old checkout (Codex review
+        of #59), so it is removed only by a refresh an hour later.
+        """
         source = _source(git_environment, repository)
-        first = RemoteCache(git_environment).checkout(source).path
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        first = RemoteCache(git_environment, clock=lambda: start).checkout(source).path
         repository.commit({**_skill("second"), "library/skills/hello/SKILL.md": None})
         runner = _recorder()
 
-        second = RemoteCache(git_environment, runner).checkout(source).path
+        second = RemoteCache(git_environment, runner, clock=lambda: start).checkout(
+            source
+        )
+        kept = first.exists()
+        RemoteCache(
+            git_environment, clock=lambda: start + timedelta(minutes=59)
+        ).checkout(source)
+        still_kept = first.exists()
+        RemoteCache(git_environment, clock=lambda: start + timedelta(hours=1)).checkout(
+            source
+        )
 
+        second = second.path
         assert runner.verbs() == ["ls-remote", "fetch", "rev-parse", "checkout"]
         assert second != first
-        assert not first.exists()
+        assert (kept, still_kept, first.exists()) == (True, True, False)
+        assert RemoteCache(git_environment).state(source).retired == {}
         assert _names(SourceReader().read(replace(source, remote=None, path=second)))
         assert sorted(path.name for path in (second / "skills").iterdir()) == ["second"]
 
@@ -498,17 +537,65 @@ class TestCacheMaintenance:
     ) -> None:
         """An old checkout that cannot be removed now is retried next time."""
         source = _source(git_environment, repository)
-        RemoteCache(git_environment).checkout(source)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        RemoteCache(git_environment, clock=lambda: start).checkout(source)
         stale = source.path / "tree-111111111111"
         stale.mkdir()
+        RemoteCache(git_environment, clock=lambda: start).checkout(source)
 
         def refuse(path: Path) -> None:
             raise PermissionError(path)
 
         monkeypatch.setattr(RemoteCache, "_remove", staticmethod(refuse))
-        RemoteCache(git_environment).checkout(source)
+        later = start + timedelta(hours=2)
+        RemoteCache(git_environment, clock=lambda: later).checkout(source)
 
         assert stale.is_dir()
+        retired = RemoteCache(git_environment).state(source).retired
+        assert retired == {stale.name: start.isoformat(timespec="seconds")}
+
+    def test_damaged_or_zoneless_times_are_treated_as_unknown(
+        self, git_environment: Environment, repository: Repository
+    ) -> None:
+        """Unreadable retirement times restart the grace; checks become due."""
+        source = _source(git_environment, repository, refresh="1h")
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        cache = RemoteCache(git_environment, clock=lambda: start)
+        cache.checkout(source)
+        stale = source.path / "tree-222222222222"
+        stale.mkdir()
+        state = replace(
+            cache.state(source),
+            checked_at="2026-01-01T00:00:00",
+            retired={stale.name: "garbage"},
+        )
+        RemoteCache._save(source.path, state)
+        runner = _recorder()
+
+        RemoteCache(git_environment, runner, clock=lambda: start).checkout(source)
+
+        assert runner.verbs() == ["ls-remote"]
+        assert stale.is_dir()
+        assert cache.state(source).retired == {
+            stale.name: start.isoformat(timespec="seconds")
+        }
+
+    def test_existing_checkout_of_the_fetched_commit_is_reused(
+        self, git_environment: Environment, repository: Repository
+    ) -> None:
+        """A complete checkout already on disk is adopted, never rewritten."""
+        source = _source(git_environment, repository)
+        cache = RemoteCache(git_environment)
+        tree = cache.checkout(source).path.parent
+        marker = tree / "marker"
+        marker.write_text("kept", encoding="utf-8")
+        (source.path / STATE_FILE).unlink()
+        runner = _recorder()
+
+        RemoteCache(git_environment, runner).checkout(source)
+
+        assert "checkout" not in runner.verbs()
+        assert marker.is_file()
 
     def test_read_only_files_are_made_writable_before_removal(
         self, tmp_path: Path
@@ -521,6 +608,63 @@ class TestCacheMaintenance:
         RemoteCache._writable_retry(os.unlink, str(path), PermissionError())
 
         assert not path.exists()
+
+
+class TestSafety:
+    """Findings from the Codex review of #59: concurrent readers and links."""
+
+    def test_checkout_in_use_survives_a_concurrent_refresh(
+        self, git_environment: Environment, repository: Repository
+    ) -> None:
+        """A sync reading a checkout is unaffected by a plan replacing it."""
+        source = _source(git_environment, repository)
+        sync = RemoteCache(git_environment).checkout(source).path
+        repository.commit({**_skill("second"), "library/skills/hello/SKILL.md": None})
+
+        planned = RemoteCache(git_environment).checkout(source).path
+        items = SourceReader().read(replace(source, remote=None, path=sync))
+
+        assert planned != sync
+        assert _names(items) == ["hello"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="links need privileges")
+    def test_symbolic_links_are_refused(
+        self, tmp_path: Path, git_environment: Environment, repository: Repository
+    ) -> None:
+        """A link to a local secret fails the refresh; the secret is never read."""
+        secret = tmp_path / "secret.txt"
+        secret.write_text("TOP-SECRET", encoding="utf-8")
+        source = _source(git_environment, repository)
+        RemoteCache(git_environment).checkout(source)
+        link = repository.work / "library" / "skills" / "hello" / "leak.txt"
+        link.symlink_to(secret)
+        repository.commit({})
+        reader = SourceReader(remotes=RemoteCache(git_environment))
+
+        items = reader.read(source)
+
+        state = RemoteCache(git_environment).state(source)
+        assert state.category == "content"
+        assert "skills/hello/leak.txt" in str(state.error)
+        assert "Using cached commit" in reader.warnings["remote"]
+        contents = [asset.content for item in items for asset in item.assets]
+        assert b"TOP-SECRET" not in contents
+        assert not list(source.path.glob("*.partial"))
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="links need privileges")
+    def test_linked_subdirectory_is_refused(
+        self, tmp_path: Path, git_environment: Environment
+    ) -> None:
+        """A configured subdirectory that is a link cannot escape the checkout."""
+        outside = tmp_path / "outside"
+        (outside / "skills" / "x").mkdir(parents=True)
+        repo = Repository(tmp_path / "linked", git_environment.variables)
+        (repo.work / "library").symlink_to(outside, target_is_directory=True)
+        repo.commit({"README.md": "x"})
+        source = _source(git_environment, repo)
+
+        with pytest.raises(SourceError, match="symbolic link"):
+            SourceReader(remotes=RemoteCache(git_environment)).read(source)
 
 
 class TestFailures:
@@ -681,6 +825,7 @@ class TestFailures:
             json.dumps({"version": 1, "unexpected": 1}),
             json.dumps({"version": 1, "url": 5, "failures": "x", "bogus": 1}),
             json.dumps({"version": 1, "url": "u", "commit": None, "tree": None}),
+            json.dumps({"version": 1, "url": "u", "retired": {"tree-x": 5}}),
         ],
     )
     def test_unusable_state_is_ignored(
@@ -799,6 +944,29 @@ class TestAuthentication:
             == "fatal: https://***@host/r.git not found"
         )
         assert mask("plain https://host/r.git") == "plain https://host/r.git"
+        assert mask("at https://TOKEN@host/r.git") == "at https://***@host/r.git"
+        assert mask("ssh://git@host/r.git") == "ssh://git@host/r.git"
+        assert mask("ssh://git:pw@host/r.git") == "ssh://***@host/r.git"
+
+    def test_persisted_state_and_status_never_hold_url_credentials(
+        self, git_environment: Environment, repository: Repository
+    ) -> None:
+        """Even a URL that bypassed validation is masked in state and status."""
+        source = _source(git_environment, repository)
+        assert source.remote is not None
+        leaky = replace(
+            source,
+            remote=replace(source.remote, url="https://TOKEN9@127.0.0.1:9/r.git"),
+        )
+        cache = RemoteCache(git_environment)
+
+        with pytest.raises(SourceError) as caught:
+            cache.checkout(leaky)
+
+        stored = (leaky.path / STATE_FILE).read_text(encoding="utf-8")
+        assert "TOKEN9" not in stored
+        assert "TOKEN9" not in str(caught.value)
+        assert cache.state(leaky).failures == 1
 
 
 class TestJourneys:

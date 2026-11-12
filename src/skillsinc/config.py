@@ -27,13 +27,31 @@ PLUGINS: Final = "plugins"
 DISABLED_KINDS: Final = frozenset({"*", *(kind.value for kind in Kind)})
 GITHUB_REPOSITORY: Final = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 COMMIT: Final = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
-CREDENTIALS: Final = re.compile(r"^[a-z][a-z0-9+.-]*://[^/@]*:[^/@]*@", re.IGNORECASE)
+# ``scheme://userinfo@``: any userinfo may be a token, except an SSH user name
+USERINFO: Final = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]*)@")
+SSH_SCHEMES: Final = frozenset({"ssh://", "git+ssh://", "ssh+git://"})
 LOCATIONS: Final = ("path", "github", "git")
 TOML_RETIRED: Final = (
     "TOML configuration is no longer read; rewrite it as config.json, see"
     " https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md"
     "#migrating-from-toml"
 )
+
+
+def mask(text: str) -> str:
+    """Hide credentials in any URL inside ``text``.
+
+    Userinfo is hidden whole, since ``https://TOKEN@host`` carries a secret
+    without a colon; only a bare SSH user name such as ``ssh://git@`` stays.
+    """
+
+    def hide(match: re.Match[str]) -> str:
+        scheme, userinfo = match.group(1), match.group(2)
+        if scheme.lower() in SSH_SCHEMES and ":" not in userinfo:
+            return match.group(0)
+        return f"{scheme}***@"
+
+    return USERINFO.sub(hide, text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,7 +351,8 @@ class ConfigLoader:
                 raise ConfigurationError(msg)
             url, label = f"https://github.com/{github}.git", github
         else:
-            url, label = cls._url(where, str(url)), str(url)
+            url = cls._url(where, str(url))
+            label = mask(url)
         return RemoteConfig(
             url=url,
             label=label,
@@ -345,15 +364,20 @@ class ConfigLoader:
 
     @staticmethod
     def _url(where: str, url: str) -> str:
-        """Refuse URLs that embed a password; Git's credentials belong elsewhere."""
-        if CREDENTIALS.match(url):
+        """Refuse URLs that embed credentials, without echoing them.
+
+        Git's credentials belong in a credential helper, an SSH key, or a
+        token variable, never in configuration, reports, or cache state.
+        """
+        if mask(url) != url:
             msg = (
-                f"{where}.git: do not put credentials in the URL; use a Git"
-                " credential helper, an SSH key, or GH_TOKEN for github sources"
+                f"{where}.git: do not put credentials or a user name in the URL;"
+                " use a Git credential helper, an SSH key, or GH_TOKEN for"
+                " github sources"
             )
             raise ConfigurationError(msg)
         if url.startswith("-") or any(char.isspace() for char in url):
-            msg = f"{where}.git: invalid repository URL {url!r}"
+            msg = f"{where}.git: invalid repository URL {mask(url)!r}"
             raise ConfigurationError(msg)
         return url
 

@@ -119,7 +119,7 @@ team: github acme/agent-library (ref main)
 Needs attention: team.
 ```
 
-States are `ok`, `not-fetched` (configured, never synced), `failing`, and `missing` (a local directory that does not exist). `status --json` prints `{"version": 1, "ok": ..., "sources": [...]}` with the same fields plus `category` (`auth`, `network`, `ref`, `git-missing`, `timeout`, or `other`) and `failures`, for monitoring scripts.
+States are `ok`, `not-fetched` (configured, never synced), `failing`, and `missing` (a local directory that does not exist). `status --json` prints `{"version": 1, "ok": ..., "sources": [...]}` with the same fields plus `category` (`auth`, `network`, `ref`, `content`, `git-missing`, `timeout`, or `other`) and `failures`, for monitoring scripts.
 
 ## Scheduling
 

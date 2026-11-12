@@ -17,13 +17,13 @@ import shutil
 import stat
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from skillsinc.config import COMMIT, RemoteConfig, SourceConfig
+from skillsinc.config import COMMIT, RemoteConfig, SourceConfig, mask
 from skillsinc.exceptions import LockError, SourceError
 from skillsinc.lock import StateLock
 from skillsinc.paths import Environment
@@ -43,6 +43,10 @@ LOCAL_TIMEOUT: Final = 120
 GH_TIMEOUT: Final = 15
 # A refresh lock older than this belongs to a crashed run
 LOCK_STALE_SECONDS: Final = 2 * FETCH_TIMEOUT
+# A replaced checkout stays this long, so a concurrent ``plan`` or ``sync``
+# that chose it before the switch finishes reading it before it is removed
+RETIRE_GRACE: Final = timedelta(hours=1)
+PARTIAL_SUFFIX: Final = ".partial"
 MISSING_PROGRAM: Final = 127
 TIMED_OUT: Final = 124
 
@@ -64,6 +68,7 @@ class Category(StrEnum):
     AUTH = "auth"
     NETWORK = "network"
     REF = "ref"
+    CONTENT = "content"
     GIT_MISSING = "git-missing"
     TIMEOUT = "timeout"
     OTHER = "other"
@@ -166,6 +171,8 @@ class RemoteState:
     error: str | None = None
     category: str | None = None
     hint: str | None = None
+    retired: Mapping[str, str] = field(default_factory=dict)
+    """Replaced checkouts and when they were replaced, removed after a grace."""
 
     @property
     def failing(self) -> bool:
@@ -236,7 +243,7 @@ class RemoteCache:
     def state(self, source: SourceConfig) -> RemoteState:
         """Return the stored state of ``source``'s cache (empty when absent)."""
         remote = self._remote(source)
-        empty = RemoteState(url=remote.url, ref=remote.ref)
+        empty = RemoteState(url=mask(remote.url), ref=remote.ref)
         try:
             data = json.loads((source.path / STATE_FILE).read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -253,8 +260,14 @@ class RemoteCache:
             state = RemoteState(**{k: v for k, v in data.items() if k in fields})
         except TypeError:
             return empty
+        retired = state.retired
+        if not isinstance(retired, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in retired.items()
+        ):
+            state = replace(state, retired={})
         # A cache written for another URL or ref is not this source's
-        if state.url != remote.url or state.ref != remote.ref:
+        if state.url != mask(remote.url) or state.ref != remote.ref:
             return empty
         return state
 
@@ -310,8 +323,7 @@ class RemoteCache:
             category=None,
             hint=None,
         )
-        self._save(cache, state)
-        self._prune(cache, keep=str(state.tree))
+        self._save(cache, self._prune(cache, state))
         return Checkout(self._library(cached, remote))
 
     def _resolve(self, remote: RemoteConfig) -> tuple[str, str]:
@@ -376,7 +388,11 @@ class RemoteCache:
             LOCAL_TIMEOUT,
         ).strip()
         tree = f"{TREE_PREFIX}{fetched[:12]}"
-        staging = cache / f"{tree}.partial"
+        target = cache / tree
+        if target.is_dir():
+            # Complete: checkouts appear only by renaming a finished one
+            return fetched, tree
+        staging = cache / f"{tree}{PARTIAL_SUFFIX}"
         self._remove(staging)
         staging.mkdir(parents=True)
         self._git(
@@ -393,10 +409,34 @@ class RemoteCache:
             ],
             LOCAL_TIMEOUT,
         )
-        target = cache / tree
-        self._remove(target)
+        self._refuse_links(staging, remote)
         staging.replace(target)
         return fetched, tree
+
+    def _refuse_links(self, staging: Path, remote: RemoteConfig) -> None:
+        """Reject checkouts containing symbolic links.
+
+        A link could point outside the checkout, at a local secret, and the
+        reader would copy its target into harness folders.
+
+        Raises:
+            RefreshError: If any directory or file in ``staging`` is a link.
+        """
+        for root, directories, files in os.walk(staging):
+            for name in (*directories, *files):
+                path = Path(root) / name
+                if path.is_symlink() or path.is_junction():
+                    relative = path.relative_to(staging).as_posix()
+                    self._remove(staging)
+                    msg = (
+                        f"{remote.label} contains a symbolic link ({relative});"
+                        " remote sources may not contain links"
+                    )
+                    raise RefreshError(
+                        msg,
+                        Category.CONTENT,
+                        "replace links in the repository with regular files",
+                    )
 
     # Git
 
@@ -510,13 +550,10 @@ class RemoteCache:
         """Return True if the remote should be contacted on this run."""
         if remote.pinned:
             return state.commit != remote.ref
-        if not remote.refresh or state.checked_at is None or state.failing:
+        if not remote.refresh or state.failing:
             return True
-        try:
-            checked = datetime.fromisoformat(state.checked_at)
-        except ValueError:
-            return True
-        return self._clock() - checked >= remote.refresh
+        checked = self._parse_time(state.checked_at)
+        return checked is None or self._clock() - checked >= remote.refresh
 
     @staticmethod
     def _tree(cache: Path, state: RemoteState) -> Path | None:
@@ -540,14 +577,41 @@ class RemoteCache:
         staging.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         staging.replace(cache / STATE_FILE)
 
-    def _prune(self, cache: Path, keep: str) -> None:
-        """Remove checkouts other than ``keep``, including interrupted ones."""
-        for entry in cache.iterdir():
-            if entry.name.startswith(TREE_PREFIX) and entry.name != keep:
+    def _prune(self, cache: Path, state: RemoteState) -> RemoteState:
+        """Retire checkouts other than the current one; remove them after a grace.
+
+        A concurrent run may still be reading a checkout it chose before
+        this refresh switched ``state.json``, so a replaced checkout is
+        removed only once ``RETIRE_GRACE`` has passed. Interrupted checkouts
+        are removed at once: they are written only under the refresh lock,
+        which this run holds.
+        """
+        now = self._clock()
+        retired: dict[str, str] = {}
+        for entry in sorted(cache.iterdir()):
+            name = entry.name
+            if not name.startswith(TREE_PREFIX) or name == state.tree:
+                continue
+            since = self._parse_time(state.retired.get(name)) or now
+            if name.endswith(PARTIAL_SUFFIX) or now - since >= RETIRE_GRACE:
                 try:
                     self._remove(entry)
+                    continue
                 except OSError as err:
                     logger.debug("could not remove %s: %s", entry, err)
+            retired[name] = since.isoformat(timespec="seconds")
+        return replace(state, retired=retired)
+
+    @staticmethod
+    def _parse_time(text: str | None) -> datetime | None:
+        """Parse a stored time, or None when absent, damaged, or zoneless."""
+        if text is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
 
     @classmethod
     def _remove(cls, path: Path) -> None:
@@ -574,14 +638,3 @@ class RemoteCache:
             msg = f"source '{source.name}' is not a remote source"
             raise ValueError(msg)
         return source.remote
-
-
-def mask(text: str) -> str:
-    """Hide the credentials part of any ``scheme://user:secret@`` in ``text``."""
-    words = []
-    for word in text.split(" "):
-        scheme, separator, rest = word.partition("://")
-        if separator and "@" in rest.split("/", 1)[0]:
-            rest = "***@" + rest.split("@", 1)[1]
-        words.append(scheme + separator + rest if separator else word)
-    return " ".join(words)
