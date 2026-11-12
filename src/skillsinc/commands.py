@@ -68,6 +68,7 @@ class InitCommand:
 
     def __init__(self, profiles: ProfileRegistry, environment: Environment) -> None:
         self._starter = StarterConfig(profiles, environment)
+        self._environment = environment
 
     def run(self, settings: InitSettings, out: TextIO) -> int:
         """Write the file and tell the user what to do next."""
@@ -76,7 +77,7 @@ class InitCommand:
             settings.source,
             force=settings.force,
             with_guidance=settings.with_guidance,
-            project=settings.project,
+            project=self._environment.working_directory if settings.project else None,
         )
         if settings.with_guidance:
             out.write(

@@ -509,3 +509,36 @@ class TestProjectJourney:
         plan_status, plan = driver.run("plan")
         assert plan_status == 0, f"Expected the starter to plan, got {plan}"
         assert f"Project: {project}" in plan, f"Got {plan}"
+
+    def test_init_project_with_custom_path_names_the_root(
+        self, sandbox: Sandbox, project: Path
+    ) -> None:
+        """A starter outside ``.config/skillsinc`` records ``project``."""
+        driver = inside(sandbox, project)
+        path = project / "tools" / "skillsinc.json"
+
+        status, output = driver.run(
+            "init", "--project", "--config", str(path), "--source", str(sandbox.library)
+        )
+
+        assert status == 0, f"Expected init to succeed, got {status}: {output}"
+        assert '"project": "..",' in path.read_text(encoding="utf-8")
+        config = ConfigLoader(ProfileRegistry(), driver.environment).load(path)
+        assert config.project == project, f"Expected project scope, got {config}"
+
+    def test_init_project_routes_vscode_users_to_github(
+        self, sandbox: Sandbox, project: Path
+    ) -> None:
+        """VS Code reads project instructions from ``.github``, so copilot is on."""
+        vscode = VSCodeProfile().user_path(sandbox.environment)
+        vscode.mkdir(parents=True)
+        driver = inside(sandbox, project)
+
+        status, output = driver.run(
+            "init", "--project", "--source", str(sandbox.library)
+        )
+
+        text = (project / ".config/skillsinc/config.json").read_text(encoding="utf-8")
+        assert status == 0, f"Expected init to succeed, got {status}: {output}"
+        assert '    "copilot": { "profile": "copilot" },' in text, text
+        assert '"copilot"]' in text, f"Expected copilot routed, got {text}"
