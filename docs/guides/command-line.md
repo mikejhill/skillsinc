@@ -75,6 +75,7 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
       "name": "claude",
       "profile": "claude",
       "path": "/home/user/.claude",
+      "retired": false,
       "blocked": false,
       "errors": [],
       "changes": [
@@ -96,6 +97,8 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`) makes an overlapping `sync` e
 | `applied`                | True for `sync`                                                       |
 | `source_errors`          | Source name to error message                                          |
 | `source_warnings`        | Source name to warning: a remote served from its last good checkout   |
+| `warnings`               | Non-blocking problems, such as an `include` selector matching nothing |
+| `destinations[].retired` | True if removed from the configuration; `profile` is null             |
 | `destinations[].errors`  | Blocking errors; also apply failures after `sync`                     |
 | `destinations[].changes` | `entry` names the `container/key` changed inside a shared JSON file   |
 | `destinations[].skipped` | Items not delivered; `lossy` marks ones `allow_lossy` would accept    |

@@ -24,7 +24,7 @@ CONFIG_VERSION: Final = 1
 DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
 ALL_ITEMS: Final = ("*/*",)
 PLUGINS: Final = "plugins"
-DISABLED_KINDS: Final = frozenset({"*", *(kind.value for kind in Kind)})
+SELECTOR_KINDS: Final = frozenset({"*", *(kind.value for kind in Kind)})
 GITHUB_REPOSITORY: Final = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 COMMIT: Final = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 # ``scheme://userinfo@``: any userinfo may be a token, except an SSH user name
@@ -95,6 +95,16 @@ class SourceConfig:
     plugins: str = PLUGINS
     disabled: tuple[str, ...] = ()
     remote: RemoteConfig | None = None
+    include: tuple[str, ...] = ALL_ITEMS
+    """Selectors of the items this source offers; everything else is left out."""
+
+    def includes(self, item: Customization) -> bool:
+        """Return True if ``item`` matches one of the source's ``include`` selectors."""
+        return any(
+            fnmatchcase(selector, pattern)
+            for selector in item.selectors
+            for pattern in self.include
+        )
 
     def disables(self, item: Customization) -> bool:
         """Match source-owned items against case-sensitive canonical selectors."""
@@ -311,13 +321,22 @@ class ConfigLoader:
             raise ConfigurationError(msg)
         layout, plugins = self._layout(table.table("layout"))
         exclude = table.strings("exclude", DEFAULT_EXCLUDE)
-        disabled = self._disabled(name, table)
+        include = self._selectors(name, table, "include", ALL_ITEMS)
+        if not include:
+            msg = (
+                f"sources.{name}.include: list at least one selector, or remove"
+                " the routes that read this source"
+            )
+            raise ConfigurationError(msg)
+        disabled = self._selectors(name, table, "disabled")
         table.finish()
         if remote is not None:
             path = self._environment.remote_cache / remote.cache_key(name)
         else:
             path = self._environment.expand(str(raw), base)
-        return SourceConfig(name, path, layout, exclude, plugins, disabled, remote)
+        return SourceConfig(
+            name, path, layout, exclude, plugins, disabled, remote, include
+        )
 
     @classmethod
     def _remote(cls, name: str, table: Table) -> RemoteConfig | None:
@@ -422,14 +441,16 @@ class ConfigLoader:
             raise ConfigurationError(msg) from err
 
     @staticmethod
-    def _disabled(name: str, table: Table) -> tuple[str, ...]:
+    def _selectors(
+        name: str, table: Table, key: str, default: tuple[str, ...] = ()
+    ) -> tuple[str, ...]:
         """Validate item selectors rather than interpreting them as filesystem paths."""
-        selectors = table.strings("disabled")
+        selectors = table.strings(key, default)
         for selector in selectors:
             parts = selector.split("/")
             match parts:
                 case [kind, _] | ["plugins", _, kind, _]:
-                    shaped = kind in DISABLED_KINDS
+                    shaped = kind in SELECTOR_KINDS
                 case _:
                     shaped = False
             canonical = "\\" not in selector and all(
@@ -437,7 +458,7 @@ class ConfigLoader:
             )
             if not canonical or not shaped:
                 msg = (
-                    f"sources.{name}.disabled: invalid selector {selector!r}; "
+                    f"sources.{name}.{key}: invalid selector {selector!r}; "
                     "use 'kind/name' or 'plugins/plugin/kind/name' with a supported "
                     "kind (or '*'), nonempty components, and forward slashes; "
                     "'.' and '..' components are not allowed"

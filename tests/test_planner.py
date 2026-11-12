@@ -506,9 +506,10 @@ class TestDuplicateLoads:
     def test_vanished_cover_stops_dependent_apply(self, sandbox: Sandbox) -> None:
         """An up-to-date cover that disappears after planning blocks the cleanup."""
         store = ManifestStore(sandbox.environment.state_directory)
-        Applier(store).apply(self.plan(sandbox, ("copilot",)))
-        Applier(store).apply(self.plan(sandbox, ("agents",)))
-        plan = self.plan(sandbox, ("copilot", "agents"))
+        both = ("copilot", "agents")
+        Applier(store).apply(self.plan(sandbox, both, only=("copilot",)))
+        Applier(store).apply(self.plan(sandbox, both, only=("agents",)))
+        plan = self.plan(sandbox, both)
         copilot = next(d for d in plan.destinations if d.destination.name == "copilot")
         assert copilot.requires, f"Expected cover requirements, got {copilot!r}"
         shutil.rmtree(sandbox.environment.home / ".agents" / "skills" / "sample")

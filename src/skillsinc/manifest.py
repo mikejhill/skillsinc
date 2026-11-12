@@ -44,13 +44,24 @@ class Manifest:
     files: dict[str, str] = field(default_factory=dict)
     blocks: dict[str, OwnedBlock] = field(default_factory=dict)
     entries: dict[str, OwnedEntries] = field(default_factory=dict)
+    config: str = ""
+    """The configuration file that last synced this destination, if recorded."""
+
+    @property
+    def empty(self) -> bool:
+        """Return True if SkillSinc owns nothing in this destination."""
+        return not (self.files or self.blocks or self.entries)
 
     def to_json(self) -> str:
         """Serialize to stable, human-readable JSON."""
-        data = {
+        data: dict[str, object] = {
             "version": MANIFEST_VERSION,
             "destination": self.destination,
             "root": self.root,
+        }
+        if self.config:
+            data["config"] = self.config
+        data |= {
             "files": dict(sorted(self.files.items())),
             "blocks": {
                 path: {"digest": block.digest, "created_file": block.created_file}
@@ -161,6 +172,27 @@ class ManifestStore:
         """Return the journal of changes not yet saved into the manifest."""
         return self._directory / "manifests" / f"{destination}.journal"
 
+    def names(self) -> list[str]:
+        """Return every destination with a saved manifest or journal, sorted."""
+        directory = self._directory / "manifests"
+        if not directory.is_dir():
+            return []
+        return sorted(
+            {
+                path.stem
+                for path in directory.iterdir()
+                if path.suffix in {".json", ".journal"} and path.is_file()
+            }
+        )
+
+    def recorded(self, destination: str) -> Manifest:
+        """Return the manifest for ``destination`` at the root it records.
+
+        Raises:
+            ConfigurationError: If the manifest or journal is corrupt.
+        """
+        return self._load(destination, None)
+
     def load(self, destination: str, root: Path) -> Manifest:
         """Return the manifest for ``destination``, empty if none exists.
 
@@ -171,19 +203,10 @@ class ManifestStore:
             ConfigurationError: If the manifest or journal is corrupt, or the
                 manifest belongs to another path.
         """
-        path = self.path(destination)
-        manifest = Manifest(destination, str(root))
-        saved = path.is_file()
-        if saved:
-            try:
-                data: object = json.loads(path.read_text(encoding="utf-8"))
-                manifest = self._parse(destination, data)
-            except (OSError, ValueError, KeyError, TypeError) as err:
-                msg = f"ownership manifest is unreadable: {path} ({err})"
-                raise ConfigurationError(msg) from err
-        self._replay(manifest, saved=saved)
+        manifest = self._load(destination, str(root))
         if manifest.root != str(root):
-            moved = path if saved else self.journal_path(destination)
+            path = self.path(destination)
+            moved = path if path.is_file() else self.journal_path(destination)
             msg = (
                 f"destination '{destination}' moved from {manifest.root} to {root}."
                 f" SkillSinc still tracks files in the old location; delete {moved}"
@@ -191,6 +214,11 @@ class ManifestStore:
             )
             raise ConfigurationError(msg)
         return manifest
+
+    def remove(self, destination: str) -> None:
+        """Delete a destination's manifest and journal, releasing nothing else."""
+        self.path(destination).unlink(missing_ok=True)
+        self.journal_path(destination).unlink(missing_ok=True)
 
     def save(self, manifest: Manifest) -> None:
         """Atomically replace the manifest file, then drop the folded-in journal."""
@@ -220,6 +248,21 @@ class ManifestStore:
             yield Journal(manifest, stream)
 
     # Internals
+
+    def _load(self, destination: str, root: str | None) -> Manifest:
+        """Read the saved manifest and replay its journal; empty at ``root``."""
+        path = self.path(destination)
+        manifest = Manifest(destination, root or "")
+        saved = path.is_file()
+        if saved:
+            try:
+                data: object = json.loads(path.read_text(encoding="utf-8"))
+                manifest = self._parse(destination, data)
+            except (OSError, ValueError, KeyError, TypeError) as err:
+                msg = f"ownership manifest is unreadable: {path} ({err})"
+                raise ConfigurationError(msg) from err
+        self._replay(manifest, saved=saved)
+        return manifest
 
     def _replay(self, manifest: Manifest, *, saved: bool) -> None:
         """Apply journaled changes to ``manifest``; a cut-short last line is ignored.
@@ -268,9 +311,14 @@ class ManifestStore:
         if not all(isinstance(value, dict) for value in (files, blocks, entries)):
             msg = "files, blocks, and entries must be objects"
             raise TypeError(msg)
+        config = data.get("config", "")
+        if not isinstance(config, str):
+            msg = "config must be a string"
+            raise TypeError(msg)
         return Manifest(
             destination=destination,
             root=str(data["root"]),
+            config=config,
             files={str(path): str(digest) for path, digest in files.items()},
             blocks={
                 str(path): OwnedBlock(str(entry["digest"]), bool(entry["created_file"]))

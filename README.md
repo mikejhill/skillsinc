@@ -38,6 +38,8 @@ graph LR
 - **Nothing is written without a plan.** `skillsinc plan` previews current file actions; `skillsinc sync` calculates a fresh plan and checks files again before applying it.
 - **Lossy conversions are opt-in.** If a harness cannot represent a field (for example, Claude ignores Copilot `tools` lists), the item is skipped until the route sets `allow_lossy = true`.
 - **A broken source never deletes anything.** If a library cannot be read completely, its destinations are left untouched.
+- **Pick only what you want.** From 0.6.0, a source's `include` selectors take just the named skills (or other resources) from a library or GitHub repository. [Select specific resources](docs/guides/configuration.md#select-specific-resources).
+- **Removing a destination cleans it up.** From 0.6.0, a destination deleted from the configuration has its managed output removed on the next sync, like Terraform destroying a resource removed from its configuration.
 - **Disable resources without deleting originals.** From 0.4.0, a source's `disabled` selectors suppress items across every route. [Preview cleanup and preserve local edits](docs/guides/configuration.md#disable-resources-while-preserving-their-sources) before syncing.
 
 ## Install

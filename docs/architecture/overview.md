@@ -55,6 +55,8 @@ Each destination has a manifest at `$XDG_STATE_HOME/skillsinc/manifests/<destina
 | Edited since SkillSinc wrote it | yes          | no       | `forget` (left in place, released)     |
 | Missing                         | yes          | no       | `forget`                               |
 
+Each manifest also records the resolved configuration file that last synced it. A manifest whose destination is no longer in that configuration is planned against an empty desired state, so its unedited output is deleted and edited output released, and the manifest is removed once it owns nothing. Manifests recorded by another existing configuration are ignored; ones with no live owner only warn. A removed destination whose root overlaps a configured one is blocked, since that is usually a rename. A source's `include` selectors filter its items right after reading, so a resource left out is indistinguishable from one deleted from the library ([decision 0020](../decisions/0020-source-selection-and-state.md)).
+
 ## Managed blocks
 
 Harnesses that read a single instructions file (Codex's `AGENTS.md`, Claude Code's `CLAUDE.md` for resource imports) receive one block delimited by `<!-- skillsinc:begin -->` and `<!-- skillsinc:end -->`. Content outside the markers is never changed. Damaged markers block the destination rather than guessing.

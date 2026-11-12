@@ -84,6 +84,7 @@ Required. Must be `1`.
 | `github`   | one of   | —                                                                                     | GitHub repository `owner/repo`; see [remote sources](#remote-sources) |
 | `git`      | one of   | —                                                                                     | Any Git URL; see [remote sources](#remote-sources)                    |
 | `exclude`  | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                                   |
+| `include`  | no       | `["*/*"]`                                                                             | Resource selectors this source offers; others are left out            |
 | `disabled` | no       | `[]`                                                                                  | Resource selectors suppressed across every route from this source     |
 | `layout`   | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory              |
 
@@ -116,7 +117,7 @@ Starting with **0.5.0**, a source can name a Git repository instead of a local d
 | `subdirectory` | repository root     | Relative path, using `/`, of the library inside the repository             |
 | `refresh`      | every run           | Shortest time between remote checks, such as `15m` or `1h` (at least `1m`) |
 
-`layout`, `exclude`, and `disabled` apply inside the checkout as for a local library. Remote sources need `git` on `PATH`. A repository containing symbolic links is refused, because a link could point at a file outside the checkout; the previous checkout keeps serving.
+`layout`, `exclude`, `include`, and `disabled` apply inside the checkout as for a local library. Remote sources need `git` on `PATH`. A repository containing symbolic links is refused, because a link could point at a file outside the checkout; the previous checkout keeps serving.
 
 **Cost.** A refresh runs one `git ls-remote` for the ref: one HTTPS round trip of a few kilobytes, well within any host's limits even every five minutes. If the commit is unchanged, nothing is downloaded or rewritten. A new commit is fetched shallowly (`--depth 1`), checked out next to the previous checkout (kept for an hour so a concurrent run can finish reading it), into a cache under `$XDG_STATE_HOME/skillsinc/remotes/`, which keeps earlier objects, so only changed files travel. A full commit SHA in `ref` never contacts the remote once cached. `refresh` skips even the `ls-remote` until the interval has passed; a failed refresh is retried on the next run regardless.
 
@@ -152,6 +153,23 @@ Some harnesses also read another profile's folder: Copilot CLI and VS Code read 
 
 An item reaching a destination through several routes is distributed once; it is lossy-allowed if any of those routes allows it. Two items that render to the same path, or the same JSON entry, with different content block the destination.
 
+### Select specific resources
+
+Starting with **0.6.0**, `sources.<name>.include` limits a source to the resources it names, so you can take a few skills from a larger library, such as a public GitHub repository, without syncing the rest ([decision 0020](../decisions/0020-source-selection-and-state.md)):
+
+```jsonc
+"sources": {
+  "community": {
+    "github": "acme/agent-skills",
+    "include": ["skills/code-review", "skills/release-notes", "plugins/kit/*/*"],
+  },
+}
+```
+
+Selectors use the same grammar as `disabled`: case-sensitive `kind/name` or `plugins/plugin/kind/name`, with glob patterns in any part. Everything the source holds is still read and validated, but resources left out behave exactly like resources deleted from the library: they are never delivered, and anything SkillSinc delivered from them before is removed on the next sync (edited output is released instead, as below). Widening the list delivers them again.
+
+A selector that matches nothing prints `warning: sources.<name>.include: '<selector>' matches no item in the source`, so a typo or an upstream rename is visible in `plan` and `sync`. An empty list is a configuration error. Precedence: the source's `include` decides what the source offers, routes then select from that, and `disabled` overrides both.
+
 ## Removing things
 
 ### Disable resources while preserving their sources
@@ -186,14 +204,27 @@ Versions through 0.3.x reject the new `disabled` key. Upgrade before adding it. 
 - Remove an item from a route (or the library): the next sync deletes its
   unedited managed files, blocks, and entries. Locally edited content is left
   in place and released from ownership; review the plan for `forget` actions.
+- Leave an item out of a source's `include`: same as removing it from the library.
+- Delete a destination from the configuration (starting with **0.6.0**): the
+  next full `sync` removes everything SkillSinc owns there, as if every item
+  had been removed, then forgets the destination's manifest. The plan lists it
+  as `<name> (removed from configuration)`. `--destination` runs leave removed
+  destinations alone.
 - Set `"enabled": false`: the destination is left exactly as it is.
 - Point a destination at a new `path`: the plan refuses until you delete the old manifest named in the error, which releases the old files without deleting them.
 
-To remove distributed content while keeping the source library, leave the
-destination enabled and remove it from the routes. Run `skillsinc plan`, review
-the proposed deletions and releases, then `skillsinc sync`. Remove the destination
-from the configuration only after that cleanup. Disabling or deleting a
-destination from the configuration does not clean its files.
+SkillSinc keeps state like Terraform: each destination's manifest records what
+SkillSinc owns and which configuration file last synced it, and every sync
+reconciles that state with the configuration. Only manifests recorded by the
+configuration file being synced are destroyed when their destination
+disappears; another existing configuration's manifests are left alone. A
+manifest with no known owner (written before 0.6.0 and never synced since, or
+recorded by a configuration file that no longer exists) prints a warning and is
+never touched; sync once with the configuration that owns it, or delete the
+named manifest to release its files. Renaming a destination that keeps its
+path blocks the old name's cleanup instead of deleting files the new name
+needs: rename `<old>.json` in the manifests folder to `<new>.json`, as the
+error explains.
 
 SkillSinc has no automatic backup or rollback. Before adopting existing content
 or editing routes, copy any files you may want to restore and keep the source
