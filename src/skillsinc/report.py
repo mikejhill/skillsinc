@@ -239,10 +239,8 @@ class Reporter:
     def _destination_text(self, plan: DestinationPlan) -> list[str]:
         """Return the lines describing one destination."""
         destination = plan.destination
-        lines = [
-            "",
-            f"{destination.name} ({destination.profile}) -> {destination.path}",
-        ]
+        kind = "removed from configuration" if plan.retired else destination.profile
+        lines = ["", f"{destination.name} ({kind}) -> {destination.path}"]
         lines.extend(
             f"  error: {error}" for error in self._collapse_errors(plan.errors)
         )
@@ -350,8 +348,9 @@ class Reporter:
         destination = plan.destination
         return {
             "name": destination.name,
-            "profile": destination.profile,
+            "profile": destination.profile or None,
             "path": str(destination.path),
+            "retired": plan.retired,
             "blocked": plan.blocked,
             "errors": list(plan.errors)
             + (

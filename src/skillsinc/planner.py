@@ -6,13 +6,14 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Final
 
 from skillsinc.config import Config, DestinationConfig, RouteConfig
 from skillsinc.diff import DestinationDiff
 from skillsinc.exceptions import ConfigurationError, SourceError
-from skillsinc.manifest import ManifestStore
+from skillsinc.manifest import Manifest, ManifestStore
 from skillsinc.models import Customization, Digest, EntryOutput, FileOutput
 from skillsinc.paths import Environment
 from skillsinc.plan import Change, DestinationPlan, Plan, Skip
@@ -79,7 +80,7 @@ class Planner:
             for route in config.routes
             if any(name in route.destinations for name in order)
         ]
-        items, failures = self._read_sources(config, routes)
+        items, failures, unmatched = self._read_sources(config, routes)
         planned: dict[str, DestinationPlan] = {}
         for name in order:
             covers = Covers(planned, applied=frozenset(targets))
@@ -93,6 +94,7 @@ class Planner:
                 adopt=adopt,
             )
         plans = tuple(planned[name] for name in targets)
+        retired, unknown = ((), ()) if only else self._retired(config)
         used = {
             source
             for route in config.routes
@@ -100,12 +102,17 @@ class Planner:
             for source in route.sources
         }
         return Plan(
-            destinations=plans,
+            destinations=(*plans, *retired),
             # Sources read only to check coverage do not fail this run
             source_errors={
                 name: error for name, error in failures.items() if name in used
             },
-            warnings=self._duplicates(plans),
+            warnings=(
+                *(warning for name, warning in unmatched if name in used),
+                *self._duplicates(plans),
+                *unknown,
+            ),
+            config=self._config_key(config),
             source_warnings={
                 name: warning
                 for name, warning in self._reader.warnings.items()
@@ -114,6 +121,93 @@ class Planner:
         )
 
     # Steps
+
+    @staticmethod
+    def _config_key(config: Config) -> str:
+        """Return how manifests name the configuration that owns them."""
+        return str(config.path.resolve())
+
+    def _retired(
+        self, config: Config
+    ) -> tuple[tuple[DestinationPlan, ...], tuple[str, ...]]:
+        """Plan removal of everything owned by destinations this config dropped.
+
+        Like a resource deleted from a Terraform configuration, a destination
+        removed from this configuration file is destroyed: its manifest is
+        compared with an empty desired state, so unedited owned output is
+        deleted and edited output is released. Only manifests this
+        configuration file recorded qualify; another configuration's are left
+        alone, and ones without a live owner are reported instead.
+        """
+        owner = self._config_key(config)
+        configured = [
+            (f"destination '{destination.name}'", destination.path.resolve())
+            for destination in config.destinations.values()
+        ] + [
+            (f"source '{source.name}'", source.path.resolve())
+            for source in config.sources.values()
+        ]
+        plans: list[DestinationPlan] = []
+        unknown: list[str] = []
+        for name in self._store.names():
+            if name in config.destinations:
+                continue
+            try:
+                manifest = self._store.recorded(name)
+            except ConfigurationError as err:
+                unknown.append(str(err))
+                continue
+            if manifest.config != owner:
+                if not manifest.config or not Path(manifest.config).is_file():
+                    unknown.append(
+                        f"state for destination '{name}' ({manifest.root}) belongs"
+                        " to no known configuration; sync once with the"
+                        " configuration that owns it, or delete"
+                        f" {self._store.path(name)} to release its files"
+                    )
+                continue
+            plans.append(self._retire(manifest, configured))
+        return tuple(plans), tuple(unknown)
+
+    def _retire(
+        self, manifest: Manifest, configured: Sequence[tuple[str, Path]]
+    ) -> DestinationPlan:
+        """Plan the destruction of one removed destination's owned output.
+
+        A root that overlaps a configured destination (usually a rename) or
+        a configured source (an output directory turned into a library) is
+        blocked rather than destroyed.
+        """
+        root = Path(manifest.root)
+        destination = DestinationConfig(manifest.destination, "", root)
+        resolved = root.resolve()
+        for label, other in configured:
+            if (
+                resolved == other
+                or resolved.is_relative_to(other)
+                or other.is_relative_to(resolved)
+            ):
+                manifest_path = self._store.path(manifest.destination)
+                reason = (
+                    f"removed destination '{manifest.destination}' owns files under"
+                    f" {root}, which configured {label} also uses. If you renamed"
+                    f" the destination, rename {manifest_path} to the new name;"
+                    " otherwise delete it to release the files"
+                )
+                return DestinationPlan(destination, errors=(reason,), retired=True)
+        beside = frozenset(
+            path
+            for path in (*manifest.files, *manifest.blocks, *manifest.entries)
+            if len(Path(path).parts) == 2 and Path(path).parts[0] == ".."  # noqa: PLR2004 — ``../name``
+        )
+        diff = DestinationDiff(root, manifest, adopt=False, outside=beside)
+        changes, errors = diff.compare({}, {}, {})
+        return DestinationPlan(
+            destination,
+            changes=() if errors else changes,
+            errors=errors,
+            retired=True,
+        )
 
     @staticmethod
     def _targets(config: Config, only: Sequence[str]) -> list[str]:
@@ -130,18 +224,44 @@ class Planner:
 
     def _read_sources(
         self, config: Config, routes: Iterable[RouteConfig]
-    ) -> tuple[dict[str, tuple[Customization, ...]], dict[str, str]]:
-        """Read every routed source once, collecting failures instead of raising."""
+    ) -> tuple[
+        dict[str, tuple[Customization, ...]], dict[str, str], list[tuple[str, str]]
+    ]:
+        """Read every routed source once, collecting failures instead of raising.
+
+        Each source offers only the items its ``include`` selects, so an item
+        left out is planned exactly like one deleted from the library. Returns
+        the items, the failures, and a warning per ``include`` selector that
+        matches nothing, since a typo or an upstream rename would otherwise
+        remove the item silently.
+        """
         names = sorted({name for route in routes for name in route.sources})
         items: dict[str, tuple[Customization, ...]] = {}
         failures: dict[str, str] = {}
+        unmatched: list[tuple[str, str]] = []
         for name in names:
+            source = config.sources[name]
             try:
-                items[name] = self._reader.read(config.sources[name])
+                found = self._reader.read(source)
             except SourceError as err:
                 logger.warning("%s", err)
                 failures[name] = str(err)
-        return items, failures
+                continue
+            items[name] = tuple(item for item in found if source.includes(item))
+            unmatched.extend(
+                (
+                    name,
+                    f"sources.{name}.include: {pattern!r} matches no item"
+                    " in the source",
+                )
+                for pattern in source.include
+                if not any(
+                    fnmatchcase(selector, pattern)
+                    for item in found
+                    for selector in item.selectors
+                )
+            )
+        return items, failures, unmatched
 
     def _covering_order(self, config: Config, targets: Sequence[str]) -> list[str]:
         """Return ``targets`` plus the destinations that may cover their items.

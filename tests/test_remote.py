@@ -1072,3 +1072,25 @@ class TestJourneys:
         """State is plain data."""
         assert not RemoteState(url="u").failing
         assert RemoteState(url="u", failures=2).failing
+
+    def test_include_picks_named_skills_and_reconciles_like_state(
+        self, git_environment: Environment, repository: Repository
+    ) -> None:
+        """Only included skills sync; a dropped or deleted skill is pruned."""
+        repository.commit({**_skill("bye"), **_skill("extra")})
+        dest = git_environment.home / "dest" / "skills"
+        _config(git_environment, repository, include=["skills/hello", "skills/bye"])
+
+        assert _run(git_environment, "sync")[0] == 0
+        assert sorted(path.name for path in dest.iterdir()) == ["bye", "hello"]
+
+        _config(git_environment, repository, include=["skills/hello"])
+        status, report = _run(git_environment, "sync")
+        assert status == 0, report
+        assert sorted(path.name for path in dest.iterdir()) == ["hello"]
+
+        repository.commit({"library/skills/hello/SKILL.md": None})
+        status, report = _run(git_environment, "sync")
+        assert status == 0, report
+        assert "sources.remote.include: 'skills/hello' matches no item" in report
+        assert not dest.exists() or not any(dest.iterdir())

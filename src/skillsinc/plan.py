@@ -80,6 +80,8 @@ class DestinationPlan:
     """Each delivered label's files as ``(relative path, SHA-256)`` pairs."""
     requires: tuple[tuple[Path, str], ...] = ()
     """Files, with digests, that must exist before this plan is applied."""
+    retired: bool = False
+    """The destination was removed from the configuration; its output is destroyed."""
 
     @property
     def blocked(self) -> bool:
@@ -101,6 +103,8 @@ class Plan:
     """Problems that do not block a sync, such as a harness loading an item twice."""
     source_warnings: Mapping[str, str] = field(default_factory=dict)
     """Sources read from a last good copy because refreshing them failed."""
+    config: str = ""
+    """The configuration file recorded in the manifests this plan saves."""
 
     @property
     def ok(self) -> bool:

@@ -42,7 +42,10 @@ class Applier:
         """
         results: dict[str, DestinationResult] = {}
         for destination in self._ordered(plan.destinations):
-            if destination.blocked or not destination.changes:
+            if destination.blocked:
+                continue
+            if not destination.changes:
+                self._settle(destination, plan.config)
                 continue
             name = destination.destination.name
             failed = [
@@ -66,7 +69,7 @@ class Applier:
                     " the item that file delivers",
                 )
             else:
-                results[name] = self._apply_destination(destination)
+                results[name] = self._apply_destination(destination, plan.config)
         return tuple(
             results[destination.destination.name]
             for destination in plan.destinations
@@ -111,14 +114,35 @@ class Applier:
 
     # Steps
 
-    def _apply_destination(self, plan: DestinationPlan) -> DestinationResult:
+    def _settle(self, plan: DestinationPlan, config: str) -> None:
+        """Record which configuration owns an up-to-date destination's manifest.
+
+        A removed destination whose manifest owns nothing more is forgotten.
+        Nothing is written for a destination SkillSinc has never written to.
+        """
+        destination = plan.destination
+        if destination.name not in self._store.names():
+            return
+        manifest = self._store.load(destination.name, destination.path)
+        if plan.retired and manifest.empty:
+            self._store.remove(destination.name)
+        elif config and manifest.config != config:
+            manifest.config = config
+            self._store.save(manifest)
+
+    def _apply_destination(
+        self, plan: DestinationPlan, config: str
+    ) -> DestinationResult:
         """Apply one destination, stopping at the first failed precondition.
 
         Ownership is journaled after every step and the manifest saved once
-        at the end, so an interrupted run still knows everything it wrote.
+        at the end, so an interrupted run still knows everything it wrote. A
+        removed destination's manifest is deleted once it owns nothing.
         """
         destination = plan.destination
         manifest = self._store.load(destination.name, destination.path)
+        if config:
+            manifest.config = config
         applied = 0
         try:
             with self._store.journal(manifest) as journal:
@@ -145,7 +169,10 @@ class Applier:
                     )
                     applied += len(step)
         finally:
-            self._store.save(manifest)
+            if plan.retired and manifest.empty:
+                self._store.remove(destination.name)
+            else:
+                self._store.save(manifest)
         return DestinationResult(destination.name, applied)
 
     @staticmethod
