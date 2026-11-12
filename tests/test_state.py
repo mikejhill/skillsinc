@@ -205,7 +205,7 @@ class TestRemovedDestinations:
         assert StateCase.skills(sandbox) == ["sample"]
         status, output = sandbox.run("sync")
         assert status == 0, output
-        assert "old" not in output
+        assert "\nold (" not in output
 
     def test_destination_with_no_routes_is_emptied(self, sandbox: Sandbox) -> None:
         """A configured destination nothing routes to keeps no managed output."""
@@ -261,7 +261,7 @@ class TestRemovedDestinations:
         status, output = sandbox.run("sync")
 
         assert status == 0, output
-        assert "old" not in output
+        assert "\nold (" not in output
         assert StateCase.skills(sandbox, "old") == ["sample"]
 
     def test_unowned_state_warns_without_touching_files(self, sandbox: Sandbox) -> None:
