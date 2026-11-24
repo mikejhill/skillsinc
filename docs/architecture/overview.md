@@ -38,6 +38,8 @@ graph LR
 | `applier`                     | Verify preconditions, write atomically, update the manifest             |
 | `lock`                        | Serialize overlapping `sync` runs                                       |
 | `report`                      | Text and versioned JSON output                                          |
+| `schema`                      | The bundled editor schema and the `$schema` insertion                   |
+| `upgrades`                    | Plan and apply one-time config upgrades and the local schema copy       |
 | `schedule`                    | Register `sync` with Task Scheduler, launchd, systemd, or cron          |
 | `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                          |
 

@@ -18,6 +18,8 @@ HEADER: Final = """\
 // Reference: https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md
 // Preview with `skillsinc plan`; nothing is written until `skillsinc sync`.
 {
+  // Editor completion and validation; sync keeps the schema file up to date.
+  "$schema": "./config.schema.json",
   "version": 1,
 """
 PROJECT_NOTE: Final = (
