@@ -10,6 +10,7 @@ from skillsinc.models import (
     BlockOutput,
     EntryOutput,
     Frontmatter,
+    FrontmatterValue,
     JsonValue,
     Kind,
     Rendering,
@@ -88,6 +89,78 @@ class TestClaudeProfile:
         assert result.losses == ("drops frontmatter: tools, model",), (
             f"Expected foreign field losses, got {result.losses!r}"
         )
+
+    def test_agent_keeps_claude_tools_model_and_native_fields(self) -> None:
+        """Claude Code values and Claude-only fields survive the conversion."""
+        item = Builder.item(
+            Kind.AGENT,
+            frontmatter={
+                "name": "Content Review",
+                "description": "Review",
+                "tools": "Read, Grep, Bash(git *), mcp__github__get_issue",
+                "disallowedTools": ["Write"],
+                "model": "haiku",
+                "color": "blue",
+                "handoffs": [],
+            },
+        )
+
+        result = ClaudeProfile().render(item)
+
+        header = FrontmatterCodec().parse(result.files[0].content).frontmatter
+        assert header == {
+            "name": "Content Review",
+            "description": "Review",
+            "tools": "Read, Grep, Bash(git *), mcp__github__get_issue",
+            "disallowedTools": ["Write"],
+            "model": "haiku",
+            "color": "blue",
+        }, f"Expected Claude fields carried, got {header!r}"
+        assert result.losses == ("drops frontmatter: handoffs",), (
+            f"Expected only the VS Code field dropped, got {result.losses!r}"
+        )
+
+    @pytest.mark.parametrize(
+        ("field", "value", "kept"),
+        [
+            ("model", "claude-opus-5-5", True),
+            ("model", "Claude Sonnet 4.5 (copilot)", False),
+            ("model", ["haiku"], False),
+            ("tools", ["Read", "search"], False),
+            ("tools", [], False),
+            ("tools", 1, False),
+        ],
+    )
+    def test_agent_checks_tool_and_model_values(
+        self, field: str, value: FrontmatterValue, *, kept: bool
+    ) -> None:
+        """Only Claude Code model names and tool names are carried."""
+        frontmatter: dict[str, FrontmatterValue] = {
+            "description": "Review",
+            field: value,
+        }
+        item = Builder.item(Kind.AGENT, frontmatter=frontmatter)
+
+        result = ClaudeProfile().render(item)
+
+        header = FrontmatterCodec().parse(result.files[0].content).frontmatter
+        assert (field in header) is kept, f"Expected {field} kept={kept}: {header!r}"
+
+    @pytest.mark.parametrize("name", ["plugin:agent", "-dash", "", 3, "x" * 257])
+    def test_agent_name_claude_refuses_uses_file_name(
+        self, name: FrontmatterValue
+    ) -> None:
+        """A declared name Claude Code would skip is replaced by the file name."""
+        frontmatter: dict[str, FrontmatterValue] = {
+            "name": name,
+            "description": "Review",
+        }
+        item = Builder.item(Kind.AGENT, frontmatter=frontmatter)
+
+        result = ClaudeProfile().render(item)
+
+        header = FrontmatterCodec().parse(result.files[0].content).frontmatter
+        assert header["name"] == "sample", f"Expected the file name, got {header!r}"
 
     @pytest.mark.parametrize("description", [None, ""])
     def test_agent_without_description_is_refused(
