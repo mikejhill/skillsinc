@@ -1,4 +1,4 @@
-# 0022: Item errors, lenient skill names, and renames
+# 0022: Item errors, lenient skill names, renames, and a narrower disable guard
 
 Status: Accepted
 
@@ -9,6 +9,7 @@ A client reported three problems with large third-party libraries:
 - A skill whose frontmatter `name` differs from its folder failed the whole source, which blocked every destination that read the source. Only the first bad skill was reported, so fixing 17 of them took 17 runs.
 - The [Agent Skills specification](https://agentskills.io/specification) says `name` "must match the parent directory name", but its [client implementation guide](https://agentskills.io/client-implementation) says to "warn, load anyway" when it does not. Claude Code uses the frontmatter `name` as the command name and does not require a match.
 - Two sources, or a library and one of its plugins, that define the same `kind/name` collide, and the only remedy was leaving one out.
+- Any non-empty `sources.<name>.disabled` list blocked a whole destination when any managed file had local edits ([decision 0018](0018-source-resource-disabling.md)). A skill CLI that rewrites its own `uv.lock` stopped every sync to that destination.
 
 ## Decision
 
@@ -17,6 +18,8 @@ A client reported three problems with large third-party libraries:
 **Lenient skill names.** A skill whose frontmatter `name` differs from its directory is accepted. The directory stays the identity, and the delivered `SKILL.md` has its `name` set to the directory name, editing only that line when it is safe and rendering the frontmatter again otherwise. Each correction is a plan note. Rewriting rather than passing the mismatch through keeps every harness on one spec-compliant name.
 
 **Renames.** `sources.<name>.rename` maps exact selectors to new item names. Renames apply right after the read, before uniqueness checks, `include`, `disabled`, and routes, so every later selector uses the new name. A Markdown item's `name` field follows the new name. A key that matches nothing is a warning, like an unmatched `include` selector.
+
+**Disable guard.** The guard against overwriting local edits while disabling applies only to the paths a disabled item would render to in that destination (whole files, managed-block files, and config files with entries), computed from every disabled item of a routed source whatever the route filters say. Other edited files are repaired as in any sync.
 
 ## Consequences
 

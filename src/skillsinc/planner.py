@@ -348,11 +348,7 @@ class Planner:
             manifest,
             adopt=adopt,
             outside=outside,
-            protect_edits=any(
-                config.sources[name].disabled
-                for route in own_routes
-                for name in route.sources
-            ),
+            protect_edits=self._disabled_paths(config, destination, own_routes, items),
         )
         entries = {
             path: tuple(found.values()) for path, found in desired.entries.items()
@@ -370,6 +366,36 @@ class Planner:
             outputs=self._outputs(desired),
             requires=tuple(desired.requires),
         )
+
+    def _disabled_paths(
+        self,
+        config: Config,
+        destination: DestinationConfig,
+        routes: Sequence[RouteConfig],
+        items: Mapping[str, tuple[Customization, ...]],
+    ) -> frozenset[str]:
+        """Return the paths disabled items would write in this destination.
+
+        Disabling an item that shares a file (a managed block, a config file)
+        with enabled items must not overwrite local edits to that file, so
+        those paths are protected. Route filters are ignored: an item a route
+        now also excludes may still own part of the file from earlier syncs.
+        """
+        profile = self._profiles.get(destination.profile)
+        paths: set[str] = set()
+        for name in sorted({name for route in routes for name in route.sources}):
+            source = config.sources[name]
+            for item in items.get(name, ()):
+                if not source.disables(item) or item.error is not None:
+                    continue
+                rendering = profile.render(item)
+                paths.update(output.path for output in rendering.files)
+                paths.update(block.path for block in rendering.blocks)
+                paths.update(
+                    profile.locate(entry.path, destination.path, self._environment)
+                    for entry in rendering.entries
+                )
+        return frozenset(paths)
 
     @staticmethod
     def _source_overlap(

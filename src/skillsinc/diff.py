@@ -34,7 +34,7 @@ class DestinationDiff:
         *,
         adopt: bool,
         outside: frozenset[str] = frozenset[str](),
-        protect_edits: bool = False,
+        protect_edits: frozenset[str] = frozenset[str](),
     ) -> None:
         self._root = root
         self._manifest = manifest
@@ -96,7 +96,7 @@ class DestinationDiff:
             self._add(action, output, found, "")
         elif not matches:
             note = "overwrites local edits" if found not in {owned, wanted} else ""
-            if note and self._refuse_edited_update(path):
+            if note and self._refuse_edited_update(path, path):
                 return
             self._add(Action.UPDATE, output, found, note)
         elif owned != wanted:
@@ -148,7 +148,7 @@ class DestinationDiff:
         elif existing is None:
             note = "restores a deleted managed block"
         elif Digest.of(existing.encode()) != owned.digest:
-            if self._refuse_edited_update(path):
+            if self._refuse_edited_update(path, path):
                 return
             note = "overwrites local edits to the block"
         self._block_change(
@@ -275,7 +275,7 @@ class DestinationDiff:
         if found != wanted:
             edited = found != owned
             blocked = edited and self._refuse_edited_update(
-                f"{output.path}: entry {output.entry}"
+                output.path, f"{output.path}: entry {output.entry}"
             )
             return (
                 None
@@ -300,13 +300,18 @@ class DestinationDiff:
 
     # Internals
 
-    def _refuse_edited_update(self, path: str) -> bool:
-        """Block disabling when reconciliation would overwrite owned local edits."""
-        if not self._protect_edits:
+    def _refuse_edited_update(self, path: str, where: str) -> bool:
+        """Block an overwrite of owned edits in a file a disabled item wrote to.
+
+        ``protect_edits`` holds the paths disabled items would render to, so
+        edits elsewhere get the ordinary overwrite.
+        """
+        if path not in self._protect_edits:
             return False
         self._errors.append(
-            f"{path}: local edits would be overwritten while disabling resources;"
-            " preserve the edits in the source or restore the managed output first"
+            f"{where}: local edits would be overwritten while disabling resources"
+            " that share this file; preserve the edits in the source or restore"
+            " the managed output first"
         )
         return True
 

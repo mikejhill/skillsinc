@@ -1,6 +1,6 @@
 # 0018: Source-wide resource disabling
 
-Status: Accepted
+Status: Accepted; the edit guard is narrowed by [0022](0022-item-errors-and-renames.md)
 
 ## Context
 
