@@ -18,11 +18,17 @@ The XDG variables are honoured on Windows and macOS too. Relative paths in the f
 
 When `config.json` is absent but a `config.jsonc` from an early build sits beside it, that file is read instead. Any path given to `--config` is read as JSONC whatever its extension, except `.toml`.
 
-Editors treat a `.json` file as strict JSON and may flag comments. In VS Code, add this to your user settings:
+### Editor support
+
+Editors treat a `.json` file as strict JSON and flag comments, unless the file names a schema that allows them. Starting with **0.8.0**, SkillSinc ships a JSON Schema ([decision 0023](../decisions/0023-configuration-schema.md)); add this first key to the file:
 
 ```jsonc
-"files.associations": { "**/skillsinc/config.json": "jsonc" }
+"$schema": "./config.schema.json",
 ```
+
+`init` writes the key, and `sync` writes `config.schema.json` beside the file and replaces it whenever SkillSinc's version of it changes. `plan` writes nothing, so run `sync` once after adding the key. The schema tells VS Code, and editors built on its JSON support, to accept comments and trailing commas, and adds completion, hover text, and validation for every key. A local file loads without network access or a trust prompt. A different file named `config.schema.json` is never overwritten. `$schema` is read only by editors; any string is accepted. Commit the schema with a project configuration so editors in a fresh clone find it.
+
+Versions before 0.8.0 reject the `$schema` key. On those, use VS Code's `"files.associations": { "**/skillsinc/config.json": "jsonc" }` user setting instead.
 
 ## Example
 

@@ -170,6 +170,8 @@ class Config:
     routes: tuple[RouteConfig, ...]
     project: Path | None = None
     """The project root for a project configuration, or None for the user's."""
+    schema: str | None = None
+    """The ``$schema`` value, which only editors read."""
 
     def state_directory(self, environment: Environment) -> Path:
         """Return where this configuration keeps its manifests and run lock.
@@ -314,6 +316,7 @@ class ConfigLoader:
             ConfigurationError: If the file is missing, malformed, or inconsistent.
         """
         root = Table(self._read(path), path.name)
+        schema = root.string("$schema")
         version = root.integer("version")
         if version != CONFIG_VERSION:
             msg = f"{path}: unsupported version {version!r} (expected {CONFIG_VERSION})"
@@ -332,7 +335,7 @@ class ConfigLoader:
         routes = tuple(self._route(table) for table in root.table_list("routes"))
         root.finish()
 
-        config = Config(path, sources, destinations, routes, project)
+        config = Config(path, sources, destinations, routes, project, schema)
         self._check_references(config)
         self._check_overlaps(config)
         return config

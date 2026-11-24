@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mikejhill/skillsinc/main/src/skillsinc/config.schema.json",
+  "title": "SkillSinc configuration",
+  "description": "SkillSinc config.json. Comments and trailing commas are allowed. Reference: https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md",
+  "allowComments": true,
+  "allowTrailingCommas": true,
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema for editors. SkillSinc keeps ./config.schema.json up to date beside this file."
+    },
+    "version": {
+      "const": 1,
+      "description": "Configuration format version. Must be 1."
+    },
+    "project": {
+      "$ref": "#/$defs/text",
+      "description": "Project root, relative to this file, that makes this a project configuration."
+    },
+    "sources": {
+      "type": "object",
+      "description": "Libraries of authored customizations, by name.",
+      "additionalProperties": { "$ref": "#/$defs/source" }
+    },
+    "destinations": {
+      "type": "object",
+      "description": "Harness folders that receive customizations, by name.",
+      "additionalProperties": { "$ref": "#/$defs/destination" }
+    },
+    "routes": {
+      "type": "array",
+      "description": "Which items flow from which sources to which destinations.",
+      "items": { "$ref": "#/$defs/route" }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "texts": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "selectors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?:[^/\\\\]+/[^/\\\\]+|plugins/[^/\\\\]+/[^/\\\\]+/[^/\\\\]+)$"
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Give exactly one of path, github, or git.",
+      "additionalProperties": false,
+      "properties": {
+        "path": { "$ref": "#/$defs/text", "description": "Library directory; relative paths resolve against this file." },
+        "github": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+          "description": "GitHub repository owner/repo."
+        },
+        "git": { "$ref": "#/$defs/text", "description": "Any Git URL, without credentials." },
+        "ref": { "$ref": "#/$defs/text", "description": "Branch, tag, refs/... name, or full commit SHA. Default: the remote's HEAD." },
+        "subdirectory": { "$ref": "#/$defs/text", "description": "Relative path, using /, of the library inside the repository." },
+        "refresh": {
+          "type": "string",
+          "pattern": "^(?:\\d+d)?(?:\\d+h)?(?:\\d+m)?(?:\\d+s)?$|^\\d+:[0-5]\\d(?::[0-5]\\d)?$",
+          "minLength": 2,
+          "description": "Shortest time between remote checks, such as 15m or 1h (1m to 31d). Default: every run."
+        },
+        "layout": {
+          "type": "object",
+          "description": "Subdirectory of each kind, and of plugins.",
+          "additionalProperties": false,
+          "properties": {
+            "skills": { "$ref": "#/$defs/text" },
+            "instructions": { "$ref": "#/$defs/text" },
+            "agents": { "$ref": "#/$defs/text" },
+            "prompts": { "$ref": "#/$defs/text" },
+            "mcp": { "$ref": "#/$defs/text" },
+            "resources": { "$ref": "#/$defs/text" },
+            "hooks": { "$ref": "#/$defs/text" },
+            "plugins": { "$ref": "#/$defs/text" }
+          }
+        },
+        "exclude": { "$ref": "#/$defs/texts", "description": "File and directory names never read." },
+        "include": { "$ref": "#/$defs/selectors", "minItems": 1, "description": "Selectors of the items this source offers. Default: [\"*/*\"]." },
+        "disabled": { "$ref": "#/$defs/selectors", "description": "Selectors suppressed across every route from this source." },
+        "rename": {
+          "type": "object",
+          "description": "New item names by exact kind/name or plugins/plugin/kind/name selector.",
+          "additionalProperties": { "$ref": "#/$defs/text" }
+        }
+      }
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "enum": ["claude", "copilot", "vscode", "codex", "agents", "generic"],
+          "description": "Harness profile. Default: the destination name."
+        },
+        "path": { "$ref": "#/$defs/text", "description": "Directory the harness reads. Required for generic." },
+        "enabled": { "type": "boolean", "description": "false skips the destination entirely. Default: true." }
+      }
+    },
+    "route": {
+      "type": "object",
+      "required": ["sources", "destinations"],
+      "additionalProperties": false,
+      "properties": {
+        "sources": { "$ref": "#/$defs/texts", "minItems": 1, "description": "Source names." },
+        "destinations": { "$ref": "#/$defs/texts", "minItems": 1, "description": "Destination names." },
+        "include": { "$ref": "#/$defs/texts", "description": "kind/name glob patterns to select. Default: [\"*/*\"]." },
+        "exclude": { "$ref": "#/$defs/texts", "description": "kind/name glob patterns to drop after include." },
+        "allow_lossy": { "type": "boolean", "description": "Accept conversions that drop fields or change activation. Default: false." }
+      }
+    }
+  }
+}

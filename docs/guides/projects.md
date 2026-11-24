@@ -13,7 +13,7 @@ skillsinc sync
 
 `init --project` writes `.config/skillsinc/config.json`. Inside the project (any subdirectory), `plan`, `sync`, and `status` use that file automatically. Pass `--user` to use your user configuration from inside a project, or `--config PATH` for any other file.
 
-Commit `.config/skillsinc/config.json`. SkillSinc keeps its state in `.config/skillsinc/state/` and writes a `.gitignore` there, so state never reaches Git.
+Commit `.config/skillsinc/config.json` and the `config.schema.json` beside it (editor support; see [the configuration guide](configuration.md#editor-support)). SkillSinc keeps its state in `.config/skillsinc/state/` and writes a `.gitignore` there, so state never reaches Git.
 
 ## What changes in a project
 

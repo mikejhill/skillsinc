@@ -12,12 +12,15 @@ from skillsinc.exceptions import ConfigurationError
 from skillsinc.guidance import GuidanceInstaller
 from skillsinc.paths import PROJECT_CONFIG, Environment, absolute
 from skillsinc.profiles.registry import ProfileRegistry
+from skillsinc.schema import ConfigSchema
 
 HEADER: Final = """\
 // SkillSinc configuration (JSONC: comments and trailing commas are allowed).
 // Reference: https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md
 // Preview with `skillsinc plan`; nothing is written until `skillsinc sync`.
 {
+  // Editor completion and validation; sync keeps the schema file up to date.
+  "$schema": "./config.schema.json",
   "version": 1,
 """
 PROJECT_NOTE: Final = (
@@ -48,7 +51,8 @@ class StarterConfig:
         """Write the starter configuration to ``path`` and return its text.
 
         Without ``source``, the default library directory is created empty so
-        the first ``plan`` succeeds.
+        the first ``plan`` succeeds. The JSON Schema the file names is written
+        beside it.
 
         Raises:
             ConfigurationError: If ``path`` is a ``.toml`` file, or exists and
@@ -69,6 +73,7 @@ class StarterConfig:
         if source is None:
             self._environment.default_library.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+        ConfigSchema.refresh(path)
         return text
 
     def render(
