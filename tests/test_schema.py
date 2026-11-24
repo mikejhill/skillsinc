@@ -446,3 +446,82 @@ def test_version_key_reads_release_parts() -> None:
     assert version_key("0.8.0rc1") == (0, 8, 0)
     assert version_key("0.10.1+local.5") == (0, 10, 1)
     assert version_key("0.7.0") < version_key("0.8.0") < version_key("0.10.0")
+
+
+class TestEdgeCases:
+    """Unreadable inputs and failed writes degrade to warnings or no-ops."""
+
+    def test_unreachable_paths(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A blocked or missing path is foreign, unreferenced, and needs nothing."""
+        config = tmp_path / "config.json"
+        missing = tmp_path / "missing.json"
+        original = Path.lstat
+
+        def blocked(self: Path) -> os.stat_result:
+            """Refuse to stat the schema path only."""
+            if self.name == SCHEMA_FILE:
+                raise PermissionError("synthetic denied")
+            return original(self)
+
+        monkeypatch.setattr(Path, "lstat", blocked)
+        assert ConfigSchema.state(config) is SchemaState.FOREIGN
+        monkeypatch.undo()
+        assert ConfigSchema.reference(missing) is None
+        assert ConfigSchema.needs_reference(missing) is False
+
+    def test_failed_replace_removes_staging(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An interrupted schema write leaves no temporary file behind."""
+        config = tmp_path / "config.json"
+
+        def fail(_self: Path, _target: Path) -> Path:
+            """Simulate a failed rename."""
+            raise OSError("synthetic rename failure")
+
+        monkeypatch.setattr(Path, "replace", fail)
+        with pytest.raises(OSError, match="synthetic"):
+            ConfigSchema.refresh(config)
+        assert list(tmp_path.iterdir()) == [], "Expected no leftovers"
+
+    def test_failed_schema_write_still_records(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A schema write failure warns; the one-time upgrade is still recorded."""
+        config = tmp_path / "config.json"
+        config.write_text('{"$schema": "./config.schema.json", "version": 1}')
+
+        def fail(_config: Path) -> bool:
+            """Simulate a full disk."""
+            raise OSError("synthetic full disk")
+
+        monkeypatch.setattr(ConfigSchema, "refresh", staticmethod(fail))
+        maintenance = ConfigMaintenance(tmp_path / "state", installed="0.8.0")
+        result = maintenance.apply(config)
+
+        assert any("synthetic full disk" in item for item in result.warnings)
+        assert maintenance.applied_version(config) == "0.8.0"
+
+    def test_unwritable_record_warns(self, tmp_path: Path) -> None:
+        """A state directory that cannot be created is a warning."""
+        config = tmp_path / "config.json"
+        config.write_text('{"$schema": "https://example.com/s.json", "version": 1}')
+        state = tmp_path / "state"
+        state.write_text("not a directory", encoding="utf-8")
+
+        result = ConfigMaintenance(state, installed="0.8.0").apply(config)
+
+        assert any("could not record upgrades" in item for item in result.warnings)
+
+    @pytest.mark.parametrize("record", ['{"configs": []}', "[]", "not json"])
+    def test_malformed_record_counts_as_empty(
+        self, tmp_path: Path, record: str
+    ) -> None:
+        """A damaged upgrades.json means no upgrades are recorded."""
+        state = tmp_path / "state"
+        state.mkdir()
+        (state / "upgrades.json").write_text(record, encoding="utf-8")
+
+        assert ConfigMaintenance(state).applied_version(tmp_path / "c.json") is None
