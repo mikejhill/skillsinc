@@ -16,6 +16,7 @@ from skillsinc.exceptions import ConfigurationError
 from skillsinc.manifest import Manifest, ManifestStore
 from skillsinc.plan import Plan
 from skillsinc.planner import Planner
+from skillsinc.profiles.copilot import VSCodeProfile
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.sources import SourceReader
 
@@ -404,7 +405,8 @@ class TestDuplicateLoads:
         self, sandbox: Sandbox
     ) -> None:
         """``chat.agentSkillsLocations`` set to false removes that folder."""
-        settings = sandbox.environment.config_home / "Code/User/settings.json"
+        prompts = VSCodeProfile().user_path(sandbox.environment)
+        settings = prompts.parent / "settings.json"
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(
             '{\n  // user settings\n  "chat.agentSkillsLocations":'
