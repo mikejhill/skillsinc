@@ -17,6 +17,8 @@ The version-only diff and single-parent checks still run before any dispatch.
    - publishes to PyPI with trusted publishing (no API tokens; PEP 740 attestations included),
    - attaches the distributions to the GitHub release.
 
+The `CHANGELOG.md` date is the day release-please last regenerated the release pull request, which happens only on a push to `main`. A release PR merged days later keeps the older date (0.6.0 was dated 2026-11-12 and released 2026-11-19); merge release PRs promptly, or correct the date in the next pull request.
+
 While the version is below 1.0, breaking changes bump the minor version.
 
 | Commit                        | Example                                 | Next version from 0.4.2 |

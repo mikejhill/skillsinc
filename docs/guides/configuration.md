@@ -148,6 +148,10 @@ Deleting `$XDG_STATE_HOME/skillsinc/remotes/` is safe; the next run fetches agai
 
 Destinations may not share or nest directories. Profile defaults honour `CLAUDE_CONFIG_DIR`, `COPILOT_HOME`, `CODEX_HOME`, and `APPDATA`.
 
+### Links and junctions
+
+SkillSinc writes copies and records what it owns; it does not link harness folders to the library. A link would let a harness write into the library (a skill's `.venv` or `uv.lock` would land in the source), and two destinations reached through one linked folder would each claim the other's files. Planning therefore refuses to write through a symbolic link or junction below a destination's `path`. The destination's `path` itself may be a link or junction: SkillSinc follows it and checks the resolved folder against its sources. To share one folder between harnesses, point the destination at the folder the link leads to, or rely on harnesses that read another's folder (VS Code and Copilot read `~/.agents/skills`). Copies reach harnesses on the next sync, so a scheduled sync bounds the delay; a skill that builds a `.venv` builds one per destination.
+
 ## `routes[]`
 
 | Key            | Required | Default   | Meaning                                                  |
@@ -158,7 +162,7 @@ Destinations may not share or nest directories. Profile defaults honour `CLAUDE_
 | `exclude`      | no       | `[]`      | `kind/name` glob patterns to drop after `include`        |
 | `allow_lossy`  | no       | `false`   | Accept conversions that drop fields or change activation |
 
-Plugin items match both `kind/name` and `plugins/<plugin>/kind/name`, so `"include": ["plugins/kit/*"]` selects one whole plugin and `"exclude": ["plugins/kit/*"]` drops it. Anything a plugin holds that SkillSinc does not sync (hooks, LSP servers, scripts, runtime manifest keys) is a loss on each of its items, so syncing part of a plugin needs `"allow_lossy": true`.
+Plugin items match both `kind/name` and `plugins/<plugin>/kind/name`, so `"include": ["plugins/kit/*"]` selects one whole plugin and `"exclude": ["plugins/kit/*"]` drops it. Because a plugin item is also a plain item, `"include": ["agents/*"]` selects plugin agents too; add `"exclude": ["plugins/*/*/*"]` to a route that should carry library items only. Anything a plugin holds that SkillSinc does not sync (hooks, LSP servers, scripts, runtime manifest keys) is a loss on each of its items, so syncing part of a plugin needs `"allow_lossy": true`.
 
 Some harnesses also read another profile's folder: Copilot CLI and VS Code read `~/.agents/skills`, and VS Code also reads `~/.claude/skills` and `~/.copilot/{skills,instructions,agents}`. When both destinations are at their default paths, `copilot` skips skills an `agents` destination receives, and `vscode` skips instructions and agents a `copilot` destination receives, so each harness loads one copy. Any other item one harness would load from two destinations prints a `warning:` line in `plan` and `sync`; it does not block ([decision 0009](../decisions/0009-one-copy-per-harness.md)).
 
@@ -238,6 +242,8 @@ Versions through 0.3.x reject the new `disabled` key. Upgrade before adding it. 
   destinations alone.
 - Set `"enabled": false`: the destination is left exactly as it is.
 - Point a destination at a new `path`: the plan refuses until you delete the old manifest named in the error, which releases the old files without deleting them.
+
+Folders are removed only when they become empty. A skill folder that also holds files SkillSinc did not write, such as a `.venv` or cache a skill's script created, keeps those files and the folder; delete them by hand if you no longer want them. Released (`forget`) files stay active in the harness until you delete or restore them, because SkillSinc no longer owns them.
 
 SkillSinc keeps state like Terraform: each destination's manifest records what
 SkillSinc owns and which configuration file last synced it, and every sync

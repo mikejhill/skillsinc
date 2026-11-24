@@ -364,7 +364,11 @@ class DestinationDiff:
         for part in relative.parts[1:] if beside else relative.parts:
             current /= part
             if current.is_symlink() or current.is_junction():
-                msg = f"refusing to write through a link or junction at {current}"
+                msg = (
+                    f"refusing to write through a link or junction at {current};"
+                    " point the destination's path at the link's target, or"
+                    " replace the link with a folder"
+                )
                 raise ConflictError(msg)
         if target.is_dir():
             msg = "a directory exists where a file is expected"
