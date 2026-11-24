@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Final
 
 from skillsinc.config import Config, DestinationConfig, RouteConfig
-from skillsinc.diff import DestinationDiff
+from skillsinc.diff import ALL_PATHS, DestinationDiff
 from skillsinc.exceptions import ConfigurationError, SourceError
 from skillsinc.manifest import Manifest, ManifestStore
 from skillsinc.models import Customization, Digest, EntryOutput, FileOutput
@@ -48,6 +48,7 @@ class DesiredState:
     requires: list[tuple[Path, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    identities: dict[str, str] = field(default_factory=dict)
 
 
 class Planner:
@@ -380,14 +381,18 @@ class Planner:
         with enabled items must not overwrite local edits to that file, so
         those paths are protected. Route filters are ignored: an item a route
         now also excludes may still own part of the file from earlier syncs.
+        A disabled item that cannot be read has unknown paths, so every path
+        is protected (``ALL_PATHS``).
         """
         profile = self._profiles.get(destination.profile)
         paths: set[str] = set()
         for name in sorted({name for route in routes for name in route.sources}):
             source = config.sources[name]
             for item in items.get(name, ()):
-                if not source.disables(item) or item.error is not None:
+                if not source.disables(item):
                     continue
+                if item.error is not None:
+                    return ALL_PATHS
                 rendering = profile.render(item)
                 paths.update(output.path for output in rendering.files)
                 paths.update(block.path for block in rendering.blocks)
@@ -585,6 +590,8 @@ class Planner:
             if losses and not allow_lossy:
                 desired.skipped.append(Skip(label, "; ".join(losses), lossy=True))
                 continue
+            if not self._claim(desired, label, rendering.identity):
+                continue
             desired.notes.extend(f"{label}: {note}" for note in (*losses, *item.notes))
             desired.delivered.append(label)
             self._add_files(desired, label, rendering.files)
@@ -601,6 +608,19 @@ class Planner:
             )
             self._add_entries(desired, label, entries)
         return desired
+
+    @staticmethod
+    def _claim(desired: DesiredState, label: str, identity: str | None) -> bool:
+        """Record ``identity`` for ``label``; report it when another item has it."""
+        if identity is None:
+            return True
+        other = desired.identities.setdefault(identity, label)
+        if other == label:
+            return True
+        desired.errors.append(
+            f"{label}: {other} uses the same {identity}; rename one of them"
+        )
+        return False
 
     @staticmethod
     def _select(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -304,22 +305,20 @@ class TestVSCodeSkillLocations:
 
         assert reads == VSCodeProfile.also_reads, f"Expected defaults, got {reads!r}"
 
-    def test_windows_keys_compare_without_case_or_separators(
-        self, tmp_path: Path
-    ) -> None:
-        """A Windows-style key turns off the matching folder."""
-        environment = Environment(
-            tmp_path / "home", {"APPDATA": str(tmp_path / "roaming")}, "win32"
-        )
+    @pytest.mark.parametrize(
+        "key", ["~\\\\.agents\\\\skills", "~/.Agents/skills", ".agents/skills"]
+    )
+    def test_keys_match_literally_as_in_vs_code(self, tmp_path: Path, key: str) -> None:
+        """VS Code compares keys literally, so variants keep the default."""
+        environment = self.environment(tmp_path)
         self.write(
-            tmp_path / "roaming/Code/User",
-            '{"chat.agentSkillsLocations": {"~\\\\.Agents\\\\Skills\\\\": false}}',
+            tmp_path / "config/Code/User",
+            json.dumps({"chat.agentSkillsLocations": {key: False}}),
         )
 
         reads = VSCodeProfile().reads_with(environment)
 
-        assert reads["agents"] == frozenset(), f"Expected agents off, got {reads!r}"
-        assert Kind.SKILL in reads["claude"], f"Expected claude kept, got {reads!r}"
+        assert reads == VSCodeProfile.also_reads, f"Expected defaults, got {reads!r}"
 
     def test_workspace_settings_override_user_settings(self, tmp_path: Path) -> None:
         """In a project, ``.vscode/settings.json`` wins for its own keys."""
@@ -332,7 +331,7 @@ class TestVSCodeSkillLocations:
         self.write(
             project / ".vscode",
             '{"chat.agentSkillsLocations": {".claude/skills": true,'
-            ' ".agents/skills": false, "~/.copilot/skills": false}}',
+            ' ".agents/skills": false, "~/.github/skills": false}}',
         )
 
         reads = VSCodeProfile(project).reads_with(environment)
@@ -340,3 +339,15 @@ class TestVSCodeSkillLocations:
         assert Kind.SKILL in reads["claude"], f"Expected claude kept, got {reads!r}"
         assert Kind.SKILL not in reads["agents"], f"Expected agents off: {reads!r}"
         assert Kind.SKILL in reads["copilot"], f"Expected home key ignored: {reads!r}"
+
+    def test_project_copilot_key_is_github_skills(self, tmp_path: Path) -> None:
+        """In a workspace the Copilot folder is ``.github/skills``."""
+        project = tmp_path / "repo"
+        self.write(
+            project / ".vscode",
+            '{"chat.agentSkillsLocations": {".github/skills": false}}',
+        )
+
+        reads = VSCodeProfile(project).reads_with(self.environment(tmp_path))
+
+        assert Kind.SKILL not in reads["copilot"], f"Expected copilot off: {reads!r}"

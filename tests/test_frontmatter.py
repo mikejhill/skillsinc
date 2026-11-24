@@ -115,3 +115,9 @@ class TestRename:
         assert renamed.raw == b"---\nname: new\ndescription: x\n---\nBody", (
             f"Expected a rendered header, got {renamed.raw!r}"
         )
+
+
+def test_impossible_date_is_a_frontmatter_error() -> None:
+    """PyYAML's ValueError for a bad timestamp is reported like invalid YAML."""
+    with pytest.raises(FrontmatterError, match="invalid YAML"):
+        FrontmatterCodec().parse(b"---\nname: 2026-02-31\n---\nBody")

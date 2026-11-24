@@ -384,9 +384,6 @@ class TestPluginExpansion:
             ),
             ({".mcp.json": "["}, "invalid MCP server file"),
             ({".mcp.json": '{"mcpServers": []}'}, "must be a JSON object"),
-            ({".mcp.json": '{"api": "x"}'}, "'api' must be a JSON object"),
-            ({".mcp.json": '{"api": {}}'}, "either a 'command' or a 'url'"),
-            ({".mcp.json": '{"bad name": {"command": "x"}}'}, "invalid customization"),
         ],
     )
     def test_ambiguous_plugin_fails_the_source(
@@ -398,15 +395,41 @@ class TestPluginExpansion:
         with pytest.raises(SourceError, match=message):
             SourceReader().read(Builder.source(tmp_path))
 
+    @pytest.mark.parametrize(
+        ("servers", "message"),
+        [
+            ('"api": "x"', "'api' must be a JSON object"),
+            ('"api": {}', "either a 'command' or a 'url'"),
+            ('"bad name": {"command": "x"}', "invalid customization"),
+        ],
+    )
+    def test_invalid_plugin_server_marks_only_that_server(
+        self, tmp_path: Path, servers: str, message: str
+    ) -> None:
+        """One bad server in a readable map leaves its siblings usable."""
+        text = '{"good": {"command": "x"}, ' + servers + "}"
+        self.plugin(tmp_path, {".mcp.json": text})
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert_item_error(items, message)
+        good = [item.error for item in items if item.name == "good"]
+        assert good == [None], f"Expected a usable good server, got {items!r}"
+
     def test_name_shared_with_library_marks_the_item(self, tmp_path: Path) -> None:
         """A plugin item may not shadow a library item of the same kind and name."""
         self.plugin(tmp_path, {"agents/reviewer.md": "Plugin.\n"})
         (tmp_path / "agents").mkdir()
         (tmp_path / "agents/reviewer.agent.md").write_text("Library.\n")
 
-        assert_item_error(
-            SourceReader().read(Builder.source(tmp_path)),
-            "agents/reviewer is defined by plugin 'kit' and the",
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert_item_error(items, "agents/reviewer is defined by plugin 'kit' and the")
+        assert all(item.error is not None for item in items), (
+            f"Expected both colliding items kept with errors, got {items!r}"
+        )
+        assert {item.plugin for item in items} == {None, "kit"}, (
+            f"Expected the plugin item kept for plugin routes, got {items!r}"
         )
 
 
@@ -555,6 +578,24 @@ class TestItemNames:
             "api-2.json",
             b'{"command": "x"}',
         ), f"Expected a renamed server with unchanged bytes, got {item!r}"
+
+    def test_case_only_rename_marks_the_item(self, tmp_path: Path) -> None:
+        """Changing only letter case would confuse case-insensitive destinations."""
+        self.skill(tmp_path, "readme", "description: R")
+        source = replace(Builder.source(tmp_path), rename={"skills/readme": "Readme"})
+
+        assert_item_error(SourceReader().read(source), "only letter case")
+
+    def test_date_shaped_rename_is_quoted(self, tmp_path: Path) -> None:
+        """A name YAML would read as an impossible date stays a string."""
+        self.skill(tmp_path, "one", "name: one\ndescription: One")
+        source = replace(Builder.source(tmp_path), rename={"skills/one": "2026-02-31"})
+
+        (item,) = SourceReader().read(source)
+
+        assert b"name: '2026-02-31'\n" in item.document.raw, (
+            f"Expected a quoted name line, got {item.document.raw!r}"
+        )
 
     def test_two_keys_for_one_item_mark_it(self, tmp_path: Path) -> None:
         """A plain and a plugin-qualified key for one item are ambiguous."""

@@ -68,7 +68,8 @@ class FrontmatterCodec:
         text = document.raw.decode("utf-8-sig")
         match = FENCE.match(text)
         header = match.group("yaml") if match is not None else ""
-        edited, count = NAME_LINE.subn(f"name: {name}", header, count=2)
+        line = yaml.safe_dump({"name": name}, allow_unicode=True, width=1000).strip()
+        edited, count = NAME_LINE.subn(lambda _: line, header, count=2)
         if match is not None and count == 1:
             try:
                 reparsed = self._load(edited)
@@ -86,7 +87,8 @@ class FrontmatterCodec:
         """Parse the YAML header into a typed mapping."""
         try:
             loaded: object = yaml.safe_load(source)
-        except yaml.YAMLError as err:
+        except (yaml.YAMLError, ValueError) as err:
+            # PyYAML raises ValueError for impossible timestamps such as 2026-02-31
             msg = f"invalid YAML frontmatter: {err}"
             raise FrontmatterError(msg) from err
         result: dict[str, FrontmatterValue] = {}

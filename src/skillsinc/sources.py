@@ -357,11 +357,17 @@ class SourceReader:
             raise SourceError(msg)
         items: list[Customization] = []
         for key, server in sorted(servers.items()):
-            name = self._name(key, path)
-            if not isinstance(server, dict):
-                msg = f"{path}: MCP server '{name}' must be a JSON object"
-                raise SourceError(msg)
-            self._check_server(server, path)
+            try:
+                name = self._name(key, path)
+                if not isinstance(server, dict):
+                    msg = f"{path}: MCP server '{name}' must be a JSON object"
+                    raise SourceError(msg)  # noqa: TRY301 — recorded per item below
+                self._check_server(server, path)
+            except SourceError as err:
+                items.append(
+                    self._unreadable(source, Kind.MCP, key, f"{key}.json", err)
+                )
+                continue
             raw = JsonDocument.dump(server)
             document = Document(frontmatter=server, body="", raw=raw)
             items.append(
@@ -530,8 +536,8 @@ class SourceReader:
     def _check_unique(items: list[Customization]) -> list[Customization]:
         """Mark items that share an identity, from the library or its plugins.
 
-        Each identity keeps one item; when several define it, that item carries
-        an error naming them, so routing it blocks the destination.
+        When several items define one identity, each carries an error naming
+        them all, so routing any of them blocks the destination.
         """
         found: dict[str, list[Customization]] = defaultdict(list)
         for item in items:
@@ -555,7 +561,9 @@ class SourceReader:
                 for item in group
             )
             error = f"{selector} is defined by {' and '.join(origins)}"
-            unique.append(replace(group[0], error=error))
+            # Every colliding item stays, so a route that selected any of them
+            # (by plain or plugin selector) is blocked instead of cleaned up
+            unique.extend(replace(item, error=error) for item in group)
         return unique
 
     def _renamed(
@@ -578,7 +586,16 @@ class SourceReader:
                 error = f"renamed by both {' and '.join(keys)}; keep one"
                 renamed.append(replace(item, error=error, renamed_by=keys[0]))
                 continue
-            renamed.append(self._rename(item, keys[0], source.rename[keys[0]]))
+            new = source.rename[keys[0]]
+            if new != item.name and new.casefold() == item.name.casefold():
+                error = (
+                    f"rename to '{new}' changes only letter case, which"
+                    " case-insensitive file systems cannot tell apart;"
+                    " pick another name"
+                )
+                renamed.append(replace(item, error=error, renamed_by=keys[0]))
+                continue
+            renamed.append(self._rename(item, keys[0], new))
         return renamed
 
     def _rename(self, item: Customization, key: str, name: str) -> Customization:

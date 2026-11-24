@@ -10,7 +10,7 @@ from typing import ClassVar, Final, assert_never, override
 
 from skillsinc.jsonc import Jsonc
 from skillsinc.models import Customization, EntryOutput, Kind, Rendering, Support
-from skillsinc.paths import Environment, absolute
+from skillsinc.paths import Environment
 from skillsinc.profiles.base import Profile
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,17 @@ COPY_PATHS: Final = {
 }
 SKILL_LOCATIONS: Final = "chat.agentSkillsLocations"
 # The skills folders VS Code reads from other profiles' default directories
-SKILL_FOLDERS: Final = {"claude": ".claude", "agents": ".agents", "copilot": ".copilot"}
+# VS Code's default chat.agentSkillsLocations keys for other profiles' folders
+USER_SKILL_KEYS: Final = {
+    "claude": "~/.claude/skills",
+    "agents": "~/.agents/skills",
+    "copilot": "~/.copilot/skills",
+}
+PROJECT_SKILL_KEYS: Final = {
+    "claude": ".claude/skills",
+    "agents": ".agents/skills",
+    "copilot": ".github/skills",
+}
 PROJECT_VSCODE_REFUSAL: Final = (
     "in a project VS Code reads it from .github; route it to a copilot destination"
 )
@@ -162,27 +172,25 @@ class VSCodeProfile(Profile):
     def reads_with(self, environment: Environment) -> Mapping[str, frozenset[Kind]]:
         """Drop skill folders ``chat.agentSkillsLocations`` sets to ``false``.
 
-        The folders are the other profiles' default directories at this
-        scope: under the home directory, or under the project. User settings
-        apply first, then a project's ``.vscode/settings.json``.
-        Unreadable settings leave VS Code's defaults in place.
+        VS Code compares the setting's keys literally with its default keys
+        (``~/.claude/skills`` at the user level, ``.claude/skills`` in a
+        workspace), so SkillSinc does too. User settings apply first, then a
+        project's ``.vscode/settings.json``. Unreadable settings leave VS
+        Code's defaults in place.
         """
-        reads = self.reads()
-        locations = self._locations(self.user_path(environment).parent, environment)
+        locations = self._locations(self.user_path(environment).parent)
+        keys = USER_SKILL_KEYS
         if self.project is not None:
-            locations.update(self._locations(self.project / ".vscode", environment))
-        base = self.project if self.project is not None else environment.home
-        off = {
-            profile
-            for profile, folder in SKILL_FOLDERS.items()
-            if locations.get(self._key(base / folder / "skills", environment)) is False
-        }
+            locations.update(self._locations(self.project / ".vscode"))
+            keys = PROJECT_SKILL_KEYS
+        off = {profile for profile, key in keys.items() if locations.get(key) is False}
         return {
             profile: kinds - {Kind.SKILL} if profile in off else kinds
-            for profile, kinds in reads.items()
+            for profile, kinds in self.reads().items()
         }
 
-    def _locations(self, folder: Path, environment: Environment) -> dict[str, bool]:
+    @staticmethod
+    def _locations(folder: Path) -> dict[str, bool]:
         """Return ``chat.agentSkillsLocations`` from ``folder/settings.json``."""
         path = folder / "settings.json"
         try:
@@ -196,18 +204,11 @@ class VSCodeProfile(Profile):
         value = settings.get(SKILL_LOCATIONS) if isinstance(settings, dict) else None
         if not isinstance(value, dict):
             return {}
-        base = self.project if self.project is not None else environment.home
         return {
-            self._key(environment.expand(str(key), base), environment): enabled
+            str(key): enabled
             for key, enabled in value.items()
             if isinstance(enabled, bool)
         }
-
-    @staticmethod
-    def _key(path: Path, environment: Environment) -> str:
-        """Return ``path`` normalized for comparison on this platform."""
-        text = str(absolute(path)).rstrip("/\\")
-        return text.lower() if environment.platform == "win32" else text
 
     @override
     def user_path(self, environment: Environment) -> Path:

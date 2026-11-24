@@ -198,7 +198,7 @@ Starting with **0.7.0**, `sources.<name>.rename` gives items new names, which re
 }
 ```
 
-Keys are exact selectors (`kind/name` or `plugins/plugin/kind/name`, no wildcards); values are item names (letters, digits, `.`, `_`, `-`). A renamed item takes the new name everywhere: its output paths, its `kind/name` for `include`, `disabled`, and route filters, and the `name` field of a skill, instruction, agent, or prompt that has one. MCP servers and hooks keep their content and change only their key or file name. Renaming onto a name another item uses, or naming one item with two keys, blocks the destinations that receive it. A key that matches nothing prints a warning. Renaming an item that was already delivered removes the old copy and writes the new one, like any rename in the library.
+Keys are exact selectors (`kind/name` or `plugins/plugin/kind/name`, no wildcards); values are item names (letters, digits, `.`, `_`, `-`; not ending in `.`, and not a Windows device name such as `CON` or `NUL`). A rename that changes only letter case is refused, because case-insensitive file systems cannot tell the two apart. A renamed item takes the new name everywhere: its output paths, its `kind/name` for `include`, `disabled`, and route filters, and the `name` field of a skill, instruction, agent, or prompt that has one. MCP servers and hooks keep their content and change only their key or file name. Renaming onto a name another item uses, or naming one item with two keys, blocks the destinations that receive either item. A key that matches nothing prints a warning. Renaming an item that was already delivered removes the old copy and writes the new one, like any rename in the library.
 
 ## Removing things
 

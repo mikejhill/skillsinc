@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
-NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 """Item names SkillSinc accepts: safe as a path segment on every platform."""
 
 type FrontmatterValue = (
@@ -161,6 +161,8 @@ class Rendering:
     entries: tuple[EntryOutput, ...] = ()
     losses: tuple[str, ...] = ()
     unsupported: str | None = None
+    identity: str | None = None
+    """A name the harness must see only once per destination, such as a subagent's."""
 
     @classmethod
     def refuse(cls, reason: str) -> Rendering:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, Final, override
 
@@ -138,15 +139,18 @@ class ClaudeProfile(Profile):
         fields only Claude Code defines are copied. Plugin agents are already
         Claude Code subagents, so they are copied.
         """
-        if item.plugin is not None:
-            return self.copy_file(item, f"agents/{item.name}.md")
         source = item.document.frontmatter
+        declared = source.get("name")
+        name = declared if self._agent_name(declared) else item.name
+        identity = f"Claude Code subagent name {name!r}"
+        if item.plugin is not None:
+            copied = self.copy_file(item, f"agents/{item.name}.md")
+            return replace(copied, identity=identity)
         description = source.get("description")
         if description is None or description == "":
             return Rendering.refuse("Claude subagents require a description")
-        declared = source.get("name")
         frontmatter: dict[str, FrontmatterValue] = {
-            "name": declared if self._agent_name(declared) else item.name,
+            "name": name,
             "description": description,
         }
         frontmatter.update(
@@ -156,7 +160,8 @@ class ClaudeProfile(Profile):
         )
         dropped = [key for key in source if key not in {"name", *frontmatter}]
         losses = [f"drops frontmatter: {', '.join(dropped)}"] if dropped else []
-        return self.rewrite(item, f"agents/{item.name}.md", frontmatter, losses)
+        rendering = self.rewrite(item, f"agents/{item.name}.md", frontmatter, losses)
+        return replace(rendering, identity=identity)
 
     @staticmethod
     def _agent_name(name: FrontmatterValue) -> bool:

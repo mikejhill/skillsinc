@@ -22,6 +22,8 @@ BOTH = (
     " route it one way"
 )
 EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+ALL_PATHS: frozenset[str] = frozenset({"\0"})
+"""``protect_edits`` value that protects every path in the destination."""
 
 
 class DestinationDiff:
@@ -306,7 +308,7 @@ class DestinationDiff:
         ``protect_edits`` holds the paths disabled items would render to, so
         edits elsewhere get the ordinary overwrite.
         """
-        if path not in self._protect_edits:
+        if path not in self._protect_edits and self._protect_edits != ALL_PATHS:
             return False
         self._errors.append(
             f"{where}: local edits would be overwritten while disabling resources"

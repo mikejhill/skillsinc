@@ -24,6 +24,11 @@ CONFIG_VERSION: Final = 1
 DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
 ALL_ITEMS: Final = ("*/*",)
 PLUGINS: Final = "plugins"
+# Windows device names, unusable as file names with or without an extension
+RESERVED_NAMES: Final = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"{device}{number}" for device in ("COM", "LPT") for number in range(1, 10)}
+)
 SELECTOR_KINDS: Final = frozenset({"*", *(kind.value for kind in Kind)})
 GITHUB_REPOSITORY: Final = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 COMMIT: Final = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -545,10 +550,15 @@ class ConfigLoader:
                     " or 'plugins/plugin/kind/name' selector, without wildcards"
                 )
                 raise ConfigurationError(msg)
-            if not NAME_PATTERN.match(new):
+            if (
+                not NAME_PATTERN.match(new)
+                or new.endswith(".")
+                or new.split(".")[0].upper() in RESERVED_NAMES
+            ):
                 msg = (
                     f"{where}.{selector}: invalid name {new!r}; use letters, digits,"
-                    " '.', '_', and '-', starting with a letter or digit"
+                    " '.', '_', and '-', starting with a letter or digit, not ending"
+                    " in '.', and not a Windows device name such as CON or NUL"
                 )
                 raise ConfigurationError(msg)
         return renames

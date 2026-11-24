@@ -594,3 +594,56 @@ class TestItemErrors:
             "library:skills/renamed: renamed from 'sample'" in note
             for note in result.destinations[0].notes
         ), f"Expected a rename note, got {result.destinations[0].notes!r}"
+
+
+class TestReviewSafety:
+    """Collisions, unreadable disabled items, and duplicate subagent names block."""
+
+    def test_plugin_route_blocks_on_collision(self, sandbox: Sandbox) -> None:
+        """A route that selects only the plugin item still sees the collision."""
+        plugin = sandbox.library / "plugins/kit/agents"
+        plugin.mkdir(parents=True)
+        (plugin / "reviewer.md").write_text("---\ndescription: P\n---\nP\n")
+        config = sandbox.configure()
+        routes = (RouteConfig(("library",), ("target",), include=("plugins/kit/*/*",)),)
+
+        result = TestPlanner.planner(sandbox).plan(replace(config, routes=routes))
+
+        assert result.destinations[0].blocked, (
+            f"Expected the plugin route blocked, got {result.destinations[0]!r}"
+        )
+
+    def test_unreadable_disabled_item_protects_every_path(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Without knowing its paths, edits anywhere are protected."""
+        config = sandbox.configure()
+        assert sandbox.run("sync")[0] == 0, "Expected the initial sync"
+        (sandbox.root / "skills/sample/SKILL.md").write_bytes(b"edited")
+        broken = sandbox.library / "skills/broken"
+        broken.mkdir()
+        (broken / "SKILL.md").write_text("No description.\n", encoding="utf-8")
+        source = replace(config.sources["library"], disabled=("skills/broken",))
+        config = replace(config, sources={"library": source})
+
+        result = TestPlanner.planner(sandbox).plan(config)
+
+        assert any(
+            "while disabling resources" in error
+            for error in result.destinations[0].errors
+        ), f"Expected the edit protected, got {result.destinations[0]!r}"
+
+    def test_duplicate_claude_subagent_names_block(self, sandbox: Sandbox) -> None:
+        """Two agents declaring one name cannot both be Claude subagents."""
+        (sandbox.library / "agents/other.agent.md").write_text(
+            "---\nname: reviewer\ndescription: Other\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        config = sandbox.configure("claude", allow_lossy=True)
+
+        result = TestPlanner.planner(sandbox).plan(config)
+
+        assert any(
+            "same Claude Code subagent name 'reviewer'" in error
+            for error in result.destinations[0].errors
+        ), f"Expected a name conflict, got {result.destinations[0]!r}"

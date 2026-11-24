@@ -550,6 +550,10 @@ class TestSourceRename:
             ({"unknown/a": "b"}, "invalid key"),
             ({"skills/a": "../b"}, "invalid name"),
             ({"skills/a": "b c"}, "invalid name"),
+            ({"skills/a": "NUL"}, "invalid name"),
+            ({"skills/a": "com1.md"}, "invalid name"),
+            ({"skills/a": "b."}, "invalid name"),
+            ({"skills/a": "b\n"}, "invalid name"),
         ],
     )
     def test_rejects_invalid_renames(
