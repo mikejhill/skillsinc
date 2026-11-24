@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -263,3 +264,90 @@ class TestCopilotServerOptions:
         result = CopilotProfile().render(item)
 
         assert result.unsupported is not None, f"Expected refusal, got {result!r}"
+
+
+class TestVSCodeSkillLocations:
+    """VS Code's own settings decide which other skill folders it reads."""
+
+    @staticmethod
+    def write(folder: Path, text: str) -> None:
+        """Write ``folder/settings.json``."""
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "settings.json").write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def environment(tmp_path: Path, platform: str = "linux") -> Environment:
+        """Return an environment whose VS Code settings live under ``tmp_path``."""
+        return Environment(
+            tmp_path / "home", {"XDG_CONFIG_HOME": str(tmp_path / "config")}, platform
+        )
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            "not json",
+            "[]",
+            '{"chat.agentSkillsLocations": []}',
+            '{"chat.agentSkillsLocations": {"~/.claude/skills": "no"}}',
+            '{"chat.agentSkillsLocations": {"~/.claude/skills": true}}',
+        ],
+    )
+    def test_default_reads_stay_without_a_false_entry(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        """Missing, unreadable, or enabling settings keep VS Code's defaults."""
+        environment = self.environment(tmp_path)
+        if text:
+            self.write(tmp_path / "config/Code/User", text)
+
+        reads = VSCodeProfile().reads_with(environment)
+
+        assert reads == VSCodeProfile.also_reads, f"Expected defaults, got {reads!r}"
+
+    @pytest.mark.parametrize(
+        "key", ["~\\\\.agents\\\\skills", "~/.Agents/skills", ".agents/skills"]
+    )
+    def test_keys_match_literally_as_in_vs_code(self, tmp_path: Path, key: str) -> None:
+        """VS Code compares keys literally, so variants keep the default."""
+        environment = self.environment(tmp_path)
+        self.write(
+            tmp_path / "config/Code/User",
+            json.dumps({"chat.agentSkillsLocations": {key: False}}),
+        )
+
+        reads = VSCodeProfile().reads_with(environment)
+
+        assert reads == VSCodeProfile.also_reads, f"Expected defaults, got {reads!r}"
+
+    def test_workspace_settings_override_user_settings(self, tmp_path: Path) -> None:
+        """In a project, ``.vscode/settings.json`` wins for its own keys."""
+        environment = self.environment(tmp_path)
+        project = tmp_path / "repo"
+        self.write(
+            tmp_path / "config/Code/User",
+            '{"chat.agentSkillsLocations": {".claude/skills": false}}',
+        )
+        self.write(
+            project / ".vscode",
+            '{"chat.agentSkillsLocations": {".claude/skills": true,'
+            ' ".agents/skills": false, "~/.github/skills": false}}',
+        )
+
+        reads = VSCodeProfile(project).reads_with(environment)
+
+        assert Kind.SKILL in reads["claude"], f"Expected claude kept, got {reads!r}"
+        assert Kind.SKILL not in reads["agents"], f"Expected agents off: {reads!r}"
+        assert Kind.SKILL in reads["copilot"], f"Expected home key ignored: {reads!r}"
+
+    def test_project_copilot_key_is_github_skills(self, tmp_path: Path) -> None:
+        """In a workspace the Copilot folder is ``.github/skills``."""
+        project = tmp_path / "repo"
+        self.write(
+            project / ".vscode",
+            '{"chat.agentSkillsLocations": {".github/skills": false}}',
+        )
+
+        reads = VSCodeProfile(project).reads_with(self.environment(tmp_path))
+
+        assert Kind.SKILL not in reads["copilot"], f"Expected copilot off: {reads!r}"

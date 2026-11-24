@@ -314,25 +314,27 @@ class TestDisableSafety:
     @pytest.mark.parametrize(
         "selector", ["resources/reference", "resources/not-present"]
     )
-    def test_unrelated_drift_blocks_disable_transaction(
+    def test_unrelated_drift_does_not_block_disabling(
         self, sandbox: Sandbox, selector: str
     ) -> None:
-        """Conservative protection also prevents overwriting other destination drift."""
+        """Edits to files no disabled item writes are handled as in any sync."""
         DisableCase.complete_library(sandbox)
         DisableCase.configure(sandbox)
         assert sandbox.run("sync")[0] == 0, "Expected initial generic sync"
         edited = sandbox.root / "skills/sample/SKILL.md"
         edited.write_bytes(b"Unrelated local edit")
-        before = DisableCase.contents(sandbox.root)
         DisableCase.configure(sandbox, (selector,))
 
         status, output = sandbox.run("sync")
 
-        assert status == 1, f"Expected unsafe disable transaction blocked: {output}"
-        assert "while disabling resources" in output, "Expected edit protection reason"
-        assert DisableCase.contents(sandbox.root) == before, (
-            "Expected neither unrelated edits nor pending removals applied"
+        assert status == 0, f"Expected the disable to apply: {output}"
+        assert "while disabling resources" not in output, (
+            f"Expected no edit protection for an unrelated file: {output}"
         )
+        assert (
+            edited.read_bytes()
+            == (sandbox.library / "skills/sample/SKILL.md").read_bytes()
+        ), "Expected the ordinary repair of the unrelated file"
 
     @pytest.mark.parametrize("profile", ["generic", "codex", "copilot"])
     def test_edited_managed_content_is_released_and_reenable_blocks(

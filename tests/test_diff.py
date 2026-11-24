@@ -162,7 +162,10 @@ class TestDestinationDiff:
         manifest = Manifest("target", str(tmp_path), {"file": Digest.of(b"old")})
 
         changes, errors = DestinationDiff(
-            tmp_path, manifest, adopt=False, protect_edits=protect
+            tmp_path,
+            manifest,
+            adopt=False,
+            protect_edits=frozenset({"file"} if protect else {"other"}),
         ).compare({"file": FileOutput("file", b"new")}, {})
 
         if protect:
@@ -187,7 +190,7 @@ class TestDestinationDiff:
         manifest = Manifest("target", str(tmp_path), {"file": Digest.of(b"old")})
 
         changes, errors = DestinationDiff(
-            tmp_path, manifest, adopt=False, protect_edits=True
+            tmp_path, manifest, adopt=False, protect_edits=frozenset({"file"})
         ).compare({"file": FileOutput("file", b"new")}, {})
 
         assert errors == (), f"Expected unedited update allowed: {errors!r}"
@@ -215,7 +218,10 @@ class TestDestinationDiff:
         )
 
         changes, errors = DestinationDiff(
-            tmp_path, manifest, adopt=False, protect_edits=protect
+            tmp_path,
+            manifest,
+            adopt=False,
+            protect_edits=frozenset({"AGENTS.md"} if protect else ()),
         ).compare({}, {"AGENTS.md": (("two", "Second"),)})
 
         if protect:
@@ -438,7 +444,10 @@ class TestDisablingEntryGuard:
         )
 
         changes, errors = DestinationDiff(
-            tmp_path, manifest, adopt=False, protect_edits=protect
+            tmp_path,
+            manifest,
+            adopt=False,
+            protect_edits=frozenset({path} if protect else ()),
         ).compare({}, {}, {path: (EntryOutput(path, container, "sample", desired),)})
 
         if protect:

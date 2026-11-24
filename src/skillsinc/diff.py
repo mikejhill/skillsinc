@@ -22,6 +22,8 @@ BOTH = (
     " route it one way"
 )
 EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+ALL_PATHS: frozenset[str] = frozenset({"\0"})
+"""``protect_edits`` value that protects every path in the destination."""
 
 
 class DestinationDiff:
@@ -34,7 +36,7 @@ class DestinationDiff:
         *,
         adopt: bool,
         outside: frozenset[str] = frozenset[str](),
-        protect_edits: bool = False,
+        protect_edits: frozenset[str] = frozenset[str](),
     ) -> None:
         self._root = root
         self._manifest = manifest
@@ -96,7 +98,7 @@ class DestinationDiff:
             self._add(action, output, found, "")
         elif not matches:
             note = "overwrites local edits" if found not in {owned, wanted} else ""
-            if note and self._refuse_edited_update(path):
+            if note and self._refuse_edited_update(path, path):
                 return
             self._add(Action.UPDATE, output, found, note)
         elif owned != wanted:
@@ -148,7 +150,7 @@ class DestinationDiff:
         elif existing is None:
             note = "restores a deleted managed block"
         elif Digest.of(existing.encode()) != owned.digest:
-            if self._refuse_edited_update(path):
+            if self._refuse_edited_update(path, path):
                 return
             note = "overwrites local edits to the block"
         self._block_change(
@@ -275,7 +277,7 @@ class DestinationDiff:
         if found != wanted:
             edited = found != owned
             blocked = edited and self._refuse_edited_update(
-                f"{output.path}: entry {output.entry}"
+                output.path, f"{output.path}: entry {output.entry}"
             )
             return (
                 None
@@ -300,13 +302,18 @@ class DestinationDiff:
 
     # Internals
 
-    def _refuse_edited_update(self, path: str) -> bool:
-        """Block disabling when reconciliation would overwrite owned local edits."""
-        if not self._protect_edits:
+    def _refuse_edited_update(self, path: str, where: str) -> bool:
+        """Block an overwrite of owned edits in a file a disabled item wrote to.
+
+        ``protect_edits`` holds the paths disabled items would render to, so
+        edits elsewhere get the ordinary overwrite.
+        """
+        if path not in self._protect_edits and self._protect_edits != ALL_PATHS:
             return False
         self._errors.append(
-            f"{path}: local edits would be overwritten while disabling resources;"
-            " preserve the edits in the source or restore the managed output first"
+            f"{where}: local edits would be overwritten while disabling resources"
+            " that share this file; preserve the edits in the source or restore"
+            " the managed output first"
         )
         return True
 
@@ -359,7 +366,11 @@ class DestinationDiff:
         for part in relative.parts[1:] if beside else relative.parts:
             current /= part
             if current.is_symlink() or current.is_junction():
-                msg = f"refusing to write through a link or junction at {current}"
+                msg = (
+                    f"refusing to write through a link or junction at {current};"
+                    " point the destination's path at the link's target, or"
+                    " replace the link with a folder"
+                )
                 raise ConflictError(msg)
         if target.is_dir():
             msg = "a directory exists where a file is expected"

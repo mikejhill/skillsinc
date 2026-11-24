@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Final
+
+NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def valid_name(name: str) -> bool:
+    """Return True if ``name`` is an item name: safe as a path segment anywhere."""
+    return NAME_PATTERN.match(name) is not None
+
 
 type FrontmatterValue = (
     str
@@ -78,6 +88,10 @@ class Customization:
 
     Items expanded from a plugin name it in ``plugin``; ``losses`` lists plugin
     parts no kind carries, and ``refusal`` explains why no profile can use it.
+    ``error`` marks an item that could not be read: every destination it is
+    routed to is blocked, and other destinations sync normally. ``notes`` are
+    accepted adjustments, such as a corrected skill name, reported with the
+    plan. ``renamed_by`` is the ``sources.<name>.rename`` key that renamed it.
     """
 
     kind: Kind
@@ -89,6 +103,9 @@ class Customization:
     plugin: str | None = None
     losses: tuple[str, ...] = ()
     refusal: str | None = None
+    error: str | None = None
+    notes: tuple[str, ...] = ()
+    renamed_by: str | None = None
 
     @property
     def selector(self) -> str:
@@ -149,6 +166,8 @@ class Rendering:
     entries: tuple[EntryOutput, ...] = ()
     losses: tuple[str, ...] = ()
     unsupported: str | None = None
+    identity: str | None = None
+    """A name the harness must see only once per destination, such as a subagent's."""
 
     @classmethod
     def refuse(cls, reason: str) -> Rendering:

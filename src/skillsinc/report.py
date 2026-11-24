@@ -332,7 +332,9 @@ class Reporter:
             parts.append(f"{skipped} skipped")
         accepted = sum(len(destination.notes) for destination in plan.destinations)
         if accepted:
-            parts.append(f"{accepted} accepted conversion loss(es); -v lists them")
+            parts.append(
+                f"{accepted} note(s) on accepted losses or names; -v lists them"
+            )
         if blocked:
             parts.append(f"{blocked} destination(s) blocked")
         summary = ", ".join(parts) if parts else "no changes"

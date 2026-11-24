@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Final
 
 from skillsinc.config import Config, DestinationConfig, RouteConfig
-from skillsinc.diff import DestinationDiff
+from skillsinc.diff import ALL_PATHS, DestinationDiff
 from skillsinc.exceptions import ConfigurationError, SourceError
 from skillsinc.manifest import Manifest, ManifestStore
 from skillsinc.models import Customization, Digest, EntryOutput, FileOutput
@@ -48,6 +48,7 @@ class DesiredState:
     requires: list[tuple[Path, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    identities: dict[str, str] = field(default_factory=dict)
 
 
 class Planner:
@@ -232,9 +233,9 @@ class Planner:
 
         Each source offers only the items its ``include`` selects, so an item
         left out is planned exactly like one deleted from the library. Returns
-        the items, the failures, and a warning per ``include`` selector that
-        matches nothing, since a typo or an upstream rename would otherwise
-        remove the item silently.
+        the items, the failures, and a warning per ``include`` selector or
+        ``rename`` key that matches nothing, since a typo or an upstream
+        rename would otherwise change the result silently.
         """
         names = sorted({name for route in routes for name in route.sources})
         items: dict[str, tuple[Customization, ...]] = {}
@@ -261,6 +262,12 @@ class Planner:
                     for item in found
                     for selector in item.selectors
                 )
+            )
+            renamed = {item.renamed_by for item in found}
+            unmatched.extend(
+                (name, f"sources.{name}.rename: {key!r} matches no item in the source")
+                for key in source.rename
+                if key not in renamed
             )
         return items, failures, unmatched
 
@@ -342,11 +349,7 @@ class Planner:
             manifest,
             adopt=adopt,
             outside=outside,
-            protect_edits=any(
-                config.sources[name].disabled
-                for route in own_routes
-                for name in route.sources
-            ),
+            protect_edits=self._disabled_paths(config, destination, own_routes, items),
         )
         entries = {
             path: tuple(found.values()) for path, found in desired.entries.items()
@@ -364,6 +367,40 @@ class Planner:
             outputs=self._outputs(desired),
             requires=tuple(desired.requires),
         )
+
+    def _disabled_paths(
+        self,
+        config: Config,
+        destination: DestinationConfig,
+        routes: Sequence[RouteConfig],
+        items: Mapping[str, tuple[Customization, ...]],
+    ) -> frozenset[str]:
+        """Return the paths disabled items would write in this destination.
+
+        Disabling an item that shares a file (a managed block, a config file)
+        with enabled items must not overwrite local edits to that file, so
+        those paths are protected. Route filters are ignored: an item a route
+        now also excludes may still own part of the file from earlier syncs.
+        A disabled item that cannot be read has unknown paths, so every path
+        is protected (``ALL_PATHS``).
+        """
+        profile = self._profiles.get(destination.profile)
+        paths: set[str] = set()
+        for name in sorted({name for route in routes for name in route.sources}):
+            source = config.sources[name]
+            for item in items.get(name, ()):
+                if not source.disables(item):
+                    continue
+                if item.error is not None:
+                    return ALL_PATHS
+                rendering = profile.render(item)
+                paths.update(output.path for output in rendering.files)
+                paths.update(block.path for block in rendering.blocks)
+                paths.update(
+                    profile.locate(entry.path, destination.path, self._environment)
+                    for entry in rendering.entries
+                )
+        return frozenset(paths)
 
     @staticmethod
     def _source_overlap(
@@ -412,7 +449,9 @@ class Planner:
         self, reader: DestinationPlan, plans: Sequence[DestinationPlan]
     ) -> dict[str, list[str]]:
         """Map each item ``reader``'s harness loads to the destinations it is in."""
-        also_reads = self._profiles.get(reader.destination.profile).reads()
+        also_reads = self._profiles.get(reader.destination.profile).reads_with(
+            self._environment
+        )
         seen: dict[str, list[str]] = defaultdict(list)
         if self._at_default(reader.destination):
             for label in reader.delivered:
@@ -526,6 +565,9 @@ class Planner:
                 reason = f"disabled by sources.{item.source}.disabled"
                 desired.skipped.append(Skip(label, reason))
                 continue
+            if item.error is not None:
+                desired.errors.append(f"{label}: {item.error}")
+                continue
             if item.refusal is not None:
                 desired.skipped.append(Skip(label, item.refusal))
                 continue
@@ -548,7 +590,9 @@ class Planner:
             if losses and not allow_lossy:
                 desired.skipped.append(Skip(label, "; ".join(losses), lossy=True))
                 continue
-            desired.notes.extend(f"{label}: {loss}" for loss in losses)
+            if not self._claim(desired, label, rendering.identity):
+                continue
+            desired.notes.extend(f"{label}: {note}" for note in (*losses, *item.notes))
             desired.delivered.append(label)
             self._add_files(desired, label, rendering.files)
             for block in rendering.blocks:
@@ -564,6 +608,19 @@ class Planner:
             )
             self._add_entries(desired, label, entries)
         return desired
+
+    @staticmethod
+    def _claim(desired: DesiredState, label: str, identity: str | None) -> bool:
+        """Record ``identity`` for ``label``; report it when another item has it."""
+        if identity is None:
+            return True
+        other = desired.identities.setdefault(identity, label)
+        if other == label:
+            return True
+        desired.errors.append(
+            f"{label}: {other} uses the same {identity}; rename one of them"
+        )
+        return False
 
     @staticmethod
     def _select(

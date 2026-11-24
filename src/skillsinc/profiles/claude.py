@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, Final, override
 
@@ -26,7 +28,27 @@ PROJECT_MCP: Final = "../.mcp.json"
 INSTRUCTION_POLICY: Final = LossPolicy(
     carried=frozenset({"applyTo"}), ignored=frozenset({"name", "description"})
 )
-AGENT_POLICY: Final = LossPolicy(carried=frozenset({"name", "description"}))
+# Subagent fields no other harness's agent format defines, copied as written
+AGENT_NATIVE: Final = frozenset(
+    {
+        "permissionMode",
+        "maxTurns",
+        "autoCompactWindow",
+        "skills",
+        "memory",
+        "background",
+        "omitClaudeMd",
+        "effort",
+        "isolation",
+        "color",
+        "initialPrompt",
+    }
+)
+AGENT_MODELS: Final = frozenset({"sonnet", "opus", "haiku", "fable", "inherit"})
+AGENT_MODEL_ID: Final = re.compile(r"^claude-[a-z0-9][a-z0-9.-]*(?:\[1m\])?$")
+# Claude Code tools are PascalCase (``Read``, ``Bash(git *)``) or ``mcp__server__tool``
+AGENT_TOOL: Final = re.compile(r"^(?:mcp__\S+|[A-Z][A-Za-z0-9]*(?:\(.*\))?)$")
+AGENT_NAME_LIMIT: Final = 256
 PROMPT_POLICY: Final = LossPolicy(
     carried=frozenset({"description", "argument-hint"}), ignored=frozenset({"name"})
 )
@@ -110,20 +132,66 @@ class ClaudeProfile(Profile):
     def _agent(self, item: Customization) -> Rendering:
         """Convert an agent into a ``agents/<name>.md`` subagent.
 
-        Plugin agents are already Claude Code subagents, so they are copied.
+        The declared ``name`` is kept when Claude Code accepts it, since
+        subagents are identified by it rather than by file name. ``tools``,
+        ``disallowedTools``, and ``model`` are carried only when their values
+        are Claude Code's own (VS Code agents use other tool and model names);
+        fields only Claude Code defines are copied. Plugin agents are already
+        Claude Code subagents, so they are copied.
         """
-        if item.plugin is not None:
-            return self.copy_file(item, f"agents/{item.name}.md")
         source = item.document.frontmatter
+        declared = source.get("name")
+        name = declared if self._agent_name(declared) else item.name
+        identity = f"Claude Code subagent name {name!r}"
+        if item.plugin is not None:
+            copied = self.copy_file(item, f"agents/{item.name}.md")
+            return replace(copied, identity=identity)
         description = source.get("description")
         if description is None or description == "":
             return Rendering.refuse("Claude subagents require a description")
         frontmatter: dict[str, FrontmatterValue] = {
-            "name": item.name,
+            "name": name,
             "description": description,
         }
-        losses = AGENT_POLICY.losses(source)
-        return self.rewrite(item, f"agents/{item.name}.md", frontmatter, losses)
+        frontmatter.update(
+            (key, value)
+            for key, value in source.items()
+            if key in AGENT_NATIVE or self._claude_value(key, value)
+        )
+        dropped = [key for key in source if key not in {"name", *frontmatter}]
+        losses = [f"drops frontmatter: {', '.join(dropped)}"] if dropped else []
+        rendering = self.rewrite(item, f"agents/{item.name}.md", frontmatter, losses)
+        return replace(rendering, identity=identity)
+
+    @staticmethod
+    def _agent_name(name: FrontmatterValue) -> bool:
+        """Return True if Claude Code loads a subagent with this ``name``."""
+        return (
+            isinstance(name, str)
+            and bool(name.strip())
+            and len(name) <= AGENT_NAME_LIMIT
+            and ":" not in name
+            and not name.startswith("-")
+        )
+
+    @staticmethod
+    def _claude_value(key: str, value: FrontmatterValue) -> bool:
+        """Return True if ``value`` is a Claude Code ``model`` or tool list."""
+        if key == "model":
+            return isinstance(value, str) and (
+                value in AGENT_MODELS or bool(AGENT_MODEL_ID.match(value))
+            )
+        if key not in {"tools", "disallowedTools"}:
+            return False
+        if isinstance(value, str):
+            tools: list[FrontmatterValue] = [part.strip() for part in value.split(",")]
+        elif isinstance(value, list):
+            tools = value
+        else:
+            return False
+        return bool(tools) and all(
+            isinstance(tool, str) and AGENT_TOOL.match(tool) for tool in tools
+        )
 
     def _command(self, item: Customization) -> Rendering:
         """Convert a prompt file into a ``commands/<name>.md`` slash command.

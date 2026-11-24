@@ -92,9 +92,14 @@ Optional. A directory, relative to the file, that makes this a [project configur
 | `exclude`  | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                                   |
 | `include`  | no       | `["*/*"]`                                                                             | Resource selectors this source offers; others are left out            |
 | `disabled` | no       | `[]`                                                                                  | Resource selectors suppressed across every route from this source     |
+| `rename`   | no       | `{}`                                                                                  | New item names by exact selector; see below                           |
 | `layout`   | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory              |
 
-A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays fail the whole source.
+A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers` fails the source, as does a missing library directory.
+
+An invalid item fails only itself ([decision 0022](../decisions/0022-item-errors-and-renames.md)): a skill without `SKILL.md` or `description`, invalid frontmatter, an unsafe name, two files with the same name, an item name used by both the library and a plugin, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays. Every destination a route sends that item to is blocked and lists every such item; other destinations sync normally. Leave it out with `include`, a route `exclude`, or `disabled`, or fix it in the library.
+
+A skill whose frontmatter `name` differs from its directory is accepted, as the Agent Skills client guide recommends. The directory stays the item's name, and the copy's `name` line is rewritten to match, so every harness sees one name; `plan --verbose` notes each correction.
 
 An error scanning a nested skill directory also fails the whole source. Its
 destinations stay unchanged, so an unreadable asset directory is never treated
@@ -143,6 +148,10 @@ Deleting `$XDG_STATE_HOME/skillsinc/remotes/` is safe; the next run fetches agai
 
 Destinations may not share or nest directories. Profile defaults honour `CLAUDE_CONFIG_DIR`, `COPILOT_HOME`, `CODEX_HOME`, and `APPDATA`.
 
+### Links and junctions
+
+SkillSinc writes copies and records what it owns; it does not link harness folders to the library. A link would let a harness write into the library (a skill's `.venv` or `uv.lock` would land in the source), and two destinations reached through one linked folder would each claim the other's files. Planning therefore refuses to write through a symbolic link or junction below a destination's `path`. The destination's `path` itself may be a link or junction: SkillSinc follows it and checks the resolved folder against its sources. To share one folder between harnesses, point the destination at the folder the link leads to, or rely on harnesses that read another's folder (VS Code and Copilot read `~/.agents/skills`). Copies reach harnesses on the next sync, so a scheduled sync bounds the delay; a skill that builds a `.venv` builds one per destination.
+
 ## `routes[]`
 
 | Key            | Required | Default   | Meaning                                                  |
@@ -153,7 +162,7 @@ Destinations may not share or nest directories. Profile defaults honour `CLAUDE_
 | `exclude`      | no       | `[]`      | `kind/name` glob patterns to drop after `include`        |
 | `allow_lossy`  | no       | `false`   | Accept conversions that drop fields or change activation |
 
-Plugin items match both `kind/name` and `plugins/<plugin>/kind/name`, so `"include": ["plugins/kit/*"]` selects one whole plugin and `"exclude": ["plugins/kit/*"]` drops it. Anything a plugin holds that SkillSinc does not sync (hooks, LSP servers, scripts, runtime manifest keys) is a loss on each of its items, so syncing part of a plugin needs `"allow_lossy": true`.
+Plugin items match both `kind/name` and `plugins/<plugin>/kind/name`, so `"include": ["plugins/kit/*"]` selects one whole plugin and `"exclude": ["plugins/kit/*"]` drops it. Because a plugin item is also a plain item, `"include": ["agents/*"]` selects plugin agents too; add `"exclude": ["plugins/*/*/*"]` to a route that should carry library items only. Anything a plugin holds that SkillSinc does not sync (hooks, LSP servers, scripts, runtime manifest keys) is a loss on each of its items, so syncing part of a plugin needs `"allow_lossy": true`.
 
 Some harnesses also read another profile's folder: Copilot CLI and VS Code read `~/.agents/skills`, and VS Code also reads `~/.claude/skills` and `~/.copilot/{skills,instructions,agents}`. When both destinations are at their default paths, `copilot` skips skills an `agents` destination receives, and `vscode` skips instructions and agents a `copilot` destination receives, so each harness loads one copy. Any other item one harness would load from two destinations prints a `warning:` line in `plan` and `sync`; it does not block ([decision 0009](../decisions/0009-one-copy-per-harness.md)).
 
@@ -176,6 +185,21 @@ Selectors use the same grammar as `disabled`: case-sensitive `kind/name` or `plu
 
 A selector that matches nothing prints `warning: sources.<name>.include: '<selector>' matches no item in the source`, so a typo or an upstream rename is visible in `plan` and `sync`. An empty list is a configuration error. Precedence: the source's `include` decides what the source offers, routes then select from that, and `disabled` overrides both.
 
+### Rename resources
+
+Starting with **0.7.0**, `sources.<name>.rename` gives items new names, which resolves a collision between two sources or between a library and one of its plugins:
+
+```jsonc
+"sources": {
+  "team": {
+    "github": "example/team-skills",
+    "rename": { "skills/code-review": "team-code-review", "plugins/kit/agents/reviewer": "kit-reviewer" }
+  }
+}
+```
+
+Keys are exact selectors (`kind/name` or `plugins/plugin/kind/name`, no wildcards); values are item names (letters, digits, `.`, `_`, `-`; not ending in `.`, and not a Windows device name such as `CON` or `NUL`). A rename that changes only letter case is refused, because case-insensitive file systems cannot tell the two apart. A renamed item takes the new name everywhere: its output paths, its `kind/name` for `include`, `disabled`, and route filters, and the `name` field of a skill, instruction, agent, or prompt that has one. MCP servers and hooks keep their content and change only their key or file name. Renaming onto a name another item uses, or naming one item with two keys, blocks the destinations that receive either item. A key that matches nothing prints a warning. Renaming an item that was already delivered removes the old copy and writes the new one, like any rename in the library.
+
 ## Removing things
 
 ### Disable resources while preserving their sources
@@ -197,7 +221,7 @@ This is a source entry within a complete configuration; keep its destinations an
 
 Precedence is explicit: route `include` selects items; that route's `exclude` drops them; any remaining match from another route can still select them. A source's `disabled` list then overrides **all** routes, including explicit includes and `allow_lossy`. It affects only that named source. Remove a selector to enable the item again. Source files are never edited, moved, or deleted. Disabled items are still read and validated with their source; a broken source still blocks cleanup.
 
-Run `skillsinc plan --verbose` or `skillsinc plan --json` before syncing. Selected disabled items appear under `skipped` with the reason `disabled by sources.<name>.disabled`; proposed removals and ownership releases appear in `changes`. Planning does not apply them. Disabling stops future emission; cleanup happens only on an explicit or already scheduled sync. Unedited managed files, blocks, and JSON/TOML entries are removed. Edited output whose whole managed unit is retired is preserved and released from ownership (`forget`). If a shared block or entry still contains enabled resources, disabling must not overwrite edits to that unit: the destination is blocked for review instead. This conservative guard blocks all updates that would overwrite edits while any routed source has a nonempty `disabled` list, even when route filters also exclude those items or a selector currently matches nothing. Unmanaged content is preserved. Re-enabling does not authorize overwriting released local edits: review any ownership conflict before adopting or restoring source content.
+Run `skillsinc plan --verbose` or `skillsinc plan --json` before syncing. Selected disabled items appear under `skipped` with the reason `disabled by sources.<name>.disabled`; proposed removals and ownership releases appear in `changes`. Planning does not apply them. Disabling stops future emission; cleanup happens only on an explicit or already scheduled sync. Unedited managed files, blocks, and JSON/TOML entries are removed. Edited output whose whole managed unit is retired is preserved and released from ownership (`forget`). If a shared block or entry still contains enabled resources, disabling must not overwrite edits to that unit: the destination is blocked for review instead. Since **0.7.0** this guard covers only the files a disabled item would write (such as `CLAUDE.md`, `AGENTS.md`, `settings.json`, or an MCP config file), even when route filters also exclude that item; edits elsewhere, such as a `uv.lock` a skill rewrites, get the ordinary `overwrites local edits` repair. Earlier versions blocked every overwrite of edits in the destination. Unmanaged content is preserved. Re-enabling does not authorize overwriting released local edits: review any ownership conflict before adopting or restoring source content.
 
 Setting a whole destination's `enabled` to `false` instead freezes it, including cleanup: previously generated content can remain active in its harness. To remove redundant generated content, keep the destination enabled, disable the source resource, inspect the plan, and sync only the intended destinations. Existing scheduled syncs also use the changed configuration; pause them separately before editing if cleanup must wait.
 
@@ -218,6 +242,8 @@ Versions through 0.3.x reject the new `disabled` key. Upgrade before adding it. 
   destinations alone.
 - Set `"enabled": false`: the destination is left exactly as it is.
 - Point a destination at a new `path`: the plan refuses until you delete the old manifest named in the error, which releases the old files without deleting them.
+
+Folders are removed only when they become empty. A skill folder that also holds files SkillSinc did not write, such as a `.venv` or cache a skill's script created, keeps those files and the folder; delete them by hand if you no longer want them. Released (`forget`) files stay active in the harness until you delete or restore them, because SkillSinc no longer owns them.
 
 SkillSinc keeps state like Terraform: each destination's manifest records what
 SkillSinc owns and which configuration file last synced it, and every sync

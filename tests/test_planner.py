@@ -16,6 +16,7 @@ from skillsinc.exceptions import ConfigurationError
 from skillsinc.manifest import Manifest, ManifestStore
 from skillsinc.plan import Plan
 from skillsinc.planner import Planner
+from skillsinc.profiles.copilot import VSCodeProfile
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.sources import SourceReader
 
@@ -400,6 +401,23 @@ class TestDuplicateLoads:
             " skills/sample; exclude them from one route",
         ), f"Expected one VS Code warning, got {plan.warnings!r}"
 
+    def test_vscode_setting_that_skips_claude_skills_silences_warning(
+        self, sandbox: Sandbox
+    ) -> None:
+        """``chat.agentSkillsLocations`` set to false removes that folder."""
+        prompts = VSCodeProfile().user_path(sandbox.environment)
+        settings = prompts.parent / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(
+            '{\n  // user settings\n  "chat.agentSkillsLocations":'
+            ' {"~/.claude/skills": false,},\n}\n',
+            encoding="utf-8",
+        )
+
+        plan = self.plan(sandbox, ("claude", "vscode", "agents"))
+
+        assert plan.warnings == (), f"Expected no warning, got {plan.warnings!r}"
+
     def test_unrouted_cover_does_not_skip(self, sandbox: Sandbox) -> None:
         """An agents destination that is not sent the skill covers nothing."""
         routes = (
@@ -521,3 +539,111 @@ class TestDuplicateLoads:
         assert "is missing or changed" in str(by_name["copilot"].error)
         kept = sandbox.environment.home / ".copilot" / "skills" / "sample" / "SKILL.md"
         assert kept.is_file(), "Expected Copilot's copy kept"
+
+
+class TestItemErrors:
+    """An invalid item blocks only the destinations it is routed to."""
+
+    def test_invalid_item_blocks_only_its_routes(self, sandbox: Sandbox) -> None:
+        """A destination that excludes the broken skill still syncs."""
+        broken = sandbox.library / "skills/broken"
+        broken.mkdir()
+        (broken / "SKILL.md").write_text("No frontmatter.\n", encoding="utf-8")
+        config = sandbox.configure()
+        destinations = {
+            **config.destinations,
+            "other": DestinationConfig(
+                "other", "generic", sandbox.environment.home / "other"
+            ),
+        }
+        routes = (
+            RouteConfig(("library",), ("target",)),
+            RouteConfig(("library",), ("other",), exclude=("skills/broken",)),
+        )
+
+        result = TestPlanner.planner(sandbox).plan(
+            replace(config, destinations=destinations, routes=routes)
+        )
+
+        target, other = result.destinations
+        assert target.blocked, f"Expected the routed destination blocked: {target!r}"
+        assert any("library:skills/broken" in error for error in target.errors), (
+            f"Expected the broken skill named, got {target.errors!r}"
+        )
+        assert not other.blocked, f"Expected the other destination open: {other!r}"
+        assert other.changes, f"Expected the other destination to sync: {other!r}"
+        assert result.source_errors == {}, (
+            f"Expected no source-wide failure, got {result.source_errors!r}"
+        )
+
+    def test_unmatched_rename_warns_and_notes_report(self, sandbox: Sandbox) -> None:
+        """A rename key that matches nothing is a warning; a match is a note."""
+        config = sandbox.configure()
+        source = replace(
+            config.sources["library"],
+            rename={"skills/sample": "renamed", "skills/missing": "x"},
+        )
+        config = replace(config, sources={"library": source})
+
+        result = TestPlanner.planner(sandbox).plan(config)
+
+        assert result.warnings == (
+            "sources.library.rename: 'skills/missing' matches no item in the source",
+        ), f"Expected one rename warning, got {result.warnings!r}"
+        assert any(
+            "library:skills/renamed: renamed from 'sample'" in note
+            for note in result.destinations[0].notes
+        ), f"Expected a rename note, got {result.destinations[0].notes!r}"
+
+
+class TestReviewSafety:
+    """Collisions, unreadable disabled items, and duplicate subagent names block."""
+
+    def test_plugin_route_blocks_on_collision(self, sandbox: Sandbox) -> None:
+        """A route that selects only the plugin item still sees the collision."""
+        plugin = sandbox.library / "plugins/kit/agents"
+        plugin.mkdir(parents=True)
+        (plugin / "reviewer.md").write_text("---\ndescription: P\n---\nP\n")
+        config = sandbox.configure()
+        routes = (RouteConfig(("library",), ("target",), include=("plugins/kit/*/*",)),)
+
+        result = TestPlanner.planner(sandbox).plan(replace(config, routes=routes))
+
+        assert result.destinations[0].blocked, (
+            f"Expected the plugin route blocked, got {result.destinations[0]!r}"
+        )
+
+    def test_unreadable_disabled_item_protects_every_path(
+        self, sandbox: Sandbox
+    ) -> None:
+        """Without knowing its paths, edits anywhere are protected."""
+        config = sandbox.configure()
+        assert sandbox.run("sync")[0] == 0, "Expected the initial sync"
+        (sandbox.root / "skills/sample/SKILL.md").write_bytes(b"edited")
+        broken = sandbox.library / "skills/broken"
+        broken.mkdir()
+        (broken / "SKILL.md").write_text("No description.\n", encoding="utf-8")
+        source = replace(config.sources["library"], disabled=("skills/broken",))
+        config = replace(config, sources={"library": source})
+
+        result = TestPlanner.planner(sandbox).plan(config)
+
+        assert any(
+            "while disabling resources" in error
+            for error in result.destinations[0].errors
+        ), f"Expected the edit protected, got {result.destinations[0]!r}"
+
+    def test_duplicate_claude_subagent_names_block(self, sandbox: Sandbox) -> None:
+        """Two agents declaring one name cannot both be Claude subagents."""
+        (sandbox.library / "agents/other.agent.md").write_text(
+            "---\nname: reviewer\ndescription: Other\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        config = sandbox.configure("claude", allow_lossy=True)
+
+        result = TestPlanner.planner(sandbox).plan(config)
+
+        assert any(
+            "same Claude Code subagent name 'reviewer'" in error
+            for error in result.destinations[0].errors
+        ), f"Expected a name conflict, got {result.destinations[0]!r}"

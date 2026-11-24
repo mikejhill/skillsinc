@@ -89,3 +89,35 @@ class TestFrontmatterCodec:
         assert parsed == {"description": text, "note": "café"}, (
             f"Expected {text!r} and 'café' kept, got {parsed!r}"
         )
+
+
+class TestRename:
+    """Renaming edits one line when that is safe, and re-renders otherwise."""
+
+    def test_document_without_name_is_unchanged(self) -> None:
+        """Only an existing ``name`` field is rewritten."""
+        codec = FrontmatterCodec()
+        document = codec.parse(b"---\ndescription: x\n---\nBody")
+
+        assert codec.rename(document, "new") is document, "Expected no change"
+
+    @pytest.mark.parametrize(
+        "header",
+        [b"name: >-\n  old", b"name:\n  b: c", b"name: a\nname: b"],
+    )
+    def test_unsafe_line_edit_is_rendered_again(self, header: bytes) -> None:
+        """Multi-line or repeated names cannot be edited by line, so it re-renders."""
+        codec = FrontmatterCodec()
+        document = codec.parse(b"---\n" + header + b"\ndescription: x\n---\nBody")
+
+        renamed = codec.rename(document, "new")
+
+        assert renamed.raw == b"---\nname: new\ndescription: x\n---\nBody", (
+            f"Expected a rendered header, got {renamed.raw!r}"
+        )
+
+
+def test_impossible_date_is_a_frontmatter_error() -> None:
+    """PyYAML's ValueError for a bad timestamp is reported like invalid YAML."""
+    with pytest.raises(FrontmatterError, match="invalid YAML"):
+        FrontmatterCodec().parse(b"---\nname: 2026-02-31\n---\nBody")

@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import stat
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import replace
 from fnmatch import fnmatchcase
@@ -23,18 +24,21 @@ from skillsinc.models import (
     Frontmatter,
     JsonValue,
     Kind,
+    valid_name,
 )
 from skillsinc.remote import RemoteCache
 
 logger = logging.getLogger(__name__)
 
-NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SUFFIXES: Final = {
     Kind.INSTRUCTION: ".instructions.md",
     Kind.AGENT: ".agent.md",
     Kind.PROMPT: ".prompt.md",
 }
 JSON_LABELS: Final = {Kind.MCP: "MCP server definition", Kind.HOOK: "hook file"}
+MARKDOWN_KINDS: Final = frozenset({Kind.SKILL, *SUFFIXES})
+UNREADABLE: Final = Document(frontmatter={}, body="", raw=b"")
+"""The document of an item that could not be read (``Customization.error``)."""
 
 # Claude Code plugin layout (decision 0003)
 PLUGIN_MANIFEST: Final = ".claude-plugin"
@@ -96,8 +100,11 @@ class SourceReader:
         """Return every customization in ``source``, sorted by selector.
 
         A missing kind directory means "none of that kind". A missing root or
-        any unreadable item fails the whole source, because a partial read
-        would look like deletions. A remote source is read from its cached
+        an unreadable directory fails the whole source, because a partial read
+        would look like deletions. An item that is present but invalid is
+        returned with ``error`` set instead, so only the destinations it is
+        routed to are blocked. ``rename`` is applied before identities are
+        checked for uniqueness. A remote source is read from its cached
         checkout, refreshed first when due.
 
         Raises:
@@ -134,7 +141,7 @@ class SourceReader:
         except (OSError, FrontmatterError) as err:
             msg = f"source '{source.name}': {err}"
             raise SourceError(msg) from err
-        self._check_unique(source, items)
+        items = self._check_unique(self._renamed(source, items))
         logger.debug("Read %d items from source %s", len(items), source.name)
         return tuple(sorted(items, key=lambda item: item.selector))
 
@@ -163,20 +170,44 @@ class SourceReader:
         for package in sorted(directory.iterdir()):
             if not package.is_dir() or self._excluded(source, package.name):
                 continue
-            name = self._name(package.name, package)
-            entry = package / "SKILL.md"
-            if not entry.is_file():
-                msg = f"skill directory has no SKILL.md: {package}"
-                raise SourceError(msg)
-            document = self._parse(entry)
-            self._check_skill(name, document.frontmatter, entry)
-            assets = tuple(self._assets(source, package))
-            items.append(
-                Customization(
-                    Kind.SKILL, name, source.name, document, "SKILL.md", assets
+            try:
+                items.append(self._skill(source, package))
+            except (SourceError, FrontmatterError) as err:
+                items.append(
+                    self._unreadable(source, Kind.SKILL, package.name, "SKILL.md", err)
                 )
-            )
         return items
+
+    def _skill(self, source: SourceConfig, package: Path) -> Customization:
+        """Read one skill package, correcting a ``name`` that differs from its folder.
+
+        The Agent Skills specification requires the frontmatter ``name`` to
+        match the directory, and its client guide says to warn and load such
+        a skill anyway. The directory stays the identity, and the copy's
+        ``name`` is set to it so every harness sees one consistent name.
+
+        Raises:
+            SourceError: If the package cannot be used as a skill.
+        """
+        name = self._name(package.name, package)
+        entry = package / "SKILL.md"
+        if not entry.is_file():
+            msg = f"skill directory has no SKILL.md: {package}"
+            raise SourceError(msg)
+        document = self._parse(entry)
+        self._check_skill(document.frontmatter, entry)
+        notes: tuple[str, ...] = ()
+        declared = document.frontmatter.get("name")
+        if declared is not None and declared != name:
+            notes = (
+                f"frontmatter name {declared!r} differs from directory name"
+                f" '{name}', so the copy is named '{name}'",
+            )
+            document = self._codec.rename(document, name)
+        assets = tuple(self._assets(source, package))
+        return Customization(
+            Kind.SKILL, name, source.name, document, "SKILL.md", assets, notes=notes
+        )
 
     def _documents(
         self, source: SourceConfig, kind: Kind, directory: Path
@@ -189,11 +220,16 @@ class SourceReader:
             stem = self._stem(path.name, SUFFIXES[kind])
             if stem is None:
                 continue
-            name = self._name(stem, path)
-            if name in items:
-                msg = f"two {kind} files define '{name}' in {directory}"
-                raise SourceError(msg)
-            document = self._parse(path)
+            if stem in items:
+                error = SourceError(f"two {kind} files define '{stem}' in {directory}")
+                items[stem] = self._unreadable(source, kind, stem, path.name, error)
+                continue
+            try:
+                name = self._name(stem, path)
+                document = self._parse(path)
+            except (SourceError, FrontmatterError) as err:
+                items[stem] = self._unreadable(source, kind, stem, path.name, err)
+                continue
             items[name] = Customization(kind, name, source.name, document, path.name)
         return list(items.values())
 
@@ -213,17 +249,34 @@ class SourceReader:
                 or path.suffix != ".json"
             ):
                 continue
-            name = self._name(path.stem, path)
-            raw = path.read_bytes()
             try:
-                value = JsonDocument.load(raw)
-            except (UnicodeDecodeError, ValueError) as err:
-                msg = f"{path}: invalid {JSON_LABELS[kind]} ({err})"
-                raise SourceError(msg) from err
-            check(value, path)
-            document = Document(frontmatter=value, body="", raw=raw)
-            items.append(Customization(kind, name, source.name, document, path.name))
+                items.append(self._json_item(source, kind, path, check))
+            except SourceError as err:
+                items.append(self._unreadable(source, kind, path.stem, path.name, err))
         return items
+
+    def _json_item(
+        self,
+        source: SourceConfig,
+        kind: Kind,
+        path: Path,
+        check: Callable[[Frontmatter, Path], None],
+    ) -> Customization:
+        """Read one JSON definition.
+
+        Raises:
+            SourceError: If the file is not a valid definition of ``kind``.
+        """
+        name = self._name(path.stem, path)
+        raw = path.read_bytes()
+        try:
+            value = JsonDocument.load(raw)
+        except (UnicodeDecodeError, ValueError) as err:
+            msg = f"{path}: invalid {JSON_LABELS[kind]} ({err})"
+            raise SourceError(msg) from err
+        check(value, path)
+        document = Document(frontmatter=value, body="", raw=raw)
+        return Customization(kind, name, source.name, document, path.name)
 
     def _resources(self, source: SourceConfig, directory: Path) -> list[Customization]:
         """Read reference files (``<name>.md``), kept byte for byte."""
@@ -235,7 +288,13 @@ class SourceReader:
                 or path.suffix != ".md"
             ):
                 continue
-            name = self._name(path.stem, path)
+            try:
+                name = self._name(path.stem, path)
+            except SourceError as err:
+                items.append(
+                    self._unreadable(source, Kind.RESOURCE, path.stem, path.name, err)
+                )
+                continue
             document = Document(frontmatter={}, body="", raw=path.read_bytes())
             items.append(
                 Customization(Kind.RESOURCE, name, source.name, document, path.name)
@@ -298,11 +357,17 @@ class SourceReader:
             raise SourceError(msg)
         items: list[Customization] = []
         for key, server in sorted(servers.items()):
-            name = self._name(key, path)
-            if not isinstance(server, dict):
-                msg = f"{path}: MCP server '{name}' must be a JSON object"
-                raise SourceError(msg)
-            self._check_server(server, path)
+            try:
+                name = self._name(key, path)
+                if not isinstance(server, dict):
+                    msg = f"{path}: MCP server '{name}' must be a JSON object"
+                    raise SourceError(msg)  # noqa: TRY301 — recorded per item below
+                self._check_server(server, path)
+            except SourceError as err:
+                items.append(
+                    self._unreadable(source, Kind.MCP, key, f"{key}.json", err)
+                )
+                continue
             raw = JsonDocument.dump(server)
             document = Document(frontmatter=server, body="", raw=raw)
             items.append(
@@ -343,15 +408,8 @@ class SourceReader:
         raise error
 
     @staticmethod
-    def _check_skill(name: str, frontmatter: Frontmatter, entry: Path) -> None:
+    def _check_skill(frontmatter: Frontmatter, entry: Path) -> None:
         """Enforce the Agent Skills rules harnesses rely on for discovery."""
-        declared = frontmatter.get("name")
-        if declared is not None and declared != name:
-            msg = (
-                f"{entry}: frontmatter name '{declared}' differs from"
-                f" directory name '{name}'"
-            )
-            raise SourceError(msg)
         description = frontmatter.get("description")
         if not isinstance(description, str) or not description.strip():
             msg = f"{entry}: skills need a description so harnesses can discover them"
@@ -475,24 +533,97 @@ class SourceReader:
         return f"refers to {', '.join(found)}, which only an installed plugin resolves"
 
     @staticmethod
-    def _check_unique(source: SourceConfig, items: list[Customization]) -> None:
-        """Fail when two items, from the library or its plugins, share an identity."""
-        seen: dict[str, Customization] = {}
+    def _check_unique(items: list[Customization]) -> list[Customization]:
+        """Mark items that share an identity, from the library or its plugins.
+
+        When several items define one identity, each carries an error naming
+        them all, so routing any of them blocks the destination.
+        """
+        found: dict[str, list[Customization]] = defaultdict(list)
         for item in items:
-            previous = seen.setdefault(item.selector, item)
-            if previous is item:
+            found[item.selector].append(item)
+        unique: list[Customization] = []
+        for selector, group in found.items():
+            if len(group) == 1:
+                unique.append(group[0])
                 continue
             origins = sorted(
-                f"plugin '{found.plugin}'"
-                if found.plugin is not None
-                else "the library"
-                for found in (previous, item)
+                (
+                    f"plugin '{item.plugin}'"
+                    if item.plugin is not None
+                    else "the library"
+                )
+                + (
+                    f" (renamed by {item.renamed_by})"
+                    if item.renamed_by is not None
+                    else ""
+                )
+                for item in group
             )
-            msg = (
-                f"source '{source.name}': {item.selector} is defined by"
-                f" {' and '.join(origins)}"
-            )
-            raise SourceError(msg)
+            error = f"{selector} is defined by {' and '.join(origins)}"
+            # Every colliding item stays, so a route that selected any of them
+            # (by plain or plugin selector) is blocked instead of cleaned up
+            unique.extend(replace(item, error=error) for item in group)
+        return unique
+
+    def _renamed(
+        self, source: SourceConfig, items: list[Customization]
+    ) -> list[Customization]:
+        """Apply ``sources.<name>.rename``, matching any of an item's selectors.
+
+        A renamed item gets the new name everywhere: its output paths, and
+        the ``name`` field of a Markdown item's frontmatter when it has one.
+        """
+        if not source.rename:
+            return items
+        renamed: list[Customization] = []
+        for item in items:
+            keys = sorted(key for key in item.selectors if key in source.rename)
+            if not keys:
+                renamed.append(item)
+                continue
+            if len(keys) > 1:
+                error = f"renamed by both {' and '.join(keys)}; keep one"
+                renamed.append(replace(item, error=error, renamed_by=keys[0]))
+                continue
+            new = source.rename[keys[0]]
+            if new != item.name and new.casefold() == item.name.casefold():
+                error = (
+                    f"rename to '{new}' changes only letter case, which"
+                    " case-insensitive file systems cannot tell apart;"
+                    " pick another name"
+                )
+                renamed.append(replace(item, error=error, renamed_by=keys[0]))
+                continue
+            renamed.append(self._rename(item, keys[0], new))
+        return renamed
+
+    def _rename(self, item: Customization, key: str, name: str) -> Customization:
+        """Return ``item`` named ``name``."""
+        document = item.document
+        if item.kind in MARKDOWN_KINDS:
+            document = self._codec.rename(document, name)
+        file_name = item.file_name
+        if file_name.startswith(item.name) and item.kind is not Kind.SKILL:
+            file_name = name + file_name.removeprefix(item.name)
+        note = f"renamed from '{item.name}' by sources.{item.source}.rename"
+        return replace(
+            item,
+            name=name,
+            document=document,
+            file_name=file_name,
+            notes=(*item.notes, note),
+            renamed_by=key,
+        )
+
+    @staticmethod
+    def _unreadable(
+        source: SourceConfig, kind: Kind, name: str, file_name: str, error: Exception
+    ) -> Customization:
+        """Return a placeholder for an item that is present but cannot be used."""
+        return Customization(
+            kind, name, source.name, UNREADABLE, file_name, error=str(error)
+        )
 
     @staticmethod
     def _excluded(source: SourceConfig, name: str) -> bool:
@@ -511,7 +642,7 @@ class SourceReader:
     @staticmethod
     def _name(name: str, path: Path) -> str:
         """Validate an item name so it is safe to use as a path segment."""
-        if not NAME_PATTERN.match(name):
+        if not valid_name(name):
             msg = f"invalid customization name '{name}': {path}"
             raise SourceError(msg)
         return name
