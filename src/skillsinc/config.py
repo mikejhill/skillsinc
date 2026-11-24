@@ -15,7 +15,7 @@ from typing import Final, NoReturn
 from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.jsonc import Jsonc
-from skillsinc.models import NAME_PATTERN, Customization, Kind
+from skillsinc.models import Customization, Kind, valid_name
 from skillsinc.paths import PROJECT_CONFIG, PROJECT_STATE, Environment, absolute
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schedule import parse_interval
@@ -542,7 +542,7 @@ class ConfigLoader:
             valid = (
                 kind in SELECTOR_KINDS - {"*"}
                 and bool(names)
-                and all(NAME_PATTERN.match(part) for part in names)
+                and all(valid_name(part) for part in names)
             )
             if not valid:
                 msg = (
@@ -551,7 +551,7 @@ class ConfigLoader:
                 )
                 raise ConfigurationError(msg)
             if (
-                not NAME_PATTERN.match(new)
+                not valid_name(new)
                 or new.endswith(".")
                 or new.split(".")[0].upper() in RESERVED_NAMES
             ):

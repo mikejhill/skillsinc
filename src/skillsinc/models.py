@@ -10,7 +10,12 @@ from enum import StrEnum
 from typing import Final
 
 NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
-"""Item names SkillSinc accepts: safe as a path segment on every platform."""
+
+
+def valid_name(name: str) -> bool:
+    """Return True if ``name`` is an item name: safe as a path segment anywhere."""
+    return NAME_PATTERN.match(name) is not None
+
 
 type FrontmatterValue = (
     str

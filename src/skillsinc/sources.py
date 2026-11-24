@@ -18,13 +18,13 @@ from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import FrontmatterError, SourceError
 from skillsinc.frontmatter import FrontmatterCodec
 from skillsinc.models import (
-    NAME_PATTERN,
     Asset,
     Customization,
     Document,
     Frontmatter,
     JsonValue,
     Kind,
+    valid_name,
 )
 from skillsinc.remote import RemoteCache
 
@@ -642,7 +642,7 @@ class SourceReader:
     @staticmethod
     def _name(name: str, path: Path) -> str:
         """Validate an item name so it is safe to use as a path segment."""
-        if not NAME_PATTERN.match(name):
+        if not valid_name(name):
             msg = f"invalid customization name '{name}': {path}"
             raise SourceError(msg)
         return name
