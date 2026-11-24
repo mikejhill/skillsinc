@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Final
 
 from skillsinc.paths import absolute
-from skillsinc.schema import REFERENCE, ConfigSchema, SchemaState
+from skillsinc.schema import REFERENCE, ConfigSchema, SchemaState, write_atomically
 
 RECORD_FILE: Final = "upgrades.json"
 RECORD_VERSION: Final = 1
@@ -51,6 +51,13 @@ class Action(StrEnum):
     UPDATE_SCHEMA = "update-schema"
 
 
+DESCRIPTIONS: Final = {
+    Action.ADD_SCHEMA_REFERENCE: 'add "$schema": "' + REFERENCE + '" to {path} (once)',
+    Action.CREATE_SCHEMA: "create {path}",
+    Action.UPDATE_SCHEMA: "update {path}",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ConfigChange:
     """A change to the configuration file or the schema beside it."""
@@ -60,13 +67,17 @@ class ConfigChange:
 
     def describe(self) -> str:
         """Return the change as one report line."""
-        match self.action:
-            case Action.ADD_SCHEMA_REFERENCE:
-                return f'add "$schema": "{REFERENCE}" to {self.path} (once)'
-            case Action.CREATE_SCHEMA:
-                return f"create {self.path}"
-            case Action.UPDATE_SCHEMA:
-                return f"update {self.path}"
+        return DESCRIPTIONS[self.action].format(path=self.path)
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenancePlan:
+    """Pending changes, and why a pending upgrade cannot run yet."""
+
+    changes: tuple[ConfigChange, ...] = ()
+    warnings: tuple[str, ...] = ()
+    complete: bool = True
+    """False while an upgrade is still owed; the record is then not advanced."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +88,10 @@ class MaintenanceResult:
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
+class RecordError(ValueError):
+    """``upgrades.json`` exists but cannot be read or is not a valid record."""
+
+
 class ConfigMaintenance:
     """Plan and apply configuration upgrades and the editor schema."""
 
@@ -85,18 +100,34 @@ class ConfigMaintenance:
         self._installed = installed or current_version()
 
     def applied_version(self, config: Path) -> str | None:
-        """Return the version whose upgrades ``config`` last received, if any."""
-        return self._configs().get(self._key(config))
+        """Return the version whose upgrades ``config`` last received, if any.
 
-    def plan(self, config: Path) -> tuple[ConfigChange, ...]:
+        Raises:
+            RecordError: If the record exists but is unreadable or invalid.
+        """
+        configs = self._configs()
+        key = self._find(configs, config)
+        return None if key is None else configs[key]
+
+    def plan(self, config: Path) -> MaintenancePlan:
         """Return the pending changes, without writing anything."""
         changes: list[ConfigChange] = []
+        warnings: list[str] = []
+        complete = True
         reference = ConfigSchema.reference(config)
-        if self._pending(config, SCHEMA_REFERENCE_SINCE) and (
-            reference is None and ConfigSchema.needs_reference(config)
-        ):
-            changes.append(ConfigChange(Action.ADD_SCHEMA_REFERENCE, config))
-            reference = REFERENCE
+        try:
+            pending = self._pending(config, SCHEMA_REFERENCE_SINCE)
+        except RecordError as err:
+            warnings.append(f"{err}; one-time configuration upgrades skipped")
+            pending, complete = False, False
+        if pending and reference is None:
+            add, problem = self._plan_reference(config)
+            if problem is not None:
+                warnings.append(problem)
+                complete = False
+            if add:
+                changes.append(ConfigChange(Action.ADD_SCHEMA_REFERENCE, config))
+                reference = REFERENCE
         if ConfigSchema.references_local(reference):
             state = ConfigSchema.state(config)
             schema = ConfigSchema.path(config)
@@ -104,18 +135,19 @@ class ConfigMaintenance:
                 changes.append(ConfigChange(Action.CREATE_SCHEMA, schema))
             elif state is SchemaState.OUTDATED:
                 changes.append(ConfigChange(Action.UPDATE_SCHEMA, schema))
-        return tuple(changes)
+        return MaintenancePlan(tuple(changes), tuple(warnings), complete=complete)
 
     def apply(self, config: Path) -> MaintenanceResult:
         """Re-plan, apply each change, then record this version for ``config``.
 
-        Failures are warnings. A failed upgrade leaves the record unchanged,
-        so the next sync tries it again.
+        Failures are warnings. An upgrade that fails or cannot run yet leaves
+        the record unchanged, so the next sync tries it again.
         """
+        plan = self.plan(config)
         applied: list[ConfigChange] = []
-        warnings: list[str] = []
-        upgraded = True
-        for change in self.plan(config):
+        warnings = list(plan.warnings)
+        complete = plan.complete
+        for change in plan.changes:
             try:
                 if change.action is Action.ADD_SCHEMA_REFERENCE:
                     done = ConfigSchema.add_reference(config)
@@ -125,22 +157,43 @@ class ConfigMaintenance:
                 warnings.append(f"could not {change.describe()}: {err}")
                 if change.action is Action.ADD_SCHEMA_REFERENCE:
                     # The schema changes planned after it assumed the reference
-                    upgraded = False
+                    complete = False
                     break
                 continue
             if done:
                 applied.append(change)
-        if upgraded and self._pending(config, self._installed):
+        if complete:
             try:
                 self._store(config)
-            except OSError as err:
+            except (OSError, RecordError) as err:
                 warnings.append(f"could not record upgrades in {self._record}: {err}")
         return MaintenanceResult(tuple(applied), tuple(warnings))
 
     # Internals
 
+    @staticmethod
+    def _plan_reference(config: Path) -> tuple[bool, str | None]:
+        """Return whether to add ``$schema``, and why it must wait, if it must."""
+        try:
+            needed = ConfigSchema.needs_reference(config)
+        except (OSError, ValueError) as err:
+            return False, f"could not inspect {config} for $schema: {err}"
+        if not needed:
+            return False, None
+        if ConfigSchema.state(config) is SchemaState.FOREIGN:
+            schema = ConfigSchema.path(config)
+            return False, (
+                f"{schema} is not SkillSinc's schema; $schema was not added to"
+                f" {config}. Move it aside and sync again"
+            )
+        return True, None
+
     def _pending(self, config: Path, since: str) -> bool:
-        """Return True if ``config`` has not received upgrades from ``since``."""
+        """Return True if ``config`` has not received upgrades from ``since``.
+
+        Raises:
+            RecordError: If the record exists but is unreadable or invalid.
+        """
         applied = self.applied_version(config)
         return applied is None or version_key(applied) < version_key(since)
 
@@ -149,28 +202,69 @@ class ConfigMaintenance:
         """Return the record key for ``config``: its absolute path."""
         return absolute(config).as_posix()
 
+    @classmethod
+    def _find(cls, configs: dict[str, str], config: Path) -> str | None:
+        """Return the stored key naming ``config``, matching by identity too.
+
+        On a case-insensitive file system two spellings open one file, so a
+        key that is not an exact match but names the same file counts.
+        """
+        key = cls._key(config)
+        if key in configs:
+            return key
+        for stored in configs:
+            try:
+                if Path(stored).samefile(config):
+                    return stored
+            except OSError:
+                continue
+        return None
+
     def _configs(self) -> dict[str, str]:
-        """Return the recorded versions; an unreadable record counts as empty."""
+        """Return the recorded versions; a missing record is empty.
+
+        Raises:
+            RecordError: If the record exists but is unreadable or invalid.
+        """
         try:
-            data = json.loads(self._record.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            text = self._record.read_bytes().decode("utf-8")
+        except FileNotFoundError:
             return {}
+        except (OSError, UnicodeDecodeError) as err:
+            msg = f"cannot read {self._record}: {err}"
+            raise RecordError(msg) from err
+        try:
+            data = json.loads(text)
+        except ValueError as err:
+            msg = f"{self._record} is not valid JSON: {err}"
+            raise RecordError(msg) from err
         configs = data.get("configs") if isinstance(data, dict) else None
-        if not isinstance(configs, dict):
-            return {}
-        return {
-            str(key): value for key, value in configs.items() if isinstance(value, str)
-        }
+        valid = (
+            isinstance(data, dict)
+            and data.get("version") == RECORD_VERSION
+            and isinstance(configs, dict)
+            and all(isinstance(value, str) for value in configs.values())
+        )
+        if not valid:
+            msg = f"{self._record} is not a SkillSinc upgrade record"
+            raise RecordError(msg)
+        return dict(configs)
 
     def _store(self, config: Path) -> None:
-        """Store this version for ``config``, atomically."""
+        """Store the newest applied version for ``config``, atomically.
+
+        Raises:
+            OSError: If the record cannot be written.
+            RecordError: If the existing record is invalid.
+        """
         configs = self._configs()
+        key = self._find(configs, config) or self._key(config)
         # Upgrades through the newest one are applied, even from a build
         # numbered below it (a development checkout)
         newest = max(self._installed, SCHEMA_REFERENCE_SINCE, key=version_key)
-        configs[self._key(config)] = newest
+        current = configs.get(key)
+        if current is not None and version_key(current) >= version_key(newest):
+            return
+        configs[key] = newest
         data = {"version": RECORD_VERSION, "configs": dict(sorted(configs.items()))}
-        self._record.parent.mkdir(parents=True, exist_ok=True)
-        staging = self._record.with_suffix(".json.tmp")
-        staging.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        staging.replace(self._record)
+        write_atomically(self._record, json.dumps(data, indent=2) + "\n")

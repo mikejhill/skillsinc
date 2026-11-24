@@ -31,7 +31,7 @@ The schema tells VS Code, and editors built on its JSON support, to accept comme
 - **New files.** `init` writes the key and `config.schema.json`.
 - **Existing files.** The first `sync` with 0.8.0 or later inserts the key as the first member, changing nothing else (comments, indentation, line endings, and a byte-order mark stay). This happens once per configuration file: `upgrades.json` in the state directory records that the upgrade ran, so if you delete the key, SkillSinc leaves it out. A file whose `$schema` names something else is never edited.
 - **The schema file.** Whenever the file names `./config.schema.json`, `sync` creates it, or replaces an older SkillSinc copy, atomically. A different file, a link, or a directory of that name is never touched.
-- **Preview.** `plan` lists these under `Configuration:` (JSON: `configuration`) and writes nothing. A failed write is a warning and does not fail the sync; the next sync tries again.
+- **Preview.** `plan` lists these under `Configuration:` (JSON: `configuration`), counts them in the summary, and writes nothing. A failed write is a warning and does not fail the sync; the next sync tries again. The insertion also waits, with a warning, while a foreign `config.schema.json` is in the way or `upgrades.json` is damaged, and an edit you save while it runs is never overwritten.
 
 Commit the schema with a project configuration so editors in a fresh clone find it. Versions before 0.8.0 reject `$schema` as an unknown key; there, use VS Code's `"files.associations": { "**/skillsinc/config.json": "jsonc" }` user setting instead.
 

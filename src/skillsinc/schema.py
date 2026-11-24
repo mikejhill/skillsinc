@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import tempfile
+from collections.abc import Callable
 from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
@@ -94,7 +96,7 @@ class ConfigSchema:
         """
         if cls.state(config) not in {SchemaState.MISSING, SchemaState.OUTDATED}:
             return False
-        _write_atomically(cls.path(config), cls.text())
+        write_atomically(cls.path(config), cls.text())
         return True
 
     @classmethod
@@ -140,34 +142,54 @@ class ConfigSchema:
 
     @classmethod
     def needs_reference(cls, config: Path) -> bool:
-        """Return True if ``add_reference`` would edit ``config``."""
-        try:
-            text = config.read_bytes().decode("utf-8").removeprefix(BOM)
-            return cls.with_reference(text) is not None
-        except (OSError, ValueError):
-            return False
+        """Return True if ``add_reference`` would edit ``config``.
+
+        Raises:
+            OSError: If the file cannot be read.
+            ValueError: If the file is not UTF-8 or not a JSONC object.
+        """
+        text = config.read_bytes().decode("utf-8").removeprefix(BOM)
+        return cls.with_reference(text) is not None
 
     @classmethod
     def add_reference(cls, config: Path) -> bool:
         """Insert ``"$schema": "./config.schema.json"`` as the file's first key.
 
-        The file is replaced atomically, keeping its permissions and any
-        byte-order mark; a symbolic link is followed, so the link stays.
+        The file is replaced atomically, keeping its permissions (and, on
+        Windows, its ACL) and any byte-order mark; a symbolic link is
+        followed, so the link stays. Just before the replacement the file is
+        checked again, so an edit saved meanwhile is never discarded.
 
         Returns:
             True if the key was added.
 
         Raises:
             OSError: If the file cannot be read or replaced.
-            ValueError: If the file is not a JSONC object or UTF-8.
+            ValueError: If the file is not a JSONC object or UTF-8, or it
+                changed while the edit was prepared.
         """
         target = config.resolve()
-        raw = target.read_bytes().decode("utf-8")
+        before = target.stat()
+        data = target.read_bytes()
+        raw = data.decode("utf-8")
         bom = BOM if raw.startswith(BOM) else ""
         updated = cls.with_reference(raw.removeprefix(BOM))
         if updated is None:
             return False
-        _write_atomically(target, bom + updated, mode_from=target)
+
+        def unchanged() -> None:
+            """Refuse if the file changed since it was read."""
+            now = target.stat()
+            same = (now.st_size, now.st_mtime_ns, now.st_ino) == (
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ino,
+            )
+            if not same or target.read_bytes() != data:
+                msg = f"{config} changed while $schema was being added; left as is"
+                raise ValueError(msg)
+
+        write_atomically(target, bom + updated, mode_from=before, check=unchanged)
         return True
 
     @classmethod
@@ -185,8 +207,18 @@ def _plain(text: str) -> bytes:
     return Jsonc.blank_trailing_commas(Jsonc.blank_comments(text)).encode()
 
 
-def _write_atomically(target: Path, text: str, mode_from: Path | None = None) -> None:
-    """Write ``text`` to a sibling temporary file, then replace ``target``.
+def write_atomically(
+    target: Path,
+    text: str,
+    *,
+    mode_from: os.stat_result | None = None,
+    check: Callable[[], None] | None = None,
+) -> None:
+    """Write ``text`` to an exclusive sibling temporary file, then replace ``target``.
+
+    ``mode_from`` keeps an existing file's permission bits; on Windows the
+    replacement keeps the target's ACL and attributes too. ``check`` runs just
+    before the replacement and may raise to abandon it.
 
     Raises:
         OSError: If the file cannot be written or replaced.
@@ -200,13 +232,34 @@ def _write_atomically(target: Path, text: str, mode_from: Path | None = None) ->
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
         if mode_from is not None:
-            staging.chmod(stat.S_IMODE(mode_from.stat().st_mode))
+            staging.chmod(stat.S_IMODE(mode_from.st_mode))
         else:
             staging.chmod(0o644 & ~_umask())
-        staging.replace(target)
+        if check is not None:
+            check()
+        if mode_from is not None and sys.platform == "win32":  # pragma: no cover
+            _replace_keeping_security(staging, target)
+        else:
+            staging.replace(target)
     except BaseException:
         staging.unlink(missing_ok=True)
         raise
+
+
+def _replace_keeping_security(staging: Path, target: Path) -> None:  # pragma: no cover
+    """Replace ``target`` with ``staging`` via ReplaceFileW, keeping its ACL.
+
+    Raises:
+        OSError: If Windows refuses the replacement.
+    """
+    if sys.platform == "win32":
+        import ctypes  # noqa: PLC0415 - Windows only
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        if not kernel32.ReplaceFileW(str(target), str(staging), None, 0, None, None):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        staging.replace(target)
 
 
 def _umask() -> int:

@@ -128,7 +128,7 @@ class Reporter:
             lines.append("")
             lines.extend(f"warning: {warning}" for warning in warnings)
         lines.append("")
-        lines.append(self._summary(plan, applied=applied))
+        lines.append(self._summary(plan, applied=applied, configuration=configuration))
         return "\n".join(lines) + "\n"
 
     def plan_json(
@@ -342,8 +342,10 @@ class Reporter:
         return f"skills/{parts[1]}/"
 
     @staticmethod
-    def _summary(plan: Plan, *, applied: bool) -> str:
-        """Return the closing summary line."""
+    def _summary(
+        plan: Plan, *, applied: bool, configuration: Sequence[ConfigChange] = ()
+    ) -> str:
+        """Return the closing summary line, counting configuration changes too."""
         counts = dict.fromkeys(Action, 0)
         for destination in plan.destinations:
             if destination.blocked:
@@ -362,8 +364,10 @@ class Reporter:
             )
         if blocked:
             parts.append(f"{blocked} destination(s) blocked")
+        if configuration:
+            parts.append(f"{len(configuration)} configuration change(s)")
         summary = ", ".join(parts) if parts else "no changes"
-        if applied or not plan.has_changes:
+        if applied or not (plan.has_changes or configuration):
             return f"Summary: {summary}."
         return f"Summary: {summary}. Run `skillsinc sync` to apply."
 

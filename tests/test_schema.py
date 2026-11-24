@@ -14,6 +14,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from tests.conftest import Builder, Sandbox
 
+from skillsinc import upgrades
 from skillsinc.config import ConfigLoader
 from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import ConfigurationError
@@ -23,7 +24,7 @@ from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schema import SCHEMA_FILE, ConfigSchema, SchemaState
 from skillsinc.starter import StarterConfig
-from skillsinc.upgrades import ConfigMaintenance, version_key
+from skillsinc.upgrades import Action, ConfigMaintenance, RecordError, version_key
 
 GUIDE = Path(__file__).parent.parent / "docs" / "guides" / "configuration.md"
 
@@ -279,11 +280,11 @@ class TestSyncRefresh:
         (state / "upgrades.json").write_text(json.dumps(record), encoding="utf-8")
         maintenance = ConfigMaintenance(state, installed="0.9.0")
 
-        assert maintenance.plan(sandbox.config_path), "Expected the edit pending"
+        assert maintenance.plan(sandbox.config_path).changes, "Expected pending"
         maintenance.apply(sandbox.config_path)
         assert maintenance.applied_version(sandbox.config_path) == "0.9.0"
         sandbox.config_path.write_text('{"version": 1}', encoding="utf-8")
-        assert not maintenance.plan(sandbox.config_path), "Expected no repeat"
+        assert not maintenance.plan(sandbox.config_path).changes, "Expected none"
 
     @pytest.mark.parametrize("json_output", [False, True])
     def test_failed_edit_warns_and_retries(
@@ -309,7 +310,7 @@ class TestSyncRefresh:
             assert "warning: could not add" in output, output
         assert not schema.exists(), "Expected no schema without the reference"
         state = sandbox.environment.state_directory
-        assert ConfigMaintenance(state).plan(sandbox.config_path), "Expected retry"
+        assert ConfigMaintenance(state).plan(sandbox.config_path).changes, "Retry"
 
     def test_json_plan_lists_configuration_changes(self, sandbox: Sandbox) -> None:
         """`plan --json` reports the pending configuration changes."""
@@ -469,7 +470,8 @@ class TestEdgeCases:
         assert ConfigSchema.state(config) is SchemaState.FOREIGN
         monkeypatch.undo()
         assert ConfigSchema.reference(missing) is None
-        assert ConfigSchema.needs_reference(missing) is False
+        with pytest.raises(FileNotFoundError):
+            ConfigSchema.needs_reference(missing)
 
     def test_failed_replace_removes_staging(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -504,24 +506,144 @@ class TestEdgeCases:
         assert any("synthetic full disk" in item for item in result.warnings)
         assert maintenance.applied_version(config) == "0.8.0"
 
-    def test_unwritable_record_warns(self, tmp_path: Path) -> None:
-        """A state directory that cannot be created is a warning."""
+    def test_unwritable_record_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A record that cannot be written is a warning."""
         config = tmp_path / "config.json"
         config.write_text('{"$schema": "https://example.com/s.json", "version": 1}')
-        state = tmp_path / "state"
-        state.write_text("not a directory", encoding="utf-8")
 
-        result = ConfigMaintenance(state, installed="0.8.0").apply(config)
+        def fail(_target: Path, _text: str) -> None:
+            """Simulate a read-only state directory."""
+            raise PermissionError("synthetic read-only state")
+
+        monkeypatch.setattr(upgrades, "write_atomically", fail)
+        result = ConfigMaintenance(tmp_path / "state", installed="0.8.0").apply(config)
 
         assert any("could not record upgrades" in item for item in result.warnings)
 
-    @pytest.mark.parametrize("record", ['{"configs": []}', "[]", "not json"])
-    def test_malformed_record_counts_as_empty(
+    @pytest.mark.parametrize(
+        "record",
+        [
+            '{"configs": []}',
+            "[]",
+            "not json",
+            '{"version": 2, "configs": {}}',
+            "\udcff",
+        ],
+    )
+    def test_invalid_record_is_kept_and_blocks_upgrades(
         self, tmp_path: Path, record: str
     ) -> None:
-        """A damaged upgrades.json means no upgrades are recorded."""
+        """A damaged upgrades.json is never replaced and blocks one-time edits."""
+        config = tmp_path / "config.json"
+        config.write_text('{"version": 1}', encoding="utf-8")
         state = tmp_path / "state"
         state.mkdir()
-        (state / "upgrades.json").write_text(record, encoding="utf-8")
+        data = record.encode("utf-8", "surrogateescape")
+        (state / "upgrades.json").write_bytes(data)
+        maintenance = ConfigMaintenance(state, installed="0.8.0")
 
-        assert ConfigMaintenance(state).applied_version(tmp_path / "c.json") is None
+        with pytest.raises(RecordError):
+            maintenance.applied_version(config)
+        pending = maintenance.plan(config)
+        result = maintenance.apply(config)
+
+        assert pending.changes == (), "Expected no one-time edit"
+        assert any("upgrades skipped" in item for item in result.warnings)
+        assert (state / "upgrades.json").read_bytes() == data, "Expected it kept"
+        assert config.read_text(encoding="utf-8") == '{"version": 1}'
+
+    def test_concurrent_edit_is_never_discarded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An editor save between read and replace wins; the upgrade waits."""
+        config = tmp_path / "config.json"
+        config.write_text('{"version": 1}', encoding="utf-8")
+        saved = '{"version": 1, "sources": {}}'
+        original = ConfigSchema.with_reference
+
+        def racing(text: str) -> str | None:
+            """Save the file, as an editor would, while the edit is prepared."""
+            config.write_text(saved, encoding="utf-8")
+            return original(text)
+
+        monkeypatch.setattr(ConfigSchema, "with_reference", staticmethod(racing))
+        maintenance = ConfigMaintenance(tmp_path / "state", installed="0.8.0")
+        result = maintenance.apply(config)
+
+        assert config.read_text(encoding="utf-8") == saved, "Expected the save kept"
+        assert any("changed while" in item for item in result.warnings), result
+        assert maintenance.applied_version(config) is None, "Expected a retry"
+        assert list(tmp_path.glob(".*.tmp")) == [], "Expected no leftovers"
+
+    def test_foreign_schema_blocks_reference(self, tmp_path: Path) -> None:
+        """`$schema` is not added while config.schema.json is someone else's."""
+        config = tmp_path / "config.json"
+        config.write_text('{"version": 1}', encoding="utf-8")
+        ConfigSchema.path(config).mkdir()
+        maintenance = ConfigMaintenance(tmp_path / "state", installed="0.8.0")
+
+        result = maintenance.apply(config)
+
+        assert config.read_text(encoding="utf-8") == '{"version": 1}'
+        assert any("not SkillSinc's schema" in item for item in result.warnings)
+        assert maintenance.applied_version(config) is None, "Expected a retry"
+        ConfigSchema.path(config).rmdir()
+        actions = [change.action for change in maintenance.plan(config).changes]
+        assert actions == [Action.ADD_SCHEMA_REFERENCE, Action.CREATE_SCHEMA]
+
+    def test_unreadable_config_keeps_upgrade_pending(self, tmp_path: Path) -> None:
+        """A configuration that cannot be inspected is not marked upgraded."""
+        config = tmp_path / "config.json"
+        config.write_text("not json", encoding="utf-8")
+        maintenance = ConfigMaintenance(tmp_path / "state", installed="0.8.0")
+
+        result = maintenance.apply(config)
+
+        assert any("could not inspect" in item for item in result.warnings)
+        assert maintenance.applied_version(config) is None
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX links")
+    def test_record_matches_another_spelling_of_the_same_file(
+        self, tmp_path: Path
+    ) -> None:
+        """A second path to one configuration shares its record entry."""
+        config = tmp_path / "config.json"
+        config.write_text('{"version": 1}', encoding="utf-8")
+        alias = tmp_path / "alias.json"
+        alias.symlink_to(config)
+        maintenance = ConfigMaintenance(tmp_path / "state", installed="0.8.0")
+        maintenance.apply(config)
+        config.write_text('{"version": 1}', encoding="utf-8")
+
+        assert maintenance.applied_version(alias) == "0.8.0"
+        assert not maintenance.plan(alias).changes, "Expected no repeat via alias"
+        maintenance.apply(alias)
+        record = json.loads((tmp_path / "state/upgrades.json").read_text())
+        assert list(record["configs"]) == [config.as_posix()], record
+
+    def test_summary_counts_configuration_changes(self, sandbox: Sandbox) -> None:
+        """A preview with only configuration changes still says to sync."""
+        schema = TestSyncRefresh._configure(sandbox, f"./{SCHEMA_FILE}")
+        assert sandbox.run("sync")[0] == 0, "Expected sync to succeed"
+        schema.unlink()
+
+        status, output = sandbox.run("plan")
+
+        assert status == 0, output
+        assert "1 configuration change(s)" in output, output
+        assert "Run `skillsinc sync` to apply." in output, output
+
+
+def test_empty_object_needs_no_reference(tmp_path: Path) -> None:
+    """An empty root object is recorded as upgraded without an edit."""
+    config = tmp_path / "config.json"
+    config.write_text("{}", encoding="utf-8")
+    maintenance = ConfigMaintenance(tmp_path / "state", installed="0.8.0")
+
+    result = maintenance.apply(config)
+
+    assert result == upgrades.MaintenanceResult(), result
+    assert config.read_text(encoding="utf-8") == "{}"
+    assert maintenance.applied_version(config) == "0.8.0"

@@ -137,11 +137,20 @@ class PlanCommand:
             plan = planner.plan(
                 config, only=settings.destinations, adopt=settings.adopt
             )
-            changes = maintenance.plan(config.path)
+            pending = maintenance.plan(config.path)
             out.write(
-                reporter.plan_json(plan, configuration=changes)
+                reporter.plan_json(
+                    plan,
+                    configuration=pending.changes,
+                    configuration_warnings=pending.warnings,
+                )
                 if settings.json_output
-                else reporter.plan_text(plan, applied=False, configuration=changes)
+                else reporter.plan_text(
+                    plan,
+                    applied=False,
+                    configuration=pending.changes,
+                    configuration_warnings=pending.warnings,
+                )
             )
             return 0 if plan.ok else 1
 
