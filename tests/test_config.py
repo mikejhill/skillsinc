@@ -512,3 +512,49 @@ class TestEnvironment:
         assert result == (tmp_path / ".config", tmp_path / ".local/state"), (
             f"Expected home fallbacks, got {result!r}"
         )
+
+
+class TestSourceRename:
+    """``rename`` maps exact selectors to valid item names."""
+
+    @staticmethod
+    def load(tmp_path: Path, environment: Environment, rename: object) -> SourceConfig:
+        """Load a synthetic source with the supplied ``rename`` field."""
+        path = tmp_path / "rename.json"
+        data = {
+            "version": 1,
+            "sources": {"library": {"path": "library", "rename": rename}},
+        }
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return (
+            ConfigLoader(ProfileRegistry(), environment).load(path).sources["library"]
+        )
+
+    def test_loads_renames(self, tmp_path: Path, environment: Environment) -> None:
+        """Plain and plugin-qualified keys are kept as written."""
+        rename = {"skills/a": "b", "plugins/kit/agents/x": "kit-x"}
+
+        source = self.load(tmp_path, environment, rename)
+
+        assert source.rename == rename, f"Expected {rename!r}, got {source.rename!r}"
+
+    @pytest.mark.parametrize(
+        ("rename", "message"),
+        [
+            ([], "an object of non-empty strings"),
+            ({"skills/a": ""}, "an object of non-empty strings"),
+            ({"skills/*": "b"}, "invalid key"),
+            ({"*/a": "b"}, "invalid key"),
+            ({"skills": "b"}, "invalid key"),
+            ({"plugins/../skills/a": "b"}, "invalid key"),
+            ({"unknown/a": "b"}, "invalid key"),
+            ({"skills/a": "../b"}, "invalid name"),
+            ({"skills/a": "b c"}, "invalid name"),
+        ],
+    )
+    def test_rejects_invalid_renames(
+        self, tmp_path: Path, environment: Environment, rename: object, message: str
+    ) -> None:
+        """Wildcards, unknown kinds, and unsafe names fail early."""
+        with pytest.raises(ConfigurationError, match=message):
+            self.load(tmp_path, environment, rename)

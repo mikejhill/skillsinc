@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Final
+
+NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+"""Item names SkillSinc accepts: safe as a path segment on every platform."""
 
 type FrontmatterValue = (
     str
@@ -78,6 +83,10 @@ class Customization:
 
     Items expanded from a plugin name it in ``plugin``; ``losses`` lists plugin
     parts no kind carries, and ``refusal`` explains why no profile can use it.
+    ``error`` marks an item that could not be read: every destination it is
+    routed to is blocked, and other destinations sync normally. ``notes`` are
+    accepted adjustments, such as a corrected skill name, reported with the
+    plan. ``renamed_by`` is the ``sources.<name>.rename`` key that renamed it.
     """
 
     kind: Kind
@@ -89,6 +98,9 @@ class Customization:
     plugin: str | None = None
     losses: tuple[str, ...] = ()
     refusal: str | None = None
+    error: str | None = None
+    notes: tuple[str, ...] = ()
+    renamed_by: str | None = None
 
     @property
     def selector(self) -> str:

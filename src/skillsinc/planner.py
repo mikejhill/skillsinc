@@ -232,9 +232,9 @@ class Planner:
 
         Each source offers only the items its ``include`` selects, so an item
         left out is planned exactly like one deleted from the library. Returns
-        the items, the failures, and a warning per ``include`` selector that
-        matches nothing, since a typo or an upstream rename would otherwise
-        remove the item silently.
+        the items, the failures, and a warning per ``include`` selector or
+        ``rename`` key that matches nothing, since a typo or an upstream
+        rename would otherwise change the result silently.
         """
         names = sorted({name for route in routes for name in route.sources})
         items: dict[str, tuple[Customization, ...]] = {}
@@ -261,6 +261,12 @@ class Planner:
                     for item in found
                     for selector in item.selectors
                 )
+            )
+            renamed = {item.renamed_by for item in found}
+            unmatched.extend(
+                (name, f"sources.{name}.rename: {key!r} matches no item in the source")
+                for key in source.rename
+                if key not in renamed
             )
         return items, failures, unmatched
 
@@ -526,6 +532,9 @@ class Planner:
                 reason = f"disabled by sources.{item.source}.disabled"
                 desired.skipped.append(Skip(label, reason))
                 continue
+            if item.error is not None:
+                desired.errors.append(f"{label}: {item.error}")
+                continue
             if item.refusal is not None:
                 desired.skipped.append(Skip(label, item.refusal))
                 continue
@@ -548,7 +557,7 @@ class Planner:
             if losses and not allow_lossy:
                 desired.skipped.append(Skip(label, "; ".join(losses), lossy=True))
                 continue
-            desired.notes.extend(f"{label}: {loss}" for loss in losses)
+            desired.notes.extend(f"{label}: {note}" for note in (*losses, *item.notes))
             desired.delivered.append(label)
             self._add_files(desired, label, rendering.files)
             for block in rendering.blocks:

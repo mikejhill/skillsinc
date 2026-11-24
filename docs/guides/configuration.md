@@ -92,9 +92,14 @@ Optional. A directory, relative to the file, that makes this a [project configur
 | `exclude`  | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                                   |
 | `include`  | no       | `["*/*"]`                                                                             | Resource selectors this source offers; others are left out            |
 | `disabled` | no       | `[]`                                                                                  | Resource selectors suppressed across every route from this source     |
+| `rename`   | no       | `{}`                                                                                  | New names by exact selector; see [rename resources](#rename-resources) |
 | `layout`   | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory              |
 
-A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers`, and an item name used by both the library and a plugin, fail the source. A missing library directory, a skill without `SKILL.md` or `description`, a skill whose frontmatter `name` differs from its directory, invalid frontmatter, two files with the same name, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays fail the whole source.
+A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers` fails the source, as does a missing library directory.
+
+An invalid item fails only itself ([decision 0022](../decisions/0022-item-errors-and-renames.md)): a skill without `SKILL.md` or `description`, invalid frontmatter, an unsafe name, two files with the same name, an item name used by both the library and a plugin, an MCP server file that is not a JSON object with exactly one of `command` or `url`, or a hook file without `"version": 1` and a `hooks` object of event arrays. Every destination a route sends that item to is blocked and lists every such item; other destinations sync normally. Leave it out with `include`, a route `exclude`, or `disabled`, or fix it in the library.
+
+A skill whose frontmatter `name` differs from its directory is accepted, as the Agent Skills client guide recommends. The directory stays the item's name, and the copy's `name` line is rewritten to match, so every harness sees one name; `plan --verbose` notes each correction.
 
 An error scanning a nested skill directory also fails the whole source. Its
 destinations stay unchanged, so an unreadable asset directory is never treated
@@ -175,6 +180,21 @@ Starting with **0.6.0**, `sources.<name>.include` limits a source to the resourc
 Selectors use the same grammar as `disabled`: case-sensitive `kind/name` or `plugins/plugin/kind/name`, with glob patterns in any part. Everything the source holds is still read and validated, but resources left out behave exactly like resources deleted from the library: they are never delivered, and anything SkillSinc delivered from them before is removed on the next sync (edited output is released instead, as below). Widening the list delivers them again.
 
 A selector that matches nothing prints `warning: sources.<name>.include: '<selector>' matches no item in the source`, so a typo or an upstream rename is visible in `plan` and `sync`. An empty list is a configuration error. Precedence: the source's `include` decides what the source offers, routes then select from that, and `disabled` overrides both.
+
+### Rename resources
+
+Starting with **0.7.0**, `sources.<name>.rename` gives items new names, which resolves a collision between two sources or between a library and one of its plugins:
+
+```jsonc
+"sources": {
+  "team": {
+    "github": "example/team-skills",
+    "rename": { "skills/code-review": "team-code-review", "plugins/kit/agents/reviewer": "kit-reviewer" }
+  }
+}
+```
+
+Keys are exact selectors (`kind/name` or `plugins/plugin/kind/name`, no wildcards); values are item names (letters, digits, `.`, `_`, `-`). A renamed item takes the new name everywhere: its output paths, its `kind/name` for `include`, `disabled`, and route filters, and the `name` field of a skill, instruction, agent, or prompt that has one. MCP servers and hooks keep their content and change only their key or file name. Renaming onto a name another item uses, or naming one item with two keys, blocks the destinations that receive it. A key that matches nothing prints a warning. Renaming an item that was already delivered removes the old copy and writes the new one, like any rename in the library.
 
 ## Removing things
 

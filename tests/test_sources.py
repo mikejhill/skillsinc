@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -11,26 +12,33 @@ import pytest
 from tests.conftest import Builder
 
 from skillsinc.exceptions import SourceError
-from skillsinc.models import Kind
+from skillsinc.models import Customization, Kind
 from skillsinc.sources import SourceReader
+
+
+def assert_item_error(items: tuple[Customization, ...], message: str) -> None:
+    """Assert that one item carries an error matching ``message``."""
+    errors = [item.error for item in items if item.error is not None]
+    assert any(re.search(message, error) for error in errors), (
+        f"Expected an item error matching {message!r}, got {errors!r}"
+    )
 
 
 class TestSourceReader:
     """Source libraries must load completely or fail without partial results."""
 
     @pytest.mark.parametrize("description", ["[]", "{bad: value}"])
-    def test_invalid_description_type_raises_source_error(
+    def test_invalid_description_type_marks_the_item(
         self, tmp_path: Path, description: str
     ) -> None:
-        """Reject nontext descriptions through the documented source-error boundary."""
+        """Reject nontext descriptions on the item, not the whole source."""
         package = tmp_path / "skills/sample"
         package.mkdir(parents=True)
         (package / "SKILL.md").write_text(
             f"---\ndescription: {description}\n---\nBody", encoding="utf-8"
         )
 
-        with pytest.raises(SourceError, match="description"):
-            SourceReader().read(Builder.source(tmp_path))
+        assert_item_error(SourceReader().read(Builder.source(tmp_path)), "description")
 
     def test_reads_all_kinds_sorted_with_assets(self, library: Path) -> None:
         """Discover suffix and plain Markdown documents plus nested skill assets."""
@@ -82,22 +90,20 @@ class TestSourceReader:
         ("content", "message"),
         [
             (None, "no SKILL.md"),
-            ("---\nname: other\ndescription: okay\n---\n", "differs"),
             ("Body", "need a description"),
             ("---\nx: [\n---\n", "invalid YAML"),
         ],
     )
-    def test_invalid_skill_fails_entire_source(
+    def test_invalid_skill_marks_only_that_item(
         self, tmp_path: Path, content: str | None, message: str
     ) -> None:
-        """Reject incomplete, mismatched, undiscoverable, and malformed skills."""
+        """Mark incomplete, undiscoverable, and malformed skills, keeping the rest."""
         package = tmp_path / "skills/sample"
         package.mkdir(parents=True)
         if content is not None:
             (package / "SKILL.md").write_text(content, encoding="utf-8")
 
-        with pytest.raises(SourceError, match=message):
-            SourceReader().read(Builder.source(tmp_path))
+        assert_item_error(SourceReader().read(Builder.source(tmp_path)), message)
 
     @pytest.mark.parametrize(
         ("name", "message"),
@@ -114,8 +120,7 @@ class TestSourceReader:
         (directory / "sample.md").write_text("Sample", encoding="utf-8")
         (directory / name).write_text("Other", encoding="utf-8")
 
-        with pytest.raises(SourceError, match=message):
-            SourceReader().read(Builder.source(library))
+        assert_item_error(SourceReader().read(Builder.source(library)), message)
 
     def test_excludes_packages_documents_and_nested_assets(self, library: Path) -> None:
         """Apply exclusions to top-level entries and nested package directories."""
@@ -202,8 +207,7 @@ class TestMcpServers:
         """Ambiguous or incomplete servers fail the whole source."""
         self.write(tmp_path, "bad.json", text)
 
-        with pytest.raises(SourceError, match=message):
-            SourceReader().read(Builder.source(tmp_path))
+        assert_item_error(SourceReader().read(Builder.source(tmp_path)), message)
 
 
 class TestResources:
@@ -232,8 +236,9 @@ class TestResources:
         directory.mkdir()
         (directory / "-bad.md").write_text("Reference.\n", encoding="utf-8")
 
-        with pytest.raises(SourceError, match="invalid customization name"):
-            SourceReader().read(Builder.source(tmp_path))
+        assert_item_error(
+            SourceReader().read(Builder.source(tmp_path)), "invalid customization name"
+        )
 
 
 class TestPluginExpansion:
@@ -393,16 +398,16 @@ class TestPluginExpansion:
         with pytest.raises(SourceError, match=message):
             SourceReader().read(Builder.source(tmp_path))
 
-    def test_name_shared_with_library_fails_the_source(self, tmp_path: Path) -> None:
+    def test_name_shared_with_library_marks_the_item(self, tmp_path: Path) -> None:
         """A plugin item may not shadow a library item of the same kind and name."""
         self.plugin(tmp_path, {"agents/reviewer.md": "Plugin.\n"})
         (tmp_path / "agents").mkdir()
         (tmp_path / "agents/reviewer.agent.md").write_text("Library.\n")
 
-        with pytest.raises(
-            SourceError, match="agents/reviewer is defined by plugin 'kit' and the"
-        ):
-            SourceReader().read(Builder.source(tmp_path))
+        assert_item_error(
+            SourceReader().read(Builder.source(tmp_path)),
+            "agents/reviewer is defined by plugin 'kit' and the",
+        )
 
 
 class TestHookFiles:
@@ -444,5 +449,131 @@ class TestHookFiles:
         """Malformed hook files fail the whole source."""
         self.write(tmp_path, "bad.json", text)
 
-        with pytest.raises(SourceError, match=message):
-            SourceReader().read(Builder.source(tmp_path))
+        assert_item_error(SourceReader().read(Builder.source(tmp_path)), message)
+
+
+class TestItemNames:
+    """Skill names follow their folder; renames give items new identities."""
+
+    @staticmethod
+    def skill(root: Path, folder: str, header: str) -> None:
+        """Write ``skills/<folder>/SKILL.md`` with ``header`` as its frontmatter."""
+        package = root / "skills" / folder
+        package.mkdir(parents=True)
+        (package / "SKILL.md").write_text(
+            f"---\n{header}\n---\nBody.\n", encoding="utf-8", newline="\n"
+        )
+
+    def test_mismatched_skill_name_follows_the_folder(self, tmp_path: Path) -> None:
+        """A differing name is corrected in the copy, keeping comments, with a note."""
+        self.skill(tmp_path, "review", "# keep\nname: Code Review\ndescription: Hi")
+
+        (item,) = SourceReader().read(Builder.source(tmp_path))
+
+        assert item.error is None, f"Expected a usable skill, got {item!r}"
+        assert item.document.raw == (
+            b"---\n# keep\nname: review\ndescription: Hi\n---\nBody.\n"
+        ), f"Expected only the name line to change, got {item.document.raw!r}"
+        assert item.notes == (
+            "frontmatter name 'Code Review' differs from directory name 'review',"
+            " so the copy is named 'review'",
+        ), f"Expected a correction note, got {item.notes!r}"
+
+    def test_name_that_reads_as_another_type_is_quoted(self, tmp_path: Path) -> None:
+        """A folder name YAML would read as a number is rendered as a string."""
+        self.skill(tmp_path, "1.0", "name: other\ndescription: Hi")
+
+        (item,) = SourceReader().read(Builder.source(tmp_path))
+
+        assert item.document.frontmatter["name"] == "1.0", (
+            f"Expected the string name '1.0', got {item.document.frontmatter!r}"
+        )
+
+    def test_one_invalid_item_keeps_the_rest(self, tmp_path: Path) -> None:
+        """Every invalid item is marked, and valid ones are still read."""
+        self.skill(tmp_path, "good", "description: Fine")
+        self.skill(tmp_path, "bad", "name: bad")
+        self.skill(tmp_path, "worse", "name: worse")
+
+        items = SourceReader().read(Builder.source(tmp_path))
+
+        assert {item.name: item.error is not None for item in items} == {
+            "bad": True,
+            "good": False,
+            "worse": True,
+        }, f"Expected both invalid skills marked, got {items!r}"
+
+    def test_rename_changes_identity_paths_and_name(self, tmp_path: Path) -> None:
+        """A renamed agent gets a new selector, file name, and frontmatter name."""
+        (tmp_path / "agents").mkdir()
+        (tmp_path / "agents/review.agent.md").write_text(
+            "---\nname: review\ndescription: Hi\n---\nBody.\n", encoding="utf-8"
+        )
+        source = replace(
+            Builder.source(tmp_path), rename={"agents/review": "team-review"}
+        )
+
+        (item,) = SourceReader().read(source)
+
+        assert (item.selector, item.file_name, item.renamed_by) == (
+            "agents/team-review",
+            "team-review.agent.md",
+            "agents/review",
+        ), f"Expected the renamed identity, got {item!r}"
+        assert item.document.frontmatter["name"] == "team-review", (
+            f"Expected the frontmatter name to follow, got {item.document!r}"
+        )
+
+    def test_rename_resolves_a_plugin_collision(self, tmp_path: Path) -> None:
+        """Renaming the plugin copy lets both items coexist."""
+        (tmp_path / "plugins/kit/agents").mkdir(parents=True)
+        (tmp_path / "plugins/kit/agents/reviewer.md").write_text("Plugin.\n")
+        (tmp_path / "agents").mkdir()
+        (tmp_path / "agents/reviewer.agent.md").write_text("Library.\n")
+        source = replace(
+            Builder.source(tmp_path),
+            rename={"plugins/kit/agents/reviewer": "kit-reviewer"},
+        )
+
+        items = SourceReader().read(source)
+
+        assert [(item.selector, item.error) for item in items] == [
+            ("agents/kit-reviewer", None),
+            ("agents/reviewer", None),
+        ], f"Expected both agents without errors, got {items!r}"
+
+    def test_rename_keeps_json_definitions_byte_for_byte(self, tmp_path: Path) -> None:
+        """A renamed MCP server changes its key and file name, not its content."""
+        (tmp_path / "mcp").mkdir()
+        (tmp_path / "mcp/api.json").write_text('{"command": "x"}', encoding="utf-8")
+        source = replace(Builder.source(tmp_path), rename={"mcp/api": "api-2"})
+
+        (item,) = SourceReader().read(source)
+
+        assert (item.name, item.file_name, item.document.raw) == (
+            "api-2",
+            "api-2.json",
+            b'{"command": "x"}',
+        ), f"Expected a renamed server with unchanged bytes, got {item!r}"
+
+    def test_two_keys_for_one_item_mark_it(self, tmp_path: Path) -> None:
+        """A plain and a plugin-qualified key for one item are ambiguous."""
+        (tmp_path / "plugins/kit/agents").mkdir(parents=True)
+        (tmp_path / "plugins/kit/agents/reviewer.md").write_text("Plugin.\n")
+        source = replace(
+            Builder.source(tmp_path),
+            rename={"agents/reviewer": "a", "plugins/kit/agents/reviewer": "b"},
+        )
+
+        assert_item_error(SourceReader().read(source), "renamed by both")
+
+    def test_rename_onto_an_existing_name_marks_the_item(self, tmp_path: Path) -> None:
+        """A rename that collides with another item is reported, not merged."""
+        self.skill(tmp_path, "one", "description: One")
+        self.skill(tmp_path, "two", "description: Two")
+        source = replace(Builder.source(tmp_path), rename={"skills/one": "two"})
+
+        assert_item_error(
+            SourceReader().read(source),
+            r"skills/two is defined by the library and the library \(renamed by",
+        )

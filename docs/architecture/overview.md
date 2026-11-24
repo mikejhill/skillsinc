@@ -81,6 +81,7 @@ A profile may also write entries into files it declares beside its root (`Profil
 - Planning refuses paths that pass through a symlink or junction beneath a destination root. A declared file beside the root must not be a link either; any other `..` path is refused.
 - A remote source whose refresh fails is read from its last good checkout; with no checkout it fails like a missing directory. Checkouts are replaced only after a complete fetch and checkout ([decision 0019](../decisions/0019-remote-git-sources.md)).
 - An error scanning a nested source directory fails the whole source. Destinations depending on that source stay unchanged, rather than treating unreadable assets as deleted files.
+- An item that is present but invalid is read as an error item; any destination routed to it is blocked, and other destinations proceed.
 
 ## Adding a harness
 

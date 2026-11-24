@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from fnmatch import fnmatchcase
 from itertools import pairwise
@@ -15,7 +15,7 @@ from typing import Final, NoReturn
 from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.jsonc import Jsonc
-from skillsinc.models import Customization, Kind
+from skillsinc.models import NAME_PATTERN, Customization, Kind
 from skillsinc.paths import PROJECT_CONFIG, PROJECT_STATE, Environment, absolute
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schedule import parse_interval
@@ -97,6 +97,8 @@ class SourceConfig:
     remote: RemoteConfig | None = None
     include: tuple[str, ...] = ALL_ITEMS
     """Selectors of the items this source offers; everything else is left out."""
+    rename: Mapping[str, str] = field(default_factory=dict[str, str])
+    """New names by exact selector, applied before every other selector."""
 
     def includes(self, item: Customization) -> bool:
         """Return True if ``item`` matches one of the source's ``include`` selectors."""
@@ -202,6 +204,17 @@ class Table:
         ):
             self._fail(key, "a list of non-empty strings")
         return tuple(str(item) for item in value)
+
+    def mapping(self, key: str) -> dict[str, str]:
+        """Return an object of non-empty strings, or an empty one when absent."""
+        value = self._take(key)
+        if value is None:
+            return {}
+        if not isinstance(value, dict) or not all(
+            isinstance(item, str) and item for item in value.values()
+        ):
+            self._fail(key, "an object of non-empty strings")
+        return {str(name): str(item) for name, item in value.items()}
 
     def boolean(self, key: str, *, default: bool) -> bool:
         """Return a boolean value, or ``default`` when absent."""
@@ -370,13 +383,14 @@ class ConfigLoader:
             )
             raise ConfigurationError(msg)
         disabled = self._selectors(name, table, "disabled")
+        rename = self._renames(name, table)
         table.finish()
         if remote is not None:
             path = self._environment.remote_cache / remote.cache_key(name)
         else:
             path = self._environment.expand(str(raw), base)
         return SourceConfig(
-            name, path, layout, exclude, plugins, disabled, remote, include
+            name, path, layout, exclude, plugins, disabled, remote, include, rename
         )
 
     @classmethod
@@ -506,6 +520,38 @@ class ConfigLoader:
                 )
                 raise ConfigurationError(msg)
         return selectors
+
+    @classmethod
+    def _renames(cls, name: str, table: Table) -> dict[str, str]:
+        """Validate ``rename``: exact selectors mapped to valid item names."""
+        renames = table.mapping("rename")
+        where = f"sources.{name}.rename"
+        for selector, new in renames.items():
+            match selector.split("/"):
+                case [kind, item]:
+                    names = [item]
+                case ["plugins", plugin, kind, item]:
+                    names = [plugin, item]
+                case _:
+                    kind, names = "", []
+            valid = (
+                kind in SELECTOR_KINDS - {"*"}
+                and bool(names)
+                and all(NAME_PATTERN.match(part) for part in names)
+            )
+            if not valid:
+                msg = (
+                    f"{where}: invalid key {selector!r}; use an exact 'kind/name'"
+                    " or 'plugins/plugin/kind/name' selector, without wildcards"
+                )
+                raise ConfigurationError(msg)
+            if not NAME_PATTERN.match(new):
+                msg = (
+                    f"{where}.{selector}: invalid name {new!r}; use letters, digits,"
+                    " '.', '_', and '-', starting with a letter or digit"
+                )
+                raise ConfigurationError(msg)
+        return renames
 
     @staticmethod
     def _layout(table: Table | None) -> tuple[dict[Kind, str], str]:

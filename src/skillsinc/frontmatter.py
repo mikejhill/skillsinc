@@ -13,6 +13,7 @@ from skillsinc.models import Document, Frontmatter, FrontmatterValue
 
 # YAML reads these as line breaks, so they must be written escaped
 YAML_BREAKS: Final = re.compile("[\x85\u2028\u2029]")
+NAME_LINE: Final = re.compile(r"^name[ \t]*:[^\r\n]*", re.MULTILINE)
 FENCE: Final = re.compile(
     r"\A---[ \t]*\r?\n(?P<yaml>.*?)^---[ \t]*(?:\r?\n|\Z)", re.DOTALL | re.MULTILINE
 )
@@ -53,6 +54,31 @@ class FrontmatterCodec:
         if YAML_BREAKS.search(header):
             header = yaml.safe_dump(dict(frontmatter), sort_keys=False, width=1000)
         return f"---\n{header}---\n{body}".encode()
+
+    def rename(self, document: Document, name: str) -> Document:
+        """Return ``document`` with its frontmatter ``name`` set to ``name``.
+
+        Only the ``name`` line changes when that is enough, so comments and
+        formatting survive; otherwise the frontmatter is rendered again. A
+        document without a ``name`` field is returned unchanged.
+        """
+        if "name" not in document.frontmatter or document.frontmatter["name"] == name:
+            return document
+        wanted = {**document.frontmatter, "name": name}
+        text = document.raw.decode("utf-8-sig")
+        match = FENCE.match(text)
+        header = match.group("yaml") if match is not None else ""
+        edited, count = NAME_LINE.subn(f"name: {name}", header, count=2)
+        if match is not None and count == 1:
+            try:
+                reparsed = self._load(edited)
+            except FrontmatterError:
+                reparsed = {}
+            if reparsed == wanted:
+                start, end = match.span("yaml")
+                renamed = text[:start] + edited + text[end:]
+                return self.parse(renamed.encode("utf-8"))
+        return self.parse(self.render(wanted, document.body))
 
     # Internals
 

@@ -521,3 +521,58 @@ class TestDuplicateLoads:
         assert "is missing or changed" in str(by_name["copilot"].error)
         kept = sandbox.environment.home / ".copilot" / "skills" / "sample" / "SKILL.md"
         assert kept.is_file(), "Expected Copilot's copy kept"
+
+
+class TestItemErrors:
+    """An invalid item blocks only the destinations it is routed to."""
+
+    def test_invalid_item_blocks_only_its_routes(self, sandbox: Sandbox) -> None:
+        """A destination that excludes the broken skill still syncs."""
+        broken = sandbox.library / "skills/broken"
+        broken.mkdir()
+        (broken / "SKILL.md").write_text("No frontmatter.\n", encoding="utf-8")
+        config = sandbox.configure()
+        destinations = {
+            **config.destinations,
+            "other": DestinationConfig(
+                "other", "generic", sandbox.environment.home / "other"
+            ),
+        }
+        routes = (
+            RouteConfig(("library",), ("target",)),
+            RouteConfig(("library",), ("other",), exclude=("skills/broken",)),
+        )
+
+        result = TestPlanner.planner(sandbox).plan(
+            replace(config, destinations=destinations, routes=routes)
+        )
+
+        target, other = result.destinations
+        assert target.blocked, f"Expected the routed destination blocked: {target!r}"
+        assert any("library:skills/broken" in error for error in target.errors), (
+            f"Expected the broken skill named, got {target.errors!r}"
+        )
+        assert not other.blocked, f"Expected the other destination open: {other!r}"
+        assert other.changes, f"Expected the other destination to sync: {other!r}"
+        assert result.source_errors == {}, (
+            f"Expected no source-wide failure, got {result.source_errors!r}"
+        )
+
+    def test_unmatched_rename_warns_and_notes_report(self, sandbox: Sandbox) -> None:
+        """A rename key that matches nothing is a warning; a match is a note."""
+        config = sandbox.configure()
+        source = replace(
+            config.sources["library"],
+            rename={"skills/sample": "renamed", "skills/missing": "x"},
+        )
+        config = replace(config, sources={"library": source})
+
+        result = TestPlanner.planner(sandbox).plan(config)
+
+        assert result.warnings == (
+            "sources.library.rename: 'skills/missing' matches no item in the source",
+        ), f"Expected one rename warning, got {result.warnings!r}"
+        assert any(
+            "library:skills/renamed: renamed from 'sample'" in note
+            for note in result.destinations[0].notes
+        ), f"Expected a rename note, got {result.destinations[0].notes!r}"
