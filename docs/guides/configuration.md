@@ -92,7 +92,7 @@ Optional. A directory, relative to the file, that makes this a [project configur
 | `exclude`  | no       | `[".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc"]`                          | File and directory names never read                                   |
 | `include`  | no       | `["*/*"]`                                                                             | Resource selectors this source offers; others are left out            |
 | `disabled` | no       | `[]`                                                                                  | Resource selectors suppressed across every route from this source     |
-| `rename`   | no       | `{}`                                                                                  | New names by exact selector; see [rename resources](#rename-resources) |
+| `rename`   | no       | `{}`                                                                                  | New item names by exact selector; see below                           |
 | `layout`   | no       | `skills`, `instructions`, `agents`, `prompts`, `mcp`, `resources`, `hooks`, `plugins` | Object mapping a kind (or `plugins`) to its subdirectory              |
 
 A missing kind directory means the library has none of that kind. Each `plugins/<plugin>/` directory is expanded into the kinds above ([decision 0005](../decisions/0005-plugins-expand-into-kinds.md)); a plugin manifest that names a different plugin or relocates `skills`, `agents`, `commands`, or `mcpServers` fails the source, as does a missing library directory.

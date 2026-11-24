@@ -57,7 +57,7 @@ Default path `$CLAUDE_CONFIG_DIR` or `~/.claude`. Reference: [Claude Code memory
 | ------------ | ------------------------------------ | ----------------------------------------------------------------- |
 | skills       | `skills/<name>/`                     | exact                                                             |
 | instructions | `rules/<name>.md`                    | `applyTo` → `paths`; `**` → no `paths` (always loaded)            |
-| agents       | `agents/<name>.md`                   | keeps `name`, `description`, Claude Code `tools`/`model`; see below |
+| agents       | `agents/<name>.md`                   | keeps `name`, `description`, Claude `tools`/`model`               |
 | prompts      | `commands/<name>.md`                 | keeps `description`, `argument-hint`                              |
 | resources    | `resources/<name>.md`                | exact, plus `@resources/<name>.md` in `CLAUDE.md`                 |
 | mcp          | `.claude.json` → `mcpServers.<name>` | explicit `type`; keeps `command`, `args`, `env`, `url`, `headers` |
