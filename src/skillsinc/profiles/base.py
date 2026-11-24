@@ -103,6 +103,11 @@ class Profile(ABC):
             return self.project_also_reads
         return self.also_reads
 
+    def reads_with(self, environment: Environment) -> Mapping[str, frozenset[Kind]]:
+        """Return ``reads()`` after the harness's own settings, where it has any."""
+        del environment
+        return self.reads()
+
     def covering(self) -> Mapping[str, frozenset[Kind]]:
         """Return ``covered_by`` for this profile's scope."""
         if self.project is not None and self.project_covered_by is not None:

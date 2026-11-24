@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar, Final, assert_never, override
 
+from skillsinc.jsonc import Jsonc
 from skillsinc.models import Customization, EntryOutput, Kind, Rendering, Support
-from skillsinc.paths import Environment
+from skillsinc.paths import Environment, absolute
 from skillsinc.profiles.base import Profile
+
+logger = logging.getLogger(__name__)
 
 COPY_PATHS: Final = {
     Kind.AGENT: "agents/{name}.agent.md",
     Kind.RESOURCE: "resources/{name}.md",
     Kind.HOOK: "hooks/{name}.json",
 }
+SKILL_LOCATIONS: Final = "chat.agentSkillsLocations"
+# The skills folders VS Code reads from other profiles' default directories
+SKILL_FOLDERS: Final = {"claude": ".claude", "agents": ".agents", "copilot": ".copilot"}
 PROJECT_VSCODE_REFUSAL: Final = (
     "in a project VS Code reads it from .github; route it to a copilot destination"
 )
@@ -149,6 +157,57 @@ class VSCodeProfile(Profile):
     project_covered_by: ClassVar[Mapping[str, frozenset[Kind]] | None] = dict[
         str, frozenset[Kind]
     ]()
+
+    @override
+    def reads_with(self, environment: Environment) -> Mapping[str, frozenset[Kind]]:
+        """Drop skill folders ``chat.agentSkillsLocations`` sets to ``false``.
+
+        The folders are the other profiles' default directories at this
+        scope: under the home directory, or under the project. User settings
+        apply first, then a project's ``.vscode/settings.json``.
+        Unreadable settings leave VS Code's defaults in place.
+        """
+        reads = self.reads()
+        locations = self._locations(self.user_path(environment).parent, environment)
+        if self.project is not None:
+            locations.update(self._locations(self.project / ".vscode", environment))
+        base = self.project if self.project is not None else environment.home
+        off = {
+            profile
+            for profile, folder in SKILL_FOLDERS.items()
+            if locations.get(self._key(base / folder / "skills", environment)) is False
+        }
+        return {
+            profile: kinds - {Kind.SKILL} if profile in off else kinds
+            for profile, kinds in reads.items()
+        }
+
+    def _locations(self, folder: Path, environment: Environment) -> dict[str, bool]:
+        """Return ``chat.agentSkillsLocations`` from ``folder/settings.json``."""
+        path = folder / "settings.json"
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+            bare = Jsonc.blank_trailing_commas(Jsonc.blank_comments(text))
+            settings: object = json.loads(bare)
+        except (OSError, ValueError) as err:
+            if not isinstance(err, FileNotFoundError):
+                logger.debug("Ignoring unreadable VS Code settings %s: %s", path, err)
+            return {}
+        value = settings.get(SKILL_LOCATIONS) if isinstance(settings, dict) else None
+        if not isinstance(value, dict):
+            return {}
+        base = self.project if self.project is not None else environment.home
+        return {
+            self._key(environment.expand(str(key), base), environment): enabled
+            for key, enabled in value.items()
+            if isinstance(enabled, bool)
+        }
+
+    @staticmethod
+    def _key(path: Path, environment: Environment) -> str:
+        """Return ``path`` normalized for comparison on this platform."""
+        text = str(absolute(path)).rstrip("/\\")
+        return text.lower() if environment.platform == "win32" else text
 
     @override
     def user_path(self, environment: Environment) -> Path:

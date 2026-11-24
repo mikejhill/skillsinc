@@ -400,6 +400,22 @@ class TestDuplicateLoads:
             " skills/sample; exclude them from one route",
         ), f"Expected one VS Code warning, got {plan.warnings!r}"
 
+    def test_vscode_setting_that_skips_claude_skills_silences_warning(
+        self, sandbox: Sandbox
+    ) -> None:
+        """``chat.agentSkillsLocations`` set to false removes that folder."""
+        settings = sandbox.environment.config_home / "Code/User/settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(
+            '{\n  // user settings\n  "chat.agentSkillsLocations":'
+            ' {"~/.claude/skills": false,},\n}\n',
+            encoding="utf-8",
+        )
+
+        plan = self.plan(sandbox, ("claude", "vscode", "agents"))
+
+        assert plan.warnings == (), f"Expected no warning, got {plan.warnings!r}"
+
     def test_unrouted_cover_does_not_skip(self, sandbox: Sandbox) -> None:
         """An agents destination that is not sent the skill covers nothing."""
         routes = (

@@ -444,7 +444,9 @@ class Planner:
         self, reader: DestinationPlan, plans: Sequence[DestinationPlan]
     ) -> dict[str, list[str]]:
         """Map each item ``reader``'s harness loads to the destinations it is in."""
-        also_reads = self._profiles.get(reader.destination.profile).reads()
+        also_reads = self._profiles.get(reader.destination.profile).reads_with(
+            self._environment
+        )
         seen: dict[str, list[str]] = defaultdict(list)
         if self._at_default(reader.destination):
             for label in reader.delivered:
