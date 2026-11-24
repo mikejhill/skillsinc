@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,8 +21,9 @@ from skillsinc.jsonc import Jsonc
 from skillsinc.models import Kind
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
-from skillsinc.schema import SCHEMA_FILE, ConfigSchema
+from skillsinc.schema import SCHEMA_FILE, ConfigSchema, SchemaState
 from skillsinc.starter import StarterConfig
+from skillsinc.upgrades import ConfigMaintenance, version_key
 
 GUIDE = Path(__file__).parent.parent / "docs" / "guides" / "configuration.md"
 
@@ -84,6 +88,14 @@ class TestBundledSchema:
             {"version": 1, "routes": [{"sources": ["a"]}]},
             {"version": 1, "routes": [{"sources": [], "destinations": ["b"]}]},
             {"version": 1, "project": None},
+            {"version": 1, "sources": {"a": {}}},
+            {"version": 1, "sources": {"a": {"path": "x", "github": "o/r"}}},
+            {"version": 1, "sources": {"a": {"path": "x", "ref": "main"}}},
+            {"version": 1, "sources": {"a": {"path": "x", "include": ["skill/x"]}}},
+            {"version": 1, "sources": {"a": {"path": "x", "disabled": ["skills/.."]}}},
+            {"version": 1, "sources": {"a": {"path": "x", "include": ["skills/ "]}}},
+            {"version": 1, "destinations": {"a": {"profile": "generic"}}},
+            {"version": 1, "destinations": {"generic": {}}},
         ],
     )
     def test_schema_flags_what_the_loader_refuses(
@@ -96,13 +108,39 @@ class TestBundledSchema:
             ConfigLoader(ProfileRegistry(), environment).load(path)
         assert _errors(document), f"Expected the schema to reject {document}"
 
+    @pytest.mark.parametrize(
+        "document",
+        [
+            {"version": 1, "sources": {"a": {"github": "o/r", "refresh": "1H"}}},
+            {"version": 1, "sources": {"a": {"github": "o/r", "refresh": " 15m "}}},
+            {"version": 1, "sources": {"a": {"git": "https://h/r.git", "ref": "v1"}}},
+            {"version": 1, "sources": {"a": {"github": "o/r", "refresh": "0:15"}}},
+            {
+                "version": 1,
+                "sources": {
+                    "a": {"path": "x", "include": ["*/*", "plugins/kit/skills/*"]}
+                },
+            },
+            {"version": 1, "destinations": {"generic": {"path": "out"}}},
+            {"version": 1, "destinations": {"generic": {"profile": "claude"}}},
+        ],
+    )
+    def test_schema_accepts_what_the_loader_accepts(
+        self, tmp_path: Path, environment: Environment, document: dict[str, Any]
+    ) -> None:
+        """Spellings the loader normalizes are not flagged."""
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        ConfigLoader(ProfileRegistry(), environment).load(path)
+        assert not _errors(document), f"Expected {document} to validate"
+
 
 class TestStarter:
     """`init` names the schema and writes it beside the file."""
 
     @pytest.mark.parametrize("project", [False, True])
     @pytest.mark.parametrize("harness", [None, "claude"])
-    def test_starter_validates_and_writes_schema(
+    def test_starter_validates(
         self,
         tmp_path: Path,
         environment: Environment,
@@ -128,8 +166,40 @@ class TestStarter:
         assert not errors, f"Expected the starter to validate, got {errors}"
         loaded = ConfigLoader(profiles, environment).load(path)
         assert loaded.schema == f"./{SCHEMA_FILE}", f"Got {loaded.schema!r}"
-        written = (path.parent / SCHEMA_FILE).read_text(encoding="utf-8")
-        assert written == ConfigSchema.text(), "Expected the bundled schema"
+
+    def test_init_writes_schema(self, sandbox: Sandbox) -> None:
+        """`init` writes the bundled schema beside the file."""
+        status, output = sandbox.run("init")
+
+        assert status == 0, f"Expected init to succeed, got {output}"
+        schema = ConfigSchema.path(sandbox.config_path)
+        assert schema.read_text(encoding="utf-8") == ConfigSchema.text()
+
+    def test_init_schema_failure_warns(self, sandbox: Sandbox) -> None:
+        """A blocked schema path is a warning; the configuration is still written."""
+        ConfigSchema.path(sandbox.config_path).mkdir(parents=True)
+
+        status, output = sandbox.run("init")
+
+        assert status == 0, f"Expected init to succeed, got {output}"
+        assert sandbox.config_path.is_file(), "Expected the configuration written"
+        assert "warning: could not write" not in output, "Directory is foreign"
+
+    def test_init_write_error_warns(
+        self, sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed schema write after the config is written is a warning."""
+
+        def fail(_config: Path) -> bool:
+            """Simulate a full disk."""
+            raise OSError("synthetic full disk")
+
+        monkeypatch.setattr(ConfigSchema, "refresh", staticmethod(fail))
+        status, output = sandbox.run("init")
+
+        assert status == 0, f"Expected init to succeed, got {output}"
+        assert sandbox.config_path.is_file(), "Expected the configuration written"
+        assert "warning: could not write" in output, output
 
 
 class TestSyncRefresh:
@@ -161,15 +231,96 @@ class TestSyncRefresh:
         assert status == 0, f"Expected sync to succeed, got {output}"
         assert schema.read_text(encoding="utf-8") == ConfigSchema.text()
 
-    @pytest.mark.parametrize("reference", [None, "https://example.com/other.json"])
-    def test_sync_leaves_other_references_alone(
-        self, sandbox: Sandbox, reference: str | None
-    ) -> None:
-        """Without a local reference, no schema file appears."""
-        schema = self._configure(sandbox, reference)
+    def test_sync_leaves_other_references_alone(self, sandbox: Sandbox) -> None:
+        """A file naming another schema is not edited and gets no local copy."""
+        schema = self._configure(sandbox, "https://example.com/other.json")
+        before = sandbox.config_path.read_bytes()
 
         assert sandbox.run("sync")[0] == 0, "Expected sync to succeed"
         assert not schema.exists(), "Expected no schema file"
+        assert sandbox.config_path.read_bytes() == before, "Expected no edit"
+
+    def test_sync_adds_missing_reference_once(self, sandbox: Sandbox) -> None:
+        """An existing file gains `$schema` on the first sync, and never again."""
+        schema = self._configure(sandbox, None)
+        before = sandbox.config_path.read_text(encoding="utf-8")
+
+        status, output = sandbox.run("plan")
+        assert status == 0, f"Expected plan to succeed, got {output}"
+        assert 'add "$schema": "./config.schema.json"' in output, output
+        assert f"create {schema}" in output, output
+        assert sandbox.config_path.read_text(encoding="utf-8") == before
+        assert not schema.exists(), "Expected plan to write nothing"
+        status, output = sandbox.run("sync")
+
+        assert status == 0, f"Expected sync to succeed, got {output}"
+        assert "Configuration:" in output, f"Expected a section, got {output}"
+        after = sandbox.config_path.read_text(encoding="utf-8")
+        expected = before.replace("{", '{\n  "$schema": "./config.schema.json",', 1)
+        assert after == expected, f"Expected one inserted line, got {after}"
+        assert schema.read_text(encoding="utf-8") == ConfigSchema.text()
+        record = ConfigMaintenance(sandbox.environment.state_directory)
+        assert record.applied_version(sandbox.config_path) is not None
+
+        # The user opts out by removing the key; later syncs respect that
+        sandbox.config_path.write_text(before, encoding="utf-8")
+        status, output = sandbox.run("sync")
+        assert status == 0, f"Expected sync to succeed, got {output}"
+        assert sandbox.config_path.read_text(encoding="utf-8") == before
+        assert "Configuration:" not in output, output
+
+    def test_upgrade_runs_after_an_older_record(self, sandbox: Sandbox) -> None:
+        """A config last upgraded by 0.7.x gets the 0.8.0 edit, then never again."""
+        self._configure(sandbox, None)
+        state = sandbox.environment.state_directory
+        key = sandbox.config_path.absolute().as_posix()
+        record = {"version": 1, "configs": {key: "0.7.0"}}
+        (state / "upgrades.json").parent.mkdir(parents=True, exist_ok=True)
+        (state / "upgrades.json").write_text(json.dumps(record), encoding="utf-8")
+        maintenance = ConfigMaintenance(state, installed="0.9.0")
+
+        assert maintenance.plan(sandbox.config_path), "Expected the edit pending"
+        maintenance.apply(sandbox.config_path)
+        assert maintenance.applied_version(sandbox.config_path) == "0.9.0"
+        sandbox.config_path.write_text('{"version": 1}', encoding="utf-8")
+        assert not maintenance.plan(sandbox.config_path), "Expected no repeat"
+
+    @pytest.mark.parametrize("json_output", [False, True])
+    def test_failed_edit_warns_and_retries(
+        self, sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, json_output: bool
+    ) -> None:
+        """A failed edit is a warning (in JSON too); the next sync tries again."""
+        schema = self._configure(sandbox, None)
+
+        def fail(_config: Path) -> bool:
+            """Simulate a read-only configuration file."""
+            raise PermissionError("synthetic read-only file")
+
+        monkeypatch.setattr(ConfigSchema, "add_reference", staticmethod(fail))
+        argv = ("sync", "--json") if json_output else ("sync",)
+        status, output = sandbox.run(*argv)
+
+        assert status == 0, f"Expected sync to succeed, got {output}"
+        if json_output:
+            report = json.loads(output)
+            assert any("synthetic" in item for item in report["warnings"]), report
+            assert report["configuration"] == [], report
+        else:
+            assert "warning: could not add" in output, output
+        assert not schema.exists(), "Expected no schema without the reference"
+        state = sandbox.environment.state_directory
+        assert ConfigMaintenance(state).plan(sandbox.config_path), "Expected retry"
+
+    def test_json_plan_lists_configuration_changes(self, sandbox: Sandbox) -> None:
+        """`plan --json` reports the pending configuration changes."""
+        schema = self._configure(sandbox, None)
+
+        report = json.loads(sandbox.run("plan", "--json")[1])
+
+        assert report["configuration"] == [
+            {"action": "add-schema-reference", "path": str(sandbox.config_path)},
+            {"action": "create-schema", "path": str(schema)},
+        ], report
 
     def test_sync_replaces_outdated_schema(self, sandbox: Sandbox) -> None:
         """An older SkillSinc schema is replaced with this version's."""
@@ -180,6 +331,32 @@ class TestSyncRefresh:
         assert sandbox.run("sync")[0] == 0, "Expected sync to succeed"
         assert schema.read_text(encoding="utf-8") == ConfigSchema.text()
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX links and FIFOs")
+    @pytest.mark.parametrize("kind", ["dangling", "link", "fifo", "directory"])
+    def test_sync_refuses_special_entries(
+        self, sandbox: Sandbox, tmp_path: Path, kind: str
+    ) -> None:
+        """Links, FIFOs, and directories at the schema path are never written."""
+        schema = self._configure(sandbox, f"./{SCHEMA_FILE}")
+        outside = tmp_path / "outside.json"
+        match kind:
+            case "dangling":
+                schema.symlink_to(outside)
+            case "link":
+                outside.write_text(ConfigSchema.text().replace("SkillSinc", "x"))
+                schema.symlink_to(outside)
+            case "fifo":
+                os.mkfifo(schema)
+            case _:
+                schema.mkdir()
+        before = outside.read_bytes() if outside.exists() else None
+
+        status, output = sandbox.run("sync")
+
+        assert status == 0, f"Expected sync to succeed, got {output}"
+        assert (outside.read_bytes() if outside.exists() else None) == before
+        assert ConfigSchema.state(sandbox.config_path) is SchemaState.FOREIGN
+
     @pytest.mark.parametrize("content", ['{"title": "mine"}', "not json", "\udcff"])
     def test_sync_keeps_foreign_schema(self, sandbox: Sandbox, content: str) -> None:
         """A file of the same name that is not SkillSinc's is never overwritten."""
@@ -189,22 +366,6 @@ class TestSyncRefresh:
 
         assert sandbox.run("sync")[0] == 0, "Expected sync to succeed"
         assert schema.read_bytes() == data, "Expected the file untouched"
-
-    def test_unwritable_schema_warns(
-        self, sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A failed schema write is a warning; the sync result stands."""
-        self._configure(sandbox, f"./{SCHEMA_FILE}")
-
-        def fail(_config: Path) -> Path:
-            """Simulate a read-only configuration folder."""
-            raise PermissionError("synthetic read-only folder")
-
-        monkeypatch.setattr(ConfigSchema, "refresh", staticmethod(fail))
-        status, output = sandbox.run("sync")
-
-        assert status == 0, f"Expected sync to succeed, got {output}"
-        assert "warning: could not update the configuration schema" in output
 
 
 class TestLoader:
@@ -218,3 +379,70 @@ class TestLoader:
         path.write_text('{"$schema": 1, "version": 1}', encoding="utf-8")
         with pytest.raises(ConfigurationError, match=r"\$schema"):
             ConfigLoader(ProfileRegistry(), environment).load(path)
+
+
+class TestAddReference:
+    """Inserting `$schema` changes nothing but the inserted text."""
+
+    @pytest.mark.parametrize(
+        ("before", "after"),
+        [
+            (
+                '// top\n{\n  // why\n  "version": 1,\n}\n',
+                '// top\n{\n  // why\n  "$schema": "./config.schema.json",\n'
+                '  "version": 1,\n}\n',
+            ),
+            (
+                '{\r\n\t"version": 1\r\n}\r\n',
+                '{\r\n\t"$schema": "./config.schema.json",\r\n\t"version": 1\r\n}\r\n',
+            ),
+            (
+                '\ufeff{"version": 1}',
+                '\ufeff{"$schema": "./config.schema.json", "version": 1}',
+            ),
+            (
+                '{ /* c */ "version": 1 }',
+                '{ /* c */ "$schema": "./config.schema.json", "version": 1 }',
+            ),
+        ],
+    )
+    def test_insertion_keeps_everything_else(
+        self, tmp_path: Path, before: str, after: str
+    ) -> None:
+        """Comments, line endings, indentation, and a BOM survive."""
+        path = tmp_path / "config.json"
+        path.write_bytes(before.encode())
+
+        assert ConfigSchema.add_reference(path) is True
+        assert path.read_bytes().decode() == after
+
+    @pytest.mark.parametrize("text", ['{"$schema": "x", "version": 1}', "{}"])
+    def test_present_or_empty_is_left_alone(self, tmp_path: Path, text: str) -> None:
+        """An existing `$schema` or an empty object is not edited."""
+        path = tmp_path / "config.json"
+        path.write_text(text, encoding="utf-8")
+
+        assert ConfigSchema.add_reference(path) is False
+        assert path.read_text(encoding="utf-8") == text
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX links and modes")
+    def test_follows_links_and_keeps_mode(self, tmp_path: Path) -> None:
+        """A linked config is edited in place, and its permissions kept."""
+        real = tmp_path / "real.json"
+        real.write_text('{"version": 1}', encoding="utf-8")
+        real.chmod(0o640)
+        link = tmp_path / "config.json"
+        link.symlink_to(real)
+
+        assert ConfigSchema.add_reference(link) is True
+        assert link.is_symlink(), "Expected the link kept"
+        assert '"$schema"' in real.read_text(encoding="utf-8")
+        assert stat.S_IMODE(real.stat().st_mode) == 0o640
+        assert not list(tmp_path.glob(".*.tmp")), "Expected no temporary file"
+
+
+def test_version_key_reads_release_parts() -> None:
+    """Pre-release and local suffixes compare as their release."""
+    assert version_key("0.8.0rc1") == (0, 8, 0)
+    assert version_key("0.10.1+local.5") == (0, 10, 1)
+    assert version_key("0.7.0") < version_key("0.8.0") < version_key("0.10.0")

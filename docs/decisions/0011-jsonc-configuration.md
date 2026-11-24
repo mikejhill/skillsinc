@@ -19,4 +19,4 @@ The configuration was TOML (`config.toml`). Mike prefers JSONC: the harness file
 ## Consequences
 
 - The configuration loader no longer uses `tomllib`. TOML stays a dependency for Codex's `config.toml` and agent files ([decision 0004](0004-toml-entries-with-tomlkit.md)).
-- SkillSinc never writes `config.json` after `init`, so comments are safe.
+- SkillSinc never rewrites `config.json` after `init`, so comments are safe. The one exception is a planned, one-time text insertion of `$schema` ([decision 0023](0023-configuration-schema.md)), which keeps every other byte.

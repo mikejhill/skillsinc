@@ -13,6 +13,7 @@ from skillsinc.models import Kind
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
 from skillsinc.profiles.base import Profile
 from skillsinc.remote import RemoteCache
+from skillsinc.upgrades import ConfigChange
 
 REPORT_VERSION: Final = 1
 SKILL_FILE_DEPTH: Final = 3  # skills/<name>/<file>
@@ -99,8 +100,19 @@ class Reporter:
 
     # Plans
 
-    def plan_text(self, plan: Plan, *, applied: bool) -> str:
-        """Return a readable plan, one section per destination."""
+    def plan_text(
+        self,
+        plan: Plan,
+        *,
+        applied: bool,
+        configuration: Sequence[ConfigChange] = (),
+        configuration_warnings: Sequence[str] = (),
+    ) -> str:
+        """Return a readable plan, one section per destination.
+
+        ``configuration`` lists changes to the configuration file and the
+        schema beside it: planned for ``plan``, made for ``sync``.
+        """
         lines: list[str] = [f"Project: {plan.project}"] if plan.project else []
         lines.extend(f"error: {message}" for message in plan.source_errors.values())
         lines.extend(f"warning: {message}" for message in plan.source_warnings.values())
@@ -108,15 +120,24 @@ class Reporter:
             lines.extend(self._destination_text(destination))
         if not plan.destinations:
             lines.append("No enabled destinations are routed. Edit the configuration.")
-        if plan.warnings:
+        if configuration:
+            lines.append("Configuration:")
+            lines.extend(f"  + {change.describe()}" for change in configuration)
+        warnings = [*plan.warnings, *configuration_warnings]
+        if warnings:
             lines.append("")
-            lines.extend(f"warning: {warning}" for warning in plan.warnings)
+            lines.extend(f"warning: {warning}" for warning in warnings)
         lines.append("")
         lines.append(self._summary(plan, applied=applied))
         return "\n".join(lines) + "\n"
 
     def plan_json(
-        self, plan: Plan, results: Sequence[DestinationResult] | None = None
+        self,
+        plan: Plan,
+        results: Sequence[DestinationResult] | None = None,
+        *,
+        configuration: Sequence[ConfigChange] = (),
+        configuration_warnings: Sequence[str] = (),
     ) -> str:
         """Return the plan (and, after a sync, the results) as versioned JSON."""
         outcome = {result.name: result for result in results or ()}
@@ -127,7 +148,11 @@ class Reporter:
             "project": plan.project or None,
             "source_errors": dict(plan.source_errors),
             "source_warnings": dict(plan.source_warnings),
-            "warnings": list(plan.warnings),
+            "warnings": [*plan.warnings, *configuration_warnings],
+            "configuration": [
+                {"action": change.action.value, "path": str(change.path)}
+                for change in configuration
+            ],
             "destinations": [
                 self._destination_json(
                     destination, outcome.get(destination.destination.name)

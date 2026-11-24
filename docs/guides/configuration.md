@@ -20,15 +20,20 @@ When `config.json` is absent but a `config.jsonc` from an early build sits besid
 
 ### Editor support
 
-Editors treat a `.json` file as strict JSON and flag comments, unless the file names a schema that allows them. Starting with **0.8.0**, SkillSinc ships a JSON Schema ([decision 0023](../decisions/0023-configuration-schema.md)); add this first key to the file:
+Editors treat a `.json` file as strict JSON and flag comments, unless the file names a schema that allows them. Starting with **0.8.0**, SkillSinc ships a JSON Schema and points the file at it ([decision 0023](../decisions/0023-configuration-schema.md)):
 
 ```jsonc
 "$schema": "./config.schema.json",
 ```
 
-`init` writes the key, and `sync` writes `config.schema.json` beside the file and replaces it whenever SkillSinc's version of it changes. `plan` writes nothing, so run `sync` once after adding the key. The schema tells VS Code, and editors built on its JSON support, to accept comments and trailing commas, and adds completion, hover text, and validation for every key. A local file loads without network access or a trust prompt. A different file named `config.schema.json` is never overwritten. `$schema` is read only by editors; any string is accepted. Commit the schema with a project configuration so editors in a fresh clone find it.
+The schema tells VS Code, and editors built on its JSON support, to accept comments and trailing commas, and adds completion, hover text, and validation for every key. A local file loads offline and without a trust prompt.
 
-Versions before 0.8.0 reject the `$schema` key. On those, use VS Code's `"files.associations": { "**/skillsinc/config.json": "jsonc" }` user setting instead.
+- **New files.** `init` writes the key and `config.schema.json`.
+- **Existing files.** The first `sync` with 0.8.0 or later inserts the key as the first member, changing nothing else (comments, indentation, line endings, and a byte-order mark stay). This happens once per configuration file: `upgrades.json` in the state directory records that the upgrade ran, so if you delete the key, SkillSinc leaves it out. A file whose `$schema` names something else is never edited.
+- **The schema file.** Whenever the file names `./config.schema.json`, `sync` creates it, or replaces an older SkillSinc copy, atomically. A different file, a link, or a directory of that name is never touched.
+- **Preview.** `plan` lists these under `Configuration:` (JSON: `configuration`) and writes nothing. A failed write is a warning and does not fail the sync; the next sync tries again.
+
+Commit the schema with a project configuration so editors in a fresh clone find it. Versions before 0.8.0 reject `$schema` as an unknown key; there, use VS Code's `"files.associations": { "**/skillsinc/config.json": "jsonc" }` user setting instead.
 
 ## Example
 

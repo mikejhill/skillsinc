@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TextIO
 
 from skillsinc.applier import Applier
-from skillsinc.config import Config, ConfigLoader
+from skillsinc.config import ConfigLoader
 from skillsinc.lock import StateLock
 from skillsinc.manifest import ManifestStore
 from skillsinc.paths import Environment
@@ -39,6 +39,7 @@ from skillsinc.settings import (
 )
 from skillsinc.sources import SourceReader
 from skillsinc.starter import StarterConfig
+from skillsinc.upgrades import ConfigMaintenance
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,13 @@ class InitCommand:
                 "Keep the library versioned in your own Git repository;"
                 " init does not initialize Git or contact a remote.\n"
             )
+        try:
+            ConfigSchema.refresh(settings.config_path)
+        except OSError as err:
+            out.write(
+                f"warning: could not write {ConfigSchema.path(settings.config_path)}:"
+                f" {err}; `skillsinc sync` tries again\n"
+            )
         out.write(
             f"Wrote {settings.config_path}\n"
             "Review it, run `skillsinc plan` to preview, then `skillsinc sync`.\n"
@@ -124,14 +132,16 @@ class PlanCommand:
         planner = Planner(profiles, reader, store, self._environment)
         reporter = Reporter(verbose=settings.verbose)
 
+        maintenance = ConfigMaintenance(state)
         if not settings.apply:
             plan = planner.plan(
                 config, only=settings.destinations, adopt=settings.adopt
             )
+            changes = maintenance.plan(config.path)
             out.write(
-                reporter.plan_json(plan)
+                reporter.plan_json(plan, configuration=changes)
                 if settings.json_output
-                else reporter.plan_text(plan, applied=False)
+                else reporter.plan_text(plan, applied=False, configuration=changes)
             )
             return 0 if plan.ok else 1
 
@@ -143,27 +153,28 @@ class PlanCommand:
                 config, only=settings.destinations, adopt=settings.adopt
             )
             results = Applier(store).apply(plan)
-        self._refresh_schema(config, out, quiet=settings.json_output)
+            maintained = maintenance.apply(config.path)
         if settings.json_output:
-            out.write(reporter.plan_json(plan, results))
+            out.write(
+                reporter.plan_json(
+                    plan,
+                    results,
+                    configuration=maintained.applied,
+                    configuration_warnings=maintained.warnings,
+                )
+            )
         else:
-            out.write(reporter.plan_text(plan, applied=True))
+            out.write(
+                reporter.plan_text(
+                    plan,
+                    applied=True,
+                    configuration=maintained.applied,
+                    configuration_warnings=maintained.warnings,
+                )
+            )
             out.write(reporter.results_text(results))
         failed = any(result.error is not None for result in results)
         return 0 if plan.ok and not failed else 1
-
-    @staticmethod
-    def _refresh_schema(config: Config, out: TextIO, *, quiet: bool) -> None:
-        """Keep ``./config.schema.json`` current when the file names it."""
-        if not ConfigSchema.references_local(config.schema):
-            return
-        try:
-            ConfigSchema.refresh(config.path)
-        except OSError as err:
-            if not quiet:
-                out.write(
-                    f"warning: could not update the configuration schema: {err}\n"
-                )
 
 
 class StatusCommand:
