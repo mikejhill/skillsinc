@@ -562,16 +562,24 @@ class TestEdgeCases:
         config.write_text('{"version": 1}', encoding="utf-8")
         saved = '{"version": 1, "sources": {}}'
         original = ConfigSchema.with_reference
+        calls: list[str] = []
 
         def racing(text: str) -> str | None:
-            """Save the file, as an editor would, while the edit is prepared."""
-            config.write_text(saved, encoding="utf-8")
+            """Save the file, as an editor would, while the edit is prepared.
+
+            The first call is the plan's inspection; the second prepares the
+            edit, and the save lands between that read and the replacement.
+            """
+            calls.append(text)
+            if len(calls) == 2:
+                config.write_text(saved, encoding="utf-8")
             return original(text)
 
         monkeypatch.setattr(ConfigSchema, "with_reference", staticmethod(racing))
         maintenance = ConfigMaintenance(tmp_path / "state", installed="0.8.0")
         result = maintenance.apply(config)
 
+        assert len(calls) == 2, f"Expected inspection then edit, got {calls}"
         assert config.read_text(encoding="utf-8") == saved, "Expected the save kept"
         assert any("changed while" in item for item in result.warnings), result
         assert maintenance.applied_version(config) is None, "Expected a retry"
