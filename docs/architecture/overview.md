@@ -41,6 +41,7 @@ graph LR
 | `history`                     | Record every `sync` run in `history.jsonl`; read it back newest first  |
 | `usersettings`                | Load and save `settings.json` (application settings), keeping comments |
 | `configedit`                  | Edit `config.json` element by element for the settings window          |
+| `selfupdate`                  | Find newer releases on PyPI and plan the upgrade for an installation   |
 | `report`                      | Text and versioned JSON output                                         |
 | `schema`                      | The bundled editor schema and the `$schema` insertion                  |
 | `upgrades`                    | Plan and apply one-time config upgrades and the local schema copy      |

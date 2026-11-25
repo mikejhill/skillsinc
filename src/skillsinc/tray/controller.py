@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, Protocol
@@ -22,10 +21,12 @@ from skillsinc.tray.catalog import Catalog, CatalogReader
 from skillsinc.tray.history_view import HistoryPopup, HistoryWindow
 from skillsinc.tray.icons import TrayState
 from skillsinc.tray.menu import MenuState, TrayCommands, TrayIcon
+from skillsinc.tray.notice import Notice
 from skillsinc.tray.runner import SyncOutcome, SyncRequest, SyncRunner
 from skillsinc.tray.settings_window import SettingsWindow
-from skillsinc.tray.startup import LoginItem
+from skillsinc.tray.startup import LoginItem, tray_command
 from skillsinc.tray.timing import ScheduleState, describe_delta
+from skillsinc.tray.updater import Updater
 from skillsinc.upgrades import current_version
 from skillsinc.usersettings import SettingsFileError, SettingsStore, UserSettings
 
@@ -38,6 +39,9 @@ SETTINGS_DEBOUNCE_MS: Final = 300
 LABEL_REFRESH_MS: Final = 30_000
 # On exit, wait this long for a running sync to finish before stopping it
 EXIT_WAIT_MS: Final = 30_000
+# Look for a new release a minute after start, then daily
+FIRST_UPDATE_CHECK_MS: Final = 60_000
+UPDATE_CHECK_MS: Final = 24 * 60 * 60 * 1000
 
 
 class Opener(Protocol):
@@ -50,15 +54,6 @@ class Opener(Protocol):
 def open_with_desktop(path: Path) -> bool:
     """Open ``path`` with the default application."""
     return QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-
-
-@dataclass(frozen=True, slots=True)
-class Notice:
-    """A tray notification."""
-
-    title: str
-    message: str
-    failure: bool = False
 
 
 class TrayController(QObject):
@@ -77,6 +72,7 @@ class TrayController(QObject):
         opener: Opener = open_with_desktop,
         login_item: LoginItem | None = None,
         quit_application: Callable[[], None] | None = None,
+        updater: Updater | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -116,6 +112,16 @@ class TrayController(QObject):
             open_folder=self.open_state,
         )
         self.about_dialog: AboutDialog | None = None
+        self.updater = updater or Updater(
+            environment.state_directory, tray_command(), parent=self
+        )
+        self.updater.notified.connect(self._notify)
+        self.updater.changed.connect(self._refresh_labels)
+        self.updater.install_requested.connect(self.install_update)
+        self._install_after_sync = False
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(UPDATE_CHECK_MS)
+        self._update_timer.timeout.connect(self._automatic_update_check)
         self.settings_window: SettingsWindow | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -177,10 +183,13 @@ class TrayController(QObject):
                 Notice("SkillSinc settings", self._settings_error, failure=True)
             )
         self._reschedule()
+        self._update_timer.start()
+        QTimer.singleShot(FIRST_UPDATE_CHECK_MS, self, self._automatic_update_check)
 
     def stop(self) -> None:
         """Stop the schedule; let a running sync finish briefly, then end it."""
         self._timer.stop()
+        self._update_timer.stop()
         self._labels.stop()
         if self._runner.busy and not self._runner.wait(EXIT_WAIT_MS):
             self._runner.cancel()
@@ -266,6 +275,22 @@ class TrayController(QObject):
             )
         self.settings_window.present()
 
+    def update_command(self) -> None:
+        """The menu's update entry: install a release found, else check."""
+        if self.updater.available:
+            self.install_update()
+        else:
+            self.updater.check(manual=True)
+
+    def install_update(self) -> None:
+        """Upgrade SkillSinc and restart; after the running sync, if any."""
+        if self._runner.busy:
+            self._install_after_sync = True
+            self._notify(Notice("SkillSinc update", "Updating after this sync."))
+            return
+        if self.updater.install():
+            self.exit()
+
     def show_about(self) -> None:
         """Show the About window."""
         facts = AboutFacts(
@@ -273,6 +298,7 @@ class TrayController(QObject):
             config=self._config,
             settings=self._store.path,
             state=self._environment.state_directory,
+            latest=self.updater.summary(),
         )
         self.about_dialog = AboutDialog(facts)
         self.about_dialog.show()
@@ -337,6 +363,7 @@ class TrayController(QObject):
             open_state=self.open_state,
             about=self.show_about,
             exit=self.exit,
+            update=self.update_command,
         )
 
     def _read_settings(
@@ -417,6 +444,11 @@ class TrayController(QObject):
         self.tray.set_icon_state(TrayState.SYNCING)
         self._refresh_labels(syncing=request)
 
+    def _automatic_update_check(self) -> None:
+        updates = self._settings.updates
+        if updates.check and not self._held and not self.updater.checking:
+            self.updater.check(manual=False, install=updates.install)
+
     def _on_finished(self, outcome: SyncOutcome) -> None:
         self._last_outcome = outcome
         self._refresh_records()
@@ -443,6 +475,9 @@ class TrayController(QObject):
         if self.history_window.isVisible():
             self.history_window.refresh()
         self.synced.emit(record)
+        if self._install_after_sync:
+            self._install_after_sync = False
+            self.install_update()
 
     def _covers(self, record: SyncRecord, outcome: SyncOutcome) -> bool:
         """Return True if ``record`` is the run ``outcome`` reports.
@@ -513,6 +548,8 @@ class TrayController(QObject):
                     and self._paused_until > self._clock()
                 ),
                 catalog=self._catalog,
+                update_label=self.updater.label(),
+                update_busy=self.updater.checking,
             )
         )
 
