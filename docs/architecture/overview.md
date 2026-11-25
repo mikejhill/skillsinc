@@ -41,6 +41,7 @@ graph LR
 | `schema`                      | The bundled editor schema and the `$schema` insertion                   |
 | `upgrades`                    | Plan and apply one-time config upgrades and the local schema copy       |
 | `schedule`                    | Register `sync` with Task Scheduler, launchd, systemd, or cron          |
+| `process`                     | Flags that keep child processes from opening Windows console windows    |
 | `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                          |
 
 ## Ownership
