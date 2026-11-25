@@ -14,6 +14,7 @@ This guide lists every command, option, exit code, and the JSON report format, f
 | `skillsinc profiles`                         | List the configuration's [sync profiles](configuration.md#profiles) and which apply here               |
 | `skillsinc harnesses`                        | List harness profiles and how each kind is supported (named `profiles` before 0.9.0)                   |
 | `skillsinc schedule install\|remove\|status` | Register, remove, or inspect a scheduled `sync` ([scheduling](scheduling.md))                          |
+| `skillsinc tray`                             | Run the [tray application](tray.md), or pass a request to the running one (needs `skillsinc[tray]`)    |
 
 Options go after the command, for example `skillsinc plan --json`.
 
@@ -39,7 +40,7 @@ This reference follows `main`. `--with-guidance` requires 0.3.0 or later; check
 | `--interval DURATION`      | schedule install                                              | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS` (default `1h`)                                                                                                                                  |
 | `--dry-run`                | schedule install                                              | Print the scheduler definition without registering it                                                                                                                                                       |
 | `--scheduler NAME`         | schedule                                                      | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default                                                                                                                           |
-| `--log-level LEVEL`        | all                                                           | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                                                                                                                                 |
+| `--log-level LEVEL`        | all                                                           | `DEBUG`, `INFO`, `WARNING` (default; `tray` defaults to `INFO`, written to `tray.log`), or `ERROR`, on stderr                                                                                               |
 | `--version`                | none                                                          | Print the version                                                                                                                                                                                           |
 
 ## Exit codes

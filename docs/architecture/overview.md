@@ -45,6 +45,7 @@ graph LR
 | `upgrades`                    | Plan and apply one-time config upgrades and the local schema copy      |
 | `schedule`                    | Register `sync` with Task Scheduler, launchd, systemd, or cron         |
 | `process`                     | Flags that keep child processes from opening Windows console windows   |
+| `tray/*`                      | The optional Qt tray: schedule, menu, history windows, sync processes  |
 | `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                         |
 
 ## Ownership

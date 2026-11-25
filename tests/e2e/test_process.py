@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from importlib.metadata import version
@@ -374,7 +375,9 @@ class TestSafety:
         Harnesses.install(cli.home)
         assert cli.run("init", "--source", str(library)).status == 0
         cli.state_directory.mkdir(parents=True)
-        (cli.state_directory / "sync.lock").write_text("1\n", encoding="utf-8")
+        (cli.state_directory / "sync.lock").write_text(
+            f"{os.getpid()}\n", encoding="utf-8"
+        )
 
         result = cli.run("sync")
 
@@ -493,7 +496,9 @@ class TestHistory:
             cli.run("sync", "--trigger", "scheduled", "--log-file", str(log)).status
             == 0
         )
-        (cli.state_directory / "sync.lock").write_text("1\n", encoding="utf-8")
+        (cli.state_directory / "sync.lock").write_text(
+            f"{os.getpid()}\n", encoding="utf-8"
+        )
         assert cli.run("sync", "--trigger", "tray").status == 1
         (cli.state_directory / "sync.lock").unlink()
         assert cli.run("sync").status == 0

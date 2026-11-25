@@ -509,7 +509,7 @@ class TestSyncRecordsHistory:
         sandbox.configure()
         lock = sandbox.environment.state_directory / "sync.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
-        lock.write_text("1\n", encoding="utf-8")
+        lock.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
         status, _ = sandbox.run("sync")
 

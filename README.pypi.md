@@ -142,6 +142,7 @@ Run `skillsinc harnesses` for the same table. See [harness profiles](https://git
 | `skillsinc profiles`  | List sync profiles and which apply on this machine        |
 | `skillsinc harnesses` | List harness profiles and what each kind becomes          |
 | `skillsinc schedule`  | `install`, `remove`, or show `status` of a scheduled sync |
+| `skillsinc tray`      | Run as a tray app that syncs on its own schedule          |
 
 `plan` and `sync` accept `--profile NAME` ([sync profiles](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/configuration.md#profiles): one config, a different segment per machine), `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, `--config PATH`, and `--user`. Inside a project with `.config/skillsinc/config.json`, they use that file. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
@@ -168,6 +169,7 @@ to retire a destination or remove distributed content deliberately.
 - [Command-line reference](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/command-line.md)
 - [Scheduling](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/scheduling.md)
 - [Application settings](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/settings.md)
+- [Tray application](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/tray.md)
 - [Development guide](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/development.md)
 - [Roadmap](https://github.com/mikejhill/skillsinc/blob/main/docs/planning/roadmap.md)
 - [Harness profiles](https://github.com/mikejhill/skillsinc/blob/main/docs/guides/harness-profiles.md)

@@ -51,6 +51,15 @@ class HistorySettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TraySettings:
+    """Settings for ``skillsinc tray``."""
+
+    request: tuple[str, ...]
+    """What to ask the tray to do: empty starts it (or shows its popup)."""
+    log_level: str
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessesSettings:
     """Settings for ``skillsinc harnesses``."""
 
@@ -96,4 +105,5 @@ type Settings = (
     | ProfilesSettings
     | ScheduleSettings
     | StatusSettings
+    | TraySettings
 )

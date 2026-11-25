@@ -147,21 +147,28 @@ class TestJsoncEdits:
     def test_insert_or_replace_sets_the_key_and_keeps_comments(
         self, value: dict[str, JsonValue], key: str, new: JsonValue
     ) -> None:
-        """Setting a key yields the expected data; no comment is lost."""
+        """Setting a key yields the expected data; no other comment is lost.
+
+        Comments inside the replaced value go with it.
+        """
         source = _commented(value)
         span = Jsonc.object_at(Jsonc.blank_comments(source), 0)
         member = span.find(key)
+        replaced = 0
 
         if member is None:
             edited = Jsonc.insert(source, span, {key: new})
         else:
             edited = Jsonc.replace(source, span, {member: new})
+            inside = source[member.value_start : member.value_end]
+            replaced = inside.count(COMMENT.strip())
 
         assert _parse(edited) == value | {key: new}, (
             f"Expected {value | {key: new}!r}, got {edited!r}"
         )
-        assert edited.count(COMMENT.strip()) == source.count(COMMENT.strip()), (
-            f"Expected every comment kept, got {edited!r}"
+        kept = source.count(COMMENT.strip()) - replaced
+        assert edited.count(COMMENT.strip()) == kept, (
+            f"Expected every other comment kept, got {edited!r}"
         )
 
     @given(json_objects.filter(bool), st.data())
