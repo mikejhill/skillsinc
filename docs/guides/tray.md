@@ -26,7 +26,7 @@ Set `startup.launch_at_login` in `settings.json` to start the tray when you sign
 ## What it shows
 
 - **Click the icon** for the newest syncs, with **Sync now**, **History**, and **Settings** buttons.
-- **Right-click** for the menu: the last sync and when the next one is due, **Sync now**, **Sync profile** (all profiles, or one; tooltips say why each is active or not), **Cancel sync** while one runs, **Pause scheduled syncs** (1 hour, 4 hours, 24 hours, or until resumed), **Sync history…**, **Settings…** (the [settings window](#settings-window)), **Open configuration file**, **Open history and logs folder**, **About SkillSinc** (version, Python, Qt, configuration and state paths), and **Exit**.
+- **Right-click** for the menu: the last sync and when the next one is due, **Sync now**, **Sync profile** (all profiles, or one; tooltips say why each is active or not), **Cancel sync** while one runs, **Pause scheduled syncs** (1 hour, 4 hours, 24 hours, or until resumed), **Sync history…**, **Settings…** (the [settings window](#settings-window)), **Open configuration file**, **Open history and logs folder**, **Check for updates** (see [Updates](#updates)), **About SkillSinc** (version, latest release, Python, Qt, configuration and state paths), and **Exit**.
 - **The icon** carries a badge while a sync runs, after a failure, and while syncs are paused.
 - **Notifications** report failed syncs, and also syncs that changed files when `notifications.changes` is on.
 - **Sync history…** lists recorded syncs (the same records as `skillsinc history`), newest first, a thousand at a time with **Load older runs**, and the selected run's changes and errors.
@@ -43,6 +43,28 @@ Settings take effect when `settings.json` is saved; an invalid edit is reported 
 Include and exclude patterns are one per line, so a glob such as `skills/[a,b]*` stays whole, and a field you do not touch is written back exactly as it was (an empty `include` list stays empty). Renaming a destination whose harness came from its name (such as `codex`) records that harness, so the destination keeps it. Renaming or removing a profile updates the scheduled-profile ticks on **General**; with **Sync only these profiles** on, at least one must stay ticked. Choosing another configuration file on **General** switches the tabs to it; with unsaved configuration edits, save or cancel them first.
 
 **Save** checks everything before writing anything: the edited configuration must load with the same loader `skillsinc sync` uses, and neither `config.json` nor `settings.json` may have changed on disk since the window opened (the configuration is checked even when only settings changed). Then it writes only what changed: comments and formatting elsewhere in both files stay (a changed element, or the routes list when a route changed, is rewritten as a whole). If a write still fails, the message says which file was saved. A `config.json` that is a symbolic link is refused rather than replaced; edit the file it points to. If `settings.json` is not valid JSON, **General** is disabled and **Open settings.json** opens it for repair; Save then writes only the configuration. Choosing **Settings…** while the window is open brings it forward with your edits intact.
+
+## Updates
+
+**Check for updates** asks PyPI for the newest SkillSinc release. When one is newer, the entry becomes **Install SkillSinc X.Y.Z**, and choosing it installs exactly that version. With `updates.check` on (the default), the tray also checks a minute after it starts and then daily, and announces a new release. With `updates.install` on as well, it installs the release without asking.
+
+Installing depends on how SkillSinc was installed:
+
+| Installed with                                    | Upgrade command                                     |
+| ------------------------------------------------- | --------------------------------------------------- |
+| `uv tool install`                                 | `uv tool upgrade skillsinc`                         |
+| `pipx install`                                    | `pipx upgrade skillsinc`                            |
+| pip, in a virtual environment                     | `python -m pip install --upgrade "skillsinc[tray]"` |
+| a working copy, a venv without pip, system Python | none: the tray says how to upgrade it yourself      |
+
+An install waits until the running sync and any queued syncs finish, and until the Settings window closes. If you turn off automatic installs while one waits, it is dropped. The tray then starts a small helper and exits, because Windows cannot replace a running program's files. The helper:
+
+1. waits for the tray to exit;
+2. runs the upgrade, appending its output to `update.log` in the state directory;
+3. records the outcome in `update-result.json`;
+4. starts the tray again.
+
+On the next start the tray says whether the update worked. A failed update is reported once, with the reason and the log's path, and is not retried automatically for that release. **Install** in the menu still tries it again. See [decision 0027](../decisions/0027-automatic-update-installs.md).
 
 ## How syncs run
 

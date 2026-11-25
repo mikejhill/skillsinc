@@ -33,11 +33,14 @@ class AboutFacts:
     config: Path
     settings: Path
     state: Path
+    latest: str = "not checked yet"
+    """The newest release, as the last update check found it."""
 
     def rows(self) -> list[tuple[str, str]]:
         """Return label and value pairs, in display order."""
         return [
             ("Version", self.version),
+            ("Latest release", self.latest),
             ("Python", f"{platform.python_version()} ({sys.executable})"),
             ("Qt", f"PySide6 {PySide6.__version__}"),
             ("Configuration", str(self.config)),

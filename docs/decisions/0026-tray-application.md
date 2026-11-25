@@ -17,11 +17,14 @@ Mike wants SkillSinc to be able to schedule itself: a tray icon with a menu (syn
 - **Start at sign-in** is a `Run` value (Windows) or an XDG autostart entry (Linux) that `startup.launch_at_login` reconciles on start and on every settings change.
 - **Settings are files the window edits.** The tray watches `settings.json` and applies edits at once, keeping the previous settings when an edit is invalid. The settings window edits `settings.json` and each element of `config.json` through forms; Save validates the configuration with `ConfigLoader` (which now also takes candidate text) and splices only changed values into both files, refusing if either changed on disk since it was opened. Forms cover each element's common keys and keep the rest, rather than a generic JSON editor, so the common edits need no knowledge of the schema.
 
+- **Updates come from PyPI.** The tray reads PyPI's JSON API on a worker thread (a minute after start, daily, and on demand). Installing is [decision 0027](0027-automatic-update-installs.md).
+
 ## Alternatives considered
 
 - **Run syncs in a thread of the tray.** Faster to start, but a sync's logging, signal handling, and failures would share the tray's process, and the result would differ from a command-line sync.
 - **Tkinter or a web UI.** Tkinter has no tray icon; a local web UI needs a browser and a server, and still no tray icon.
 - **A raw JSON editor for `config.json`.** Exact, but it gives no help with the schema, and "Open configuration file" already offers it.
+- **Upgrade in place from the tray process.** Works on POSIX, but on Windows pip or uv cannot replace the tray's own files while it runs.
 - **The full PySide6 package.** It adds several hundred megabytes of modules the tray never uses.
 
 ## Consequences

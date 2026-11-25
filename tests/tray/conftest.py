@@ -20,12 +20,56 @@ from tests.conftest import Builder, Sandbox
 from skillsinc.history import SyncHistory, SyncRecord
 from skillsinc.jsonc import Jsonc
 from skillsinc.paths import Environment
+from skillsinc.selfupdate import Installation, ReleaseFeed
 from skillsinc.tray.controller import Notice, TrayController
 from skillsinc.tray.runner import SyncRunner
 from skillsinc.tray.startup import LoginItem
+from skillsinc.tray.updater import Updater
+from skillsinc.upgrades import current_version
 from skillsinc.usersettings import ScheduleOptions, SettingsStore, UserSettings
 
 SYNC_TIMEOUT_MS = 30_000
+UV = Installation("uv", ("/bin/uv", "tool", "upgrade", "skillsinc"))
+
+
+def feed_of(version: str | Exception) -> ReleaseFeed:
+    """Return a feed whose newest release is ``version``, or that fails."""
+
+    def fetch(_url: str) -> bytes:
+        if isinstance(version, Exception):
+            raise version
+        return json.dumps({"info": {"version": version}}).encode()
+
+    return ReleaseFeed(fetch)
+
+
+@dataclass
+class Launches:
+    """A launcher that records what it was asked to start."""
+
+    started: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+    succeeds: bool = True
+
+    def __call__(self, program: str, arguments: object) -> bool:
+        """Record the launch; return whether it "started"."""
+        self.started.append((program, tuple(arguments)))  # ty: ignore[invalid-argument-type]
+        return self.succeeds
+
+
+def make_updater(
+    folder: Path,
+    latest: str | Exception | None = None,
+    installation: Installation = UV,
+    launches: Launches | None = None,
+) -> Updater:
+    """Return an updater with no network: PyPI answers ``latest``."""
+    return Updater(
+        folder,
+        ["/py/python", "-m", "skillsinc", "tray"],
+        feed=feed_of(current_version() if latest is None else latest),
+        installation=lambda: installation,
+        launcher=launches or Launches(),
+    )
 
 
 def child_environment(environment: Environment) -> dict[str, str]:
@@ -178,6 +222,7 @@ def make_tray(  # noqa: PLR0913 - every collaborator a test may replace
     login_item: LoginItem | None = None,
     opens: bool = True,
     save: bool = True,
+    updater: Updater | None = None,
 ) -> Tray:
     """Return a tray over ``sandbox`` with ``settings`` saved first.
 
@@ -210,6 +255,7 @@ def make_tray(  # noqa: PLR0913 - every collaborator a test may replace
         login_item=login_item
         or LoginItem(sandbox.environment, ["skillsinc-tray"], FakeRunKey()),
         quit_application=lambda: quits.append(True),
+        updater=updater or make_updater(sandbox.environment.state_directory),
     )
     tray = Tray(controller, sandbox, qtbot, opened, [], quits)
     controller.notified.connect(tray.notices.append)
