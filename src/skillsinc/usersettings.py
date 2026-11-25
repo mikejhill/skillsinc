@@ -12,7 +12,9 @@ changed, so comments and formatting stay.
 
 from __future__ import annotations
 
+import enum
 import json
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -237,6 +239,53 @@ class _Reader:
         raise SettingsFileError(f"settings: {self._name(key)} {problem}")
 
 
+class Unset(enum.Enum):
+    """The type of ``UNSET``: no expected content was given."""
+
+    UNSET = enum.auto()
+
+
+UNSET: Final = Unset.UNSET
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsWrite:
+    """A checked ``settings.json`` write, committed after every check passed."""
+
+    path: Path
+    content: str | None
+    """The new text; None when nothing changed."""
+    before: os.stat_result | None
+    original: bytes | None
+
+    def commit(self) -> bool:
+        """Write the new text and refresh the schema copy; True if written.
+
+        Raises:
+            SettingsFileError: If the file changed since it was read.
+            OSError: If it cannot be written.
+        """
+        SettingsSchema.refresh(self.path)
+        if self.content is None:
+            return False
+        write_atomically(
+            self.path, self.content, mode_from=self.before, check=self._unchanged
+        )
+        return True
+
+    def _unchanged(self) -> None:
+        """Refuse if the file was created or edited since it was read."""
+        exists = self.path.exists()
+        edited = (
+            exists
+            if self.original is None
+            else (not exists or self.path.read_bytes() != self.original)
+        )
+        if edited:
+            msg = f"settings: {self.path} changed while saving; not overwritten"
+            raise SettingsFileError(msg)
+
+
 class SettingsStore:
     """Load and save ``settings.json``, keeping its comments and layout."""
 
@@ -290,6 +339,16 @@ class SettingsStore:
             raise SettingsFileError(msg)
         return SettingsStore._settings(_Reader(data, ""))
 
+    def snapshot(self) -> bytes | None:
+        """Return the file's bytes now, or None if there is no file.
+
+        Raises:
+            SettingsFileError: If it exists but cannot be read.
+        """
+        if not self._path.exists():
+            return None
+        return self._read().encode("utf-8")
+
     def save(self, settings: UserSettings) -> bool:
         """Write ``settings``, changing only values that differ; True if written.
 
@@ -300,9 +359,20 @@ class SettingsStore:
             SettingsFileError: If the existing file is unreadable or not an object.
             OSError: If the file cannot be written.
         """
+        return self.plan(settings).commit()
+
+    def plan(
+        self, settings: UserSettings, expected: bytes | Unset | None = UNSET
+    ) -> SettingsWrite:
+        """Prepare writing ``settings``; ``expected`` is the content it was read as.
+
+        Raises:
+            SettingsFileError: If the file is unreadable, not an object, or not
+                ``expected`` (None: no file).
+        """
         values = settings.to_json()
         before = self._path.stat() if self._path.exists() else None
-        original = b""
+        original: bytes | None = None
         if before is not None:
             raw = self._read()
             original = raw.encode("utf-8")
@@ -314,6 +384,9 @@ class SettingsStore:
             bom = ""
             reference = SettingsSchema.local_reference()
             text = json.dumps({"$schema": reference}, indent=2) + "\n"
+        if not isinstance(expected, Unset) and expected != original:
+            msg = f"settings: {self._path} changed since it was read; reopen settings"
+            raise SettingsFileError(msg)
         updated = text
         try:
             for path, value in _leaves(values):
@@ -324,24 +397,8 @@ class SettingsStore:
         if self.parse(updated) != settings:  # pragma: no cover - guard
             msg = "settings: saving would not round-trip"
             raise SettingsFileError(msg)
-        SettingsSchema.refresh(self._path)
-        if updated == text and before is not None:
-            return False
-
-        def unchanged() -> None:
-            """Refuse if the file was created or edited since it was read."""
-            exists = self._path.exists()
-            edited = (
-                exists
-                if before is None
-                else (not exists or self._path.read_bytes() != original)
-            )
-            if edited:
-                msg = f"settings: {self._path} changed while saving; not overwritten"
-                raise SettingsFileError(msg)
-
-        write_atomically(self._path, bom + updated, mode_from=before, check=unchanged)
-        return True
+        content = None if updated == text and before is not None else bom + updated
+        return SettingsWrite(self._path, content, before, original)
 
     def _read(self) -> str:
         try:

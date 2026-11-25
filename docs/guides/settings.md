@@ -2,7 +2,7 @@
 
 `config.json` says what to sync. `settings.json`, in the same folder (`$XDG_CONFIG_HOME/skillsinc/settings.json`, usually `~/.config/skillsinc/settings.json`), says how SkillSinc behaves on this machine when it runs as its own scheduler. Keep `config.json` shared between machines and `settings.json` local to each.
 
-The file is optional: without it every setting takes its default. It is JSONC like `config.json`, and SkillSinc keeps `settings.schema.json` beside it so editors complete and validate it. When SkillSinc saves the file it changes only the values that changed, so your comments stay.
+The tray's [settings window](tray.md#settings-window) edits this file for you. The file is optional: without it every setting takes its default. It is JSONC like `config.json`, and SkillSinc keeps `settings.schema.json` beside it so editors complete and validate it. When SkillSinc saves the file it changes only the values that changed, so your comments stay.
 
 ```jsonc
 {

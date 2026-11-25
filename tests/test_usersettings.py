@@ -422,3 +422,8 @@ class TestJsoncSetPath:
         """There is no member at the root."""
         with pytest.raises(ValueError, match="non-empty path"):
             Jsonc.set_path("{}", [], 1)
+
+
+def test_snapshot_of_a_missing_file_is_none(tmp_path: Path) -> None:
+    """With no settings.json there is nothing to compare against."""
+    assert SettingsStore(tmp_path / "settings.json").snapshot() is None
