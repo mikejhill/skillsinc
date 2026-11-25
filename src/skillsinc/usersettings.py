@@ -151,7 +151,8 @@ class UserSettings:
         """Return the configuration file these settings sync."""
         if self.config is None:
             return environment.default_config_file
-        return environment.expand(str(self.config), environment.config_home)
+        base = environment.default_config_file.parent
+        return environment.expand(str(self.config), base)
 
 
 class _Reader:
@@ -164,7 +165,7 @@ class _Reader:
 
     def section(self, key: str) -> _Reader:
         """Return a reader for the object at ``key`` (empty when absent)."""
-        value = self._take(key)
+        value = self._take(key, nullable=False)
         if value is None:
             return _Reader({}, self._name(key))
         if not isinstance(value, dict):
@@ -173,7 +174,7 @@ class _Reader:
 
     def boolean(self, key: str, *, default: bool) -> bool:
         """Return the boolean at ``key``, else ``default``."""
-        value = self._take(key)
+        value = self._take(key, nullable=False)
         if value is None:
             return default
         if not isinstance(value, bool):
@@ -182,7 +183,7 @@ class _Reader:
 
     def integer(self, key: str, default: int) -> int:
         """Return the integer at ``key``, else ``default``."""
-        value = self._take(key)
+        value = self._take(key, nullable=False)
         if value is None:
             return default
         if isinstance(value, bool) or not isinstance(value, int):
@@ -222,8 +223,11 @@ class _Reader:
         """Raise a precise error about ``key``."""
         self._fail(key, problem)
 
-    def _take(self, key: str) -> JsonValue | None:
+    def _take(self, key: str, *, nullable: bool = True) -> JsonValue | None:
+        """Return the value at ``key``, None when absent (or null, if allowed)."""
         self._seen.add(key)
+        if key in self._data and self._data[key] is None and not nullable:
+            self._fail(key, "must not be null")
         return self._data.get(key)
 
     def _name(self, key: str) -> str:
@@ -278,7 +282,7 @@ class SettingsStore:
         try:
             plain = Jsonc.blank_trailing_commas(Jsonc.blank_comments(text))
             data: object = json.loads(plain) if plain.strip() else {}
-        except ValueError as err:
+        except (ValueError, RecursionError) as err:
             msg = f"settings: not valid JSON ({err})"
             raise SettingsFileError(msg) from err
         if not isinstance(data, dict):
@@ -297,8 +301,11 @@ class SettingsStore:
             OSError: If the file cannot be written.
         """
         values = settings.to_json()
-        if self._path.exists():
+        before = self._path.stat() if self._path.exists() else None
+        original = b""
+        if before is not None:
             raw = self._read()
+            original = raw.encode("utf-8")
             bom = BOM if raw.startswith(BOM) else ""
             text = raw.removeprefix(BOM)
             if not text.strip():
@@ -318,9 +325,22 @@ class SettingsStore:
             msg = "settings: saving would not round-trip"
             raise SettingsFileError(msg)
         SettingsSchema.refresh(self._path)
-        if updated == text and self._path.exists():
+        if updated == text and before is not None:
             return False
-        write_atomically(self._path, bom + updated)
+
+        def unchanged() -> None:
+            """Refuse if the file was created or edited since it was read."""
+            exists = self._path.exists()
+            edited = (
+                exists
+                if before is None
+                else (not exists or self._path.read_bytes() != original)
+            )
+            if edited:
+                msg = f"settings: {self._path} changed while saving; not overwritten"
+                raise SettingsFileError(msg)
+
+        write_atomically(self._path, bom + updated, mode_from=before, check=unchanged)
         return True
 
     def _read(self) -> str:
@@ -375,7 +395,7 @@ class SettingsStore:
                     keep=history.integer("keep", DEFAULT_HISTORY_KEEP)
                 ),
             )
-        except ValueError as err:
+        except (ValueError, OverflowError) as err:
             msg = f"settings: {err}"
             raise SettingsFileError(msg) from err
         for reader in (root, schedule, notifications, updates, startup, history):

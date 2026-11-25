@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import stat
+import sys
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -100,7 +102,7 @@ class TestParse:
 
         assert settings.schedule.profiles is None
 
-    def test_config_path_resolves_against_the_config_folder(
+    def test_config_path_resolves_beside_settings_json(
         self, environment: Environment
     ) -> None:
         """A relative ``config`` is beside settings.json; ``~`` is the home."""
@@ -108,7 +110,7 @@ class TestParse:
         home = SettingsStore.parse('{"config": "~/skillsinc.json"}')
 
         assert relative.config_file(environment) == (
-            environment.config_home / "work" / "config.json"
+            environment.default_config_file.parent / "work" / "config.json"
         )
         assert home.config_file(environment) == environment.home / "skillsinc.json"
         assert UserSettings().config_file(environment) == (
@@ -135,6 +137,11 @@ class TestParse:
             ('{"history": {"keep": "all"}}', "history.keep must be a whole number"),
             ('{"history": {"keep": true}}', "history.keep must be a whole number"),
             ('{"config": ""}', "config must be a non-empty string"),
+            ('{"schedule": {"enabled": null}}', "schedule.enabled must not be null"),
+            ('{"history": {"keep": null}}', "history.keep must not be null"),
+            ('{"schedule": null}', "schedule must not be null"),
+            ('{"schedule": {"interval": "1000000000d"}}', "settings:"),
+            pytest.param("[" * 100_000 + "]" * 100_000, "not valid JSON", id="nested"),
         ],
     )
     def test_invalid_values_name_the_key(self, text: str, message: str) -> None:
@@ -239,6 +246,50 @@ class TestSave:
         with pytest.raises(SettingsFileError, match="not a JSON object"):
             SettingsStore(path).save(UserSettings())
         assert path.read_text(encoding="utf-8") == "[1, 2]", "Expected file kept"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+    def test_save_keeps_the_file_permissions(self, tmp_path: Path) -> None:
+        """A private settings file stays private after a save."""
+        path = tmp_path / "settings.json"
+        path.write_text("{}", encoding="utf-8")
+        path.chmod(0o600)
+
+        SettingsStore(path).save(UserSettings())
+
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_concurrent_edit_is_not_overwritten(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An editor's save between read and replace wins; the save refuses."""
+        path = tmp_path / "settings.json"
+        path.write_text("{}", encoding="utf-8")
+
+        def edit(_target: Path) -> bool:
+            path.write_text('{"version": 1}', encoding="utf-8")
+            return False
+
+        monkeypatch.setattr(SettingsSchema, "refresh", edit)
+
+        with pytest.raises(SettingsFileError, match="changed while saving"):
+            SettingsStore(path).save(UserSettings())
+        assert path.read_text(encoding="utf-8") == '{"version": 1}'
+
+    def test_file_created_meanwhile_is_not_overwritten(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file that appears during a first save is left alone."""
+        path = tmp_path / "settings.json"
+
+        def create(_target: Path) -> bool:
+            path.write_text("{}", encoding="utf-8")
+            return False
+
+        monkeypatch.setattr(SettingsSchema, "refresh", create)
+
+        with pytest.raises(SettingsFileError, match="changed while saving"):
+            SettingsStore(path).save(UserSettings())
+        assert path.read_text(encoding="utf-8") == "{}"
 
     def test_store_lives_beside_the_user_configuration(
         self, environment: Environment

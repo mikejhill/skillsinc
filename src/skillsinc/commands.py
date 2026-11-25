@@ -15,7 +15,7 @@ from skillsinc.exceptions import AppError, ConfigurationError
 from skillsinc.history import SyncHistory, SyncRecord, SyncRecorder
 from skillsinc.lock import StateLock
 from skillsinc.manifest import ManifestStore
-from skillsinc.paths import Environment, absolute
+from skillsinc.paths import PROJECT_CONFIG, Environment, absolute
 from skillsinc.planner import Planner
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.remote import RemoteCache
@@ -224,15 +224,12 @@ class PlanCommand:
             maintained = maintenance.apply(config.path)
             recorder.applied(
                 plan,
+                results,
+                ok=plan.ok and all(result.error is None for result in results),
                 profiles=selection.active
                 if selection.origin is not Origin.NONE
                 else None,
-                errors=[
-                    f"{result.name}: {result.error}"
-                    for result in results
-                    if result.error is not None
-                ],
-                warnings=maintained.warnings,
+                warnings=[*selection.warnings, *maintained.warnings],
             )
         if settings.json_output:
             out.write(
@@ -346,26 +343,36 @@ class HistoryCommand:
         """Return the newest records of syncs of ``config``.
 
         A project's runs are in its own state directory; failures that came
-        before its configuration loaded are in the user's.
+        before its configuration loaded are in the user's. Each directory is
+        read newest first and only until ``limit`` matches are found.
         """
-        target = absolute(config)
+        target = str(absolute(config))
         directories = [self._environment.state_directory]
-        project = self._environment.state_directory
-        try:
-            loaded = ConfigLoader(ProfileRegistry(), self._environment).load(config)
-            project = loaded.state_directory(self._environment)
-        except AppError:
-            logger.debug("Reading history without a loadable configuration")
-        if project not in directories:
+        project = self._project_state(config)
+        if project is not None and project not in directories:
             directories.append(project)
         found = [
             record
             for directory in directories
-            for record in SyncHistory(directory, keep=DEFAULT_HISTORY_KEEP).records()
-            if absolute(Path(record.config)) == target
+            for record in SyncHistory(directory, keep=DEFAULT_HISTORY_KEEP).records(
+                limit, accept=lambda data: data.get("config") == target
+            )
         ]
         found.sort(key=lambda record: record.started, reverse=True)
         return found[:limit]
+
+    def _project_state(self, config: Path) -> Path | None:
+        """Return the state directory of a project ``config``, even if broken."""
+        try:
+            loaded = ConfigLoader(ProfileRegistry(), self._environment).load(config)
+        except AppError:
+            parent = absolute(config).parent
+            if parent.parts[-len(PROJECT_CONFIG.parts) :] == PROJECT_CONFIG.parts and (
+                not self._environment.is_user_config(config)
+            ):
+                return parent / "state"
+            return None
+        return loaded.state_directory(self._environment)
 
 
 class HarnessesCommand:

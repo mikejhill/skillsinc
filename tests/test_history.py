@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import stat
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from tests.conftest import Builder, Sandbox
 
 from skillsinc.__main__ import Application
+from skillsinc.applier import DestinationResult
 from skillsinc.config import DestinationConfig
 from skillsinc.history import (
+    COUNT_FILE,
     HISTORY_FILE,
+    LOCK_FILE,
     MAXIMUM_CHANGES,
     ChangeRecord,
     SyncHistory,
@@ -124,56 +131,82 @@ class TestOfPlan:
             errors=errors,
         )
 
-    def test_blocked_destinations_and_errors(self) -> None:
-        """Blocked changes are not counted; source and destination errors fail it."""
-        plan = Plan(
-            (
-                self._destination("good", 3),
-                self._destination("bad", 5, errors=("edited",)),
-            ),
-            {"library": "unreadable"},
-            source_warnings={"remote": "stale"},
-        )
-
-        record = SyncRecord.of_plan(
+    @staticmethod
+    def _of(
+        plan: Plan, results: tuple[DestinationResult, ...], *, ok: bool
+    ) -> SyncRecord:
+        return SyncRecord.of_plan(
             plan,
+            results,
+            ok=ok,
             started=START,
             finished=START,
             trigger=Trigger.TRAY,
             config=Path("c.json"),
             profiles=None,
             version="1",
-            errors=["good: disk full"],
         )
 
-        assert record.counts == {"create": 3}
+    def test_only_applied_changes_are_counted(self) -> None:
+        """A failed step stops the count; a destination not applied counts nothing."""
+        plan = Plan(
+            (
+                self._destination("good", 3),
+                self._destination("partial", 5),
+                self._destination("dependent", 4),
+                self._destination("bad", 5, errors=("edited",)),
+            ),
+            {"library": "unreadable"},
+        )
+        results = (
+            DestinationResult("good", 3),
+            DestinationResult("partial", 2, "f2: disk full"),
+            DestinationResult("dependent", 0, "not applied: partial failed"),
+        )
+
+        record = self._of(plan, results, ok=False)
+
+        assert record.counts == {"create": 5}, f"Got {record.counts}"
+        assert [c.destination for c in record.changes] == ["good"] * 3 + ["partial"] * 2
         assert record.errors == (
             "library: unreadable",
             "bad: edited",
-            "good: disk full",
+            "partial: f2: disk full",
+            "dependent: not applied: partial failed",
         )
-        assert (record.ok, record.warnings, record.destinations) == (False, 1, 2)
+        assert (record.ok, record.destinations) == (False, 4)
+
+    def test_stale_remote_fails_with_its_reason(self) -> None:
+        """A refresh failure served from cache fails the run, and says why."""
+        plan = Plan(
+            (self._destination("d", 1),), {}, source_warnings={"remote": "stale"}
+        )
+
+        record = self._of(plan, (DestinationResult("d", 1),), ok=False)
+
+        assert (record.ok, record.errors, record.warnings) == (
+            False,
+            ("remote: stale",),
+            1,
+        )
+        assert record.summary() == "remote: stale"
+
+    def test_failed_verdict_without_a_reason_still_has_one(self) -> None:
+        """A failed run always names some reason."""
+        record = self._of(Plan((), {}), (), ok=False)
+
+        assert record.errors == ("the sync did not succeed",)
 
     def test_changes_are_capped(self) -> None:
         """Only the first MAXIMUM_CHANGES changes are kept, and that is flagged."""
-        plan = Plan(
-            (self._destination("big", MAXIMUM_CHANGES + 5),),
-            {},
-        )
+        count = MAXIMUM_CHANGES + 5
+        plan = Plan((self._destination("big", count),), {})
 
-        record = SyncRecord.of_plan(
-            plan,
-            started=START,
-            finished=START,
-            trigger=Trigger.MANUAL,
-            config=Path("c.json"),
-            profiles=("a",),
-            version="1",
-        )
+        record = self._of(plan, (DestinationResult("big", count),), ok=True)
 
         assert len(record.changes) == MAXIMUM_CHANGES
         assert record.truncated is True
-        assert record.counts == {"create": MAXIMUM_CHANGES + 5}
+        assert record.counts == {"create": count}
         assert record.ok is True
 
 
@@ -192,11 +225,12 @@ class TestRecorder:
             clock=lambda: START,
         )
         recorder.locate(tmp_path / "project")
-        recorder.applied(Plan((), {}), profiles=None)
+        recorder.applied(Plan((), {}), (), ok=True, profiles=None)
 
         assert recorder.failed("late") is None
         records = SyncHistory(tmp_path / "project", keep=10).records()
         assert [record.ok for record in records] == [True]
+        assert records[0].config == str(Path("c.json").absolute()), "Expected absolute"
         assert SyncHistory(tmp_path / "user", keep=10).records() == []
 
 
@@ -243,6 +277,141 @@ class TestStore:
 
         assert len(lines) == 10, f"Expected 10 kept, got {len(lines)}"
         assert history.records()[-1].id == "id11"
+
+    def test_trim_uses_the_count_and_recounts_when_it_is_lost(
+        self, tmp_path: Path
+    ) -> None:
+        """The count file decides trims; a missing count is rebuilt from the file."""
+        history = SyncHistory(tmp_path, keep=10)
+        for index in range(15):
+            history.append(_record(index))
+        counter = tmp_path / COUNT_FILE
+        assert counter.read_text(encoding="ascii").strip() == "15"
+        counter.unlink()
+
+        for index in range(15, 21):
+            history.append(_record(index))
+
+        assert len(history.records()) == 10
+        assert counter.read_text(encoding="ascii").strip() == "10"
+
+    def test_busy_history_appends_without_trimming(self, tmp_path: Path) -> None:
+        """A held history lock delays nothing for long and drops no record."""
+        history = SyncHistory(tmp_path, keep=10)
+        (tmp_path / LOCK_FILE).write_text("", encoding="ascii")
+
+        with patch("skillsinc.history.LOCK_WAIT_SECONDS", 0.05):
+            history.append(_record(1))
+
+        assert [record.id for record in history.records()] == ["id1"]
+        assert not (tmp_path / COUNT_FILE).exists(), "Expected no trim bookkeeping"
+
+    def test_stale_history_lock_is_reclaimed(self, tmp_path: Path) -> None:
+        """A lock left by a crash is taken over."""
+        history = SyncHistory(tmp_path, keep=10)
+        lock = tmp_path / LOCK_FILE
+        lock.write_text("", encoding="ascii")
+        os.utime(lock, (0, 0))
+
+        history.append(_record(1))
+
+        assert not lock.exists()
+        assert (tmp_path / COUNT_FILE).exists()
+
+    def test_torn_last_line_does_not_swallow_the_next_record(
+        self, tmp_path: Path
+    ) -> None:
+        """A record cut off by a crash is skipped; the next one survives."""
+        history = SyncHistory(tmp_path, keep=10)
+        history.append(_record(0))
+        with history.path.open("a", encoding="utf-8") as file:
+            file.write('{"id": "torn", "sta')
+
+        history.append(_record(1))
+
+        assert [record.id for record in history.records()] == ["id1", "id0"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX links and FIFOs")
+    def test_link_at_the_history_path_is_left_alone(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A symlink is neither followed nor written through."""
+        target = tmp_path / "elsewhere.txt"
+        target.write_text("keep\n", encoding="utf-8")
+        history = SyncHistory(tmp_path / "state", keep=10)
+        history.path.parent.mkdir()
+        history.path.symlink_to(target)
+
+        history.append(_record())
+
+        assert target.read_text(encoding="utf-8") == "keep\n"
+        assert history.records() == []
+        assert "not a regular file" in caplog.text
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFOs")
+    def test_fifo_at_the_history_path_never_blocks(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A FIFO is refused at once instead of waiting for a reader."""
+        history = SyncHistory(tmp_path, keep=10)
+        os.mkfifo(history.path)
+
+        history.append(_record())
+
+        assert history.records() == []
+        assert "not a regular file" in caplog.text
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFOs")
+    def test_special_file_swapped_in_after_the_check_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The opened file is checked again, so a race cannot slip a FIFO in."""
+        history = SyncHistory(tmp_path, keep=10)
+        os.mkfifo(history.path)
+        monkeypatch.setattr(SyncHistory, "_regular", lambda _self: True)
+
+        history.append(_record())
+
+        assert stat.S_ISFIFO(history.path.lstat().st_mode)
+
+    def test_undecodable_path_characters_are_written(self, tmp_path: Path) -> None:
+        """Surrogate escapes from odd filenames round-trip instead of crashing."""
+        history = SyncHistory(tmp_path, keep=10)
+        odd = "skills/\udcff/SKILL.md"
+
+        history.append(_record(changes=(ChangeRecord("d", "create", odd),)))
+
+        assert history.records()[0].changes[0].path == odd
+
+    def test_naive_timestamps_are_skipped(self, tmp_path: Path) -> None:
+        """A hand-edited line without a UTC offset is skipped, not fatal."""
+        history = SyncHistory(tmp_path, keep=10)
+        history.append(_record(0))
+        naive = _record(1).to_json()
+        naive["started"] = "2026-11-25T12:00:00"
+        with history.path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(naive) + "\n")
+
+        assert [record.id for record in history.records()] == ["id0"]
+
+    def test_accept_filters_before_the_limit(self, tmp_path: Path) -> None:
+        """Only admitted records count toward the limit."""
+        history = SyncHistory(tmp_path, keep=100)
+        for index in range(6):
+            history.append(_record(index, config=f"/c/{index % 2}.json"))
+
+        found = history.records(2, accept=lambda data: data["config"] == "/c/0.json")
+
+        assert [record.id for record in found] == ["id4", "id2"]
+
+    def test_long_lines_span_read_blocks(self, tmp_path: Path) -> None:
+        """Lines longer than a read block are read back whole."""
+        history = SyncHistory(tmp_path, keep=10)
+        big = tuple(ChangeRecord("d", "create", "x" * 500) for _ in range(200))
+        history.append(_record(0, changes=big))
+        history.append(_record(1))
+
+        assert [len(record.changes) for record in history.records()] == [0, 200]
 
     def test_clear_removes_every_record(self, tmp_path: Path) -> None:
         """Clearing deletes the file."""
@@ -355,6 +524,26 @@ class TestSyncRecordsHistory:
         assert status == 0, output
         assert _history(sandbox.environment)[0].profiles == ("work",)
 
+    def test_profile_warnings_are_counted(self, sandbox: Sandbox) -> None:
+        """A SKILLSINC_PROFILES name this config lacks is a recorded warning."""
+        Builder.write_config(
+            sandbox.config_path, sandbox.library, (("target", "generic", sandbox.root),)
+        )
+        text = sandbox.config_path.read_text(encoding="utf-8")
+        data = json.loads(Jsonc.blank_trailing_commas(Jsonc.blank_comments(text)))
+        data["profiles"] = {"work": {}}
+        sandbox.config_path.write_text(json.dumps(data), encoding="utf-8")
+        variables = {
+            **sandbox.environment.variables,
+            "SKILLSINC_PROFILES": "work,ghost",
+        }
+        sandbox.environment = replace(sandbox.environment, variables=variables)
+
+        status, output = sandbox.run("sync")
+
+        assert status == 0, output
+        assert _history(sandbox.environment)[0].warnings == 1
+
     def test_history_size_follows_settings(self, sandbox: Sandbox) -> None:
         """``history.keep`` in settings.json bounds the file."""
         sandbox.configure()
@@ -465,6 +654,41 @@ class TestHistoryCommand:
 
         configs = {run["config"] for run in json.loads(output)["runs"]}
         assert configs == {str(sandbox.config_path)}, f"Got {configs}"
+
+    def test_relative_config_is_stored_absolute(
+        self, sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--config work.json`` is found again from any directory."""
+        work = sandbox.environment.home / "work.json"
+        Builder.write_config(work, sandbox.library, (("w", "generic", sandbox.root),))
+        monkeypatch.chdir(sandbox.environment.home)
+        sandbox.run("sync", "--config", "work.json")
+        monkeypatch.chdir(sandbox.library)
+
+        _, output = sandbox.run("history", "--json", "--config", str(work))
+
+        runs = json.loads(output)["runs"]
+        assert [run["config"] for run in runs] == [str(work)], output
+
+    def test_broken_project_config_keeps_its_history(self, sandbox: Sandbox) -> None:
+        """Earlier project runs stay listed after the project file breaks."""
+        project = sandbox.environment.home / "proj"
+        config = project / ".config" / "skillsinc" / "config.json"
+        Builder.write_config(
+            config, sandbox.library, (("t", "generic", project / "t"),)
+        )
+        text = config.read_text(encoding="utf-8")
+        config.write_text(
+            text.replace('"version": 1,', '"version": 1, "project": "../..",', 1),
+            encoding="utf-8",
+        )
+        assert sandbox.run("sync", "--config", str(config))[0] == 0
+        config.write_text("{ broken", encoding="utf-8")
+        sandbox.run("sync", "--config", str(config))
+
+        _, output = sandbox.run("history", "--json", "--config", str(config))
+
+        assert [run["ok"] for run in json.loads(output)["runs"]] == [False, True]
 
     def test_project_runs_are_read_from_the_project(self, sandbox: Sandbox) -> None:
         """A project's syncs live in its own state directory and are listed."""

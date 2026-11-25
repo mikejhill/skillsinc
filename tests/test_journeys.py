@@ -38,7 +38,7 @@ class TestSourceScanFailure:
             for root in (sandbox.root, other, sandbox.environment.state_directory)
             for path in root.rglob("*")
             # The history records the failed run too
-            if path.is_file() and path.name != "history.jsonl"
+            if path.is_file() and not path.name.startswith("history.")
         }
         unreadable = sandbox.library / "skills/sample/references"
         original = os.scandir

@@ -91,7 +91,7 @@ class DisableCase:
         return {
             path.relative_to(root).as_posix(): path.read_bytes()
             for path in root.rglob("*")
-            if path.is_file() and path.name != "history.jsonl"
+            if path.is_file() and not path.name.startswith("history.")
         }
 
 

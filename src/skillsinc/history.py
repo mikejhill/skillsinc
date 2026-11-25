@@ -11,18 +11,23 @@ that cannot be parsed (a crash mid-write, a hand edit) is skipped on read.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
 import secrets
-from collections.abc import Callable, Iterable, Mapping, Sequence
+import stat
+import time
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
+from skillsinc.applier import DestinationResult
 from skillsinc.models import JsonValue
+from skillsinc.paths import absolute
 from skillsinc.plan import Action, Plan
 from skillsinc.schema import write_atomically
 
@@ -35,8 +40,16 @@ MAXIMUM_CHANGES: Final = 200
 MAXIMUM_ERRORS: Final = 50
 # Trim the file once it holds this many times the records it should keep
 TRIM_FACTOR: Final = 2
-# No record line is shorter than this many bytes
-SMALLEST_RECORD: Final = 160
+COUNT_FILE: Final = "history.count"
+LOCK_FILE: Final = "history.lock"
+LOCK_WAIT_SECONDS: Final = 2.0
+LOCK_POLL_SECONDS: Final = 0.02
+LOCK_STALE_SECONDS: Final = 60.0
+READ_BLOCK: Final = 64 * 1024
+# Open the history without following a link, and never wait on a FIFO
+NO_FOLLOW: Final = getattr(os, "O_NOFOLLOW", 0)
+NON_BLOCKING: Final = getattr(os, "O_NONBLOCK", 0)
+BINARY: Final = getattr(os, "O_BINARY", 0)
 
 
 class Trigger(StrEnum):
@@ -115,34 +128,34 @@ class SyncRecord:
     def of_plan(  # noqa: PLR0913 - one record gathers every fact about a run
         cls,
         plan: Plan,
+        results: Sequence[DestinationResult],
         *,
+        ok: bool,
         started: datetime,
         finished: datetime,
         trigger: Trigger,
         config: Path,
         profiles: Sequence[str] | None,
         version: str,
-        errors: Iterable[str] = (),
         warnings: Iterable[str] = (),
     ) -> SyncRecord:
-        """Return the record of a sync that applied ``plan``."""
+        """Return the record of a sync that applied ``plan`` with ``results``.
+
+        Only applied changes are counted: each destination's result says how
+        many of its changes, in order, were completed. ``ok`` is the sync's
+        own verdict, so the record agrees with its exit status.
+        """
+        applied = {result.name: result.applied for result in results}
         counts = dict.fromkeys((action.value for action in Action), 0)
         changes: list[ChangeRecord] = []
         total = 0
         for destination in plan.destinations:
-            if destination.blocked:
-                continue
-            for change in destination.changes:
+            name = destination.destination.name
+            for change in destination.changes[: applied.get(name, 0)]:
                 counts[change.action.value] += 1
                 total += 1
                 if len(changes) < MAXIMUM_CHANGES:
-                    changes.append(
-                        ChangeRecord(
-                            destination.destination.name,
-                            change.action.value,
-                            change.path,
-                        )
-                    )
+                    changes.append(ChangeRecord(name, change.action.value, change.path))
         found = [
             *(f"{name}: {error}" for name, error in plan.source_errors.items()),
             *(
@@ -150,14 +163,24 @@ class SyncRecord:
                 for destination in plan.destinations
                 for error in destination.errors
             ),
-            *errors,
+            *(
+                f"{result.name}: {result.error}"
+                for result in results
+                if result.error is not None
+            ),
         ]
+        if not ok:
+            # A stale remote served from its cache fails the run without an error
+            found += [
+                f"{name}: {warning}" for name, warning in plan.source_warnings.items()
+            ]
+            found = found or ["the sync did not succeed"]
         return cls(
             id=cls.new_id(),
             started=started,
             finished=finished,
             trigger=trigger,
-            ok=not found,
+            ok=ok,
             config=str(config),
             profiles=tuple(profiles) if profiles is not None else None,
             version=version,
@@ -232,8 +255,8 @@ class SyncRecord:
                 raise TypeError  # noqa: TRY301 - same handling as a bad field
             return cls(
                 id=str(data["id"]),
-                started=datetime.fromisoformat(str(data["started"])),
-                finished=datetime.fromisoformat(str(data["finished"])),
+                started=_moment(data["started"]),
+                finished=_moment(data["finished"]),
                 trigger=Trigger(str(data["trigger"])),
                 ok=bool(data["ok"]),
                 config=str(data.get("config", "")),
@@ -259,13 +282,33 @@ class SyncRecord:
             raise ValueError(msg) from err
 
 
+def _moment(value: object) -> datetime:
+    """Return the timezone-aware moment ``value`` names.
+
+    Raises:
+        ValueError: If it is not an ISO timestamp with a UTC offset.
+    """
+    moment = datetime.fromisoformat(str(value))
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        msg = f"timestamp {value!r} has no UTC offset"
+        raise ValueError(msg)
+    return moment
+
+
 def _list(value: object) -> list[object]:
     """Return ``value``'s items if it is a list, else an empty list."""
     return list(value) if isinstance(value, list) else []
 
 
 class SyncHistory:
-    """The append-only ``history.jsonl`` in one state directory."""
+    """The append-only ``history.jsonl`` in one state directory.
+
+    Appends and trims hold ``history.lock``, which is separate from the sync
+    lock so a run refused by the sync lock can still record itself. A count
+    of lines in ``history.count`` decides when to trim without reading the
+    file. Only a regular file is ever opened: a link or special file at the
+    history's path is left alone and the run goes unrecorded.
+    """
 
     def __init__(self, state: Path, *, keep: int) -> None:
         self._path = state / HISTORY_FILE
@@ -277,31 +320,38 @@ class SyncHistory:
         return self._path
 
     def append(self, record: SyncRecord) -> None:
-        """Add ``record``; trim the oldest once the file is far over ``keep``.
+        """Add ``record``; trim to ``keep`` once the file holds twice that.
 
         A failure to write is logged, never raised: history must not fail a sync.
         """
-        line = json.dumps(record.to_json(), ensure_ascii=False, separators=(",", ":"))
+        # ASCII escapes keep undecodable path characters writable
+        line = json.dumps(record.to_json(), ensure_ascii=True, separators=(",", ":"))
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor = os.open(
-                self._path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644
-            )
-            with os.fdopen(descriptor, "a", encoding="utf-8", newline="\n") as file:
-                file.write(line + "\n")
-            self._trim()
+            with _HistoryLock(self._path.with_name(LOCK_FILE)) as locked:
+                self._write(line + "\n")
+                if locked:
+                    self._count_and_trim()
         except OSError as err:
             logger.warning("Could not record the sync in %s: %s", self._path, err)
 
-    def records(self, limit: int | None = None) -> list[SyncRecord]:
-        """Return up to ``limit`` records, newest first, skipping unreadable lines."""
+    def records(
+        self,
+        limit: int | None = None,
+        accept: Callable[[Mapping[str, object]], bool] | None = None,
+    ) -> list[SyncRecord]:
+        """Return up to ``limit`` records ``accept`` admits, newest first.
+
+        The file is read backwards in blocks, so the newest records cost the
+        same however long the history is. Unreadable lines are skipped.
+        """
         found: list[SyncRecord] = []
-        for line in reversed(self._lines()):
+        for line in self._reversed_lines():
             if limit is not None and len(found) >= limit:
                 break
             try:
                 data = json.loads(line)
-                if isinstance(data, dict):
+                if isinstance(data, dict) and (accept is None or accept(data)):
                     found.append(SyncRecord.from_json(data))
             except ValueError:
                 logger.debug("Skipping an unreadable history line in %s", self._path)
@@ -315,22 +365,112 @@ class SyncHistory:
     def clear(self) -> None:
         """Delete every record."""
         self._path.unlink(missing_ok=True)
+        self._path.with_name(COUNT_FILE).unlink(missing_ok=True)
 
-    def _lines(self) -> list[str]:
+    def _regular(self) -> bool:
+        """Return True if the history is absent or a regular, unlinked file."""
         try:
-            text = self._path.read_text(encoding="utf-8", errors="replace")
+            entry = self._path.lstat()
         except FileNotFoundError:
-            return []
-        return [line for line in text.splitlines() if line.strip()]
+            return True
+        return stat.S_ISREG(entry.st_mode)
 
-    def _trim(self) -> None:
-        # Skip reading the file while it is too small to hold that many records
-        if self._path.stat().st_size <= self._keep * TRIM_FACTOR * SMALLEST_RECORD:
+    def _write(self, text: str) -> None:
+        """Append ``text``, after a newline if a torn record ends the file."""
+        if not self._regular():
+            msg = "not a regular file; leaving it alone"
+            raise OSError(msg)
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | NO_FOLLOW | NON_BLOCKING | BINARY
+        descriptor = os.open(self._path, flags, 0o644)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                msg = "not a regular file; leaving it alone"
+                raise OSError(msg)
+            size = os.fstat(descriptor).st_size
+            if size:
+                os.lseek(descriptor, size - 1, os.SEEK_SET)
+            if size and os.read(descriptor, 1) != b"\n":
+                text = "\n" + text
+            os.write(descriptor, text.encode("ascii"))
+        finally:
+            os.close(descriptor)
+
+    def _count_and_trim(self) -> None:
+        counter = self._path.with_name(COUNT_FILE)
+        try:
+            count = int(counter.read_text(encoding="ascii").strip()) + 1
+        except (OSError, ValueError):
+            count = sum(1 for _ in self._reversed_lines())
+        if count > self._keep * TRIM_FACTOR:
+            newest = list(itertools.islice(self._reversed_lines(), self._keep))
+            write_atomically(self._path, "\n".join(reversed(newest)) + "\n")
+            count = len(newest)
+        write_atomically(counter, f"{count}\n")
+
+    def _reversed_lines(self) -> Iterator[str]:
+        """Yield the file's non-blank lines, last first, reading backwards."""
+        if not self._regular():
             return
-        lines = self._lines()
-        if len(lines) <= self._keep * TRIM_FACTOR:
+        try:
+            file = self._path.open("rb")
+        except FileNotFoundError:
             return
-        write_atomically(self._path, "\n".join(lines[-self._keep :]) + "\n")
+        with file:
+            position = file.seek(0, os.SEEK_END)
+            tail = b""
+            while position > 0:
+                step = min(READ_BLOCK, position)
+                position -= step
+                file.seek(position)
+                tail = file.read(step) + tail
+                pieces = tail.split(b"\n")
+                tail = pieces[0]
+                for piece in reversed(pieces[1:]):
+                    if piece.strip():
+                        yield piece.decode("utf-8", errors="replace")
+            if tail.strip():
+                yield tail.decode("utf-8", errors="replace")
+
+
+class _HistoryLock:
+    """A short-lived lock around one append, waited for briefly.
+
+    If it cannot be taken in time the record is still appended, but the file
+    is not trimmed, so no other writer's replacement can drop it.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._held = False
+
+    def __enter__(self) -> bool:
+        deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        while True:
+            try:
+                descriptor = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                if self._stale():
+                    self._path.unlink(missing_ok=True)
+                    continue
+                if time.monotonic() >= deadline:
+                    logger.warning("History is busy; recording without trimming")
+                    return False
+                time.sleep(LOCK_POLL_SECONDS)
+                continue
+            os.close(descriptor)
+            self._held = True
+            return True
+
+    def __exit__(self, *_exc: object) -> None:
+        if self._held:
+            self._path.unlink(missing_ok=True)
+            self._held = False
+
+    def _stale(self) -> bool:
+        try:
+            return time.time() - self._path.stat().st_mtime > LOCK_STALE_SECONDS
+        except FileNotFoundError:  # pragma: no cover - released meanwhile
+            return False
 
 
 class SyncRecorder:
@@ -350,7 +490,7 @@ class SyncRecorder:
         self._state = state
         self._keep = keep
         self._trigger = trigger
-        self._config = config
+        self._config = absolute(config)
         self._requested = tuple(requested) or None
         self._version = version
         self._clock = clock
@@ -364,21 +504,23 @@ class SyncRecorder:
     def applied(
         self,
         plan: Plan,
+        results: Sequence[DestinationResult],
         *,
+        ok: bool,
         profiles: Sequence[str] | None,
-        errors: Iterable[str] = (),
         warnings: Iterable[str] = (),
     ) -> SyncRecord:
         """Record a run that applied ``plan``; return the record."""
         record = SyncRecord.of_plan(
             plan,
+            results,
+            ok=ok,
             started=self._started,
             finished=self._clock(),
             trigger=self._trigger,
             config=self._config,
             profiles=profiles,
             version=self._version,
-            errors=errors,
             warnings=warnings,
         )
         self._append(record)

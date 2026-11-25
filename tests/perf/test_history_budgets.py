@@ -7,11 +7,13 @@ must still take an append and a newest-first read well within a second.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
+from skillsinc.commands import HistoryCommand
 from skillsinc.history import (
     MAXIMUM_CHANGES,
     ChangeRecord,
@@ -19,6 +21,7 @@ from skillsinc.history import (
     SyncRecord,
     Trigger,
 )
+from skillsinc.paths import Environment
 
 START: Final = datetime(2026, 11, 25, tzinfo=UTC)
 # Records in a history at its default size, each as detailed as a record gets
@@ -26,6 +29,8 @@ DEFAULT_KEEP: Final = 500
 # Seconds
 APPEND_BUDGET: Final = 0.25
 READ_NEWEST_BUDGET: Final = 1.0
+# 10,000 detailed records (about 140 MB) behind the newest one
+NEWEST_ONE_BUDGET: Final = 0.5
 
 
 def _record(index: int) -> SyncRecord:
@@ -77,3 +82,30 @@ def test_reading_the_newest_runs_fits_the_budget(tmp_path: Path) -> None:
 
     assert len(records) == 50
     assert elapsed < READ_NEWEST_BUDGET, f"Read took {elapsed:.3f}s"
+
+
+def test_history_command_newest_run_fits_the_budget(tmp_path: Path) -> None:
+    """``skillsinc history -n 1`` reads only the newest record of a full file."""
+    environment = Environment(
+        tmp_path / "home",
+        {
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        },
+        sys.platform,
+        tmp_path,
+    )
+    config = environment.default_config_file
+    state = environment.state_directory
+    state.mkdir(parents=True)
+    line = _record(0).to_json()
+    line["config"] = str(config)
+    text = json.dumps(line, separators=(",", ":")) + "\n"
+    (state / "history.jsonl").write_text(text * (DEFAULT_KEEP * 20), encoding="utf-8")
+
+    start = time.perf_counter()
+    records = HistoryCommand(environment).records(config, 1)
+    elapsed = time.perf_counter() - start
+
+    assert len(records) == 1
+    assert elapsed < NEWEST_ONE_BUDGET, f"history -n 1 took {elapsed:.3f}s"

@@ -20,7 +20,7 @@
       "type": ["string", "null"],
       "minLength": 1,
       "pattern": "\\S",
-      "description": "Configuration file the tray syncs. Relative paths and ~ resolve against the configuration folder. null: the user configuration."
+      "description": "Configuration file the tray syncs. Relative paths and ~ resolve against the folder holding settings.json. null: the user configuration."
     },
     "schedule": {
       "type": "object",
