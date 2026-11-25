@@ -10,18 +10,12 @@ from pathlib import Path
 import pytest
 from tests.conftest import Sandbox
 
+from skillsinc.conditions import Condition, host_name, system_name
 from skillsinc.config import ConfigLoader
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
-from skillsinc.selection import (
-    PROFILES_VARIABLE,
-    Condition,
-    Origin,
-    ProfileSelector,
-    host_name,
-    system_name,
-)
+from skillsinc.selection import PROFILES_VARIABLE, Origin, ProfileSelector
 
 pytestmark = pytest.mark.integration
 

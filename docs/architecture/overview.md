@@ -22,28 +22,28 @@ graph LR
 
 ## Modules
 
-| Module                        | Responsibility                                                          |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| `config`                      | Parse and validate `config.json` (JSONC) into frozen dataclasses        |
-| `selection`                   | Choose active sync profiles; narrow routes and destinations to them     |
-| `sources`                     | Read a library completely, expanding plugins, or raise `SourceError`    |
-| `remote`                      | Refresh Git sources into last-known-good cached checkouts               |
-| `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back           |
-| `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses     |
-| `planner`                     | Select items per route, render, apply loss policy, detect clashes       |
-| `diff`                        | Compare desired files and blocks with disk and the manifest             |
-| `blocks`                      | Find, replace, and remove the managed block in a Markdown file          |
-| `entries`                     | Strict JSON, JSONC, and TOML editing of keyed entries in a shared file  |
-| `jsonc`                       | Scan JSONC (config and `mcp.json`) and splice in-place edits            |
-| `manifest`                    | Load and atomically save per-destination ownership records              |
-| `applier`                     | Verify preconditions, write atomically, update the manifest             |
-| `lock`                        | Serialize overlapping `sync` runs                                       |
-| `report`                      | Text and versioned JSON output                                          |
-| `schema`                      | The bundled editor schema and the `$schema` insertion                   |
-| `upgrades`                    | Plan and apply one-time config upgrades and the local schema copy       |
-| `schedule`                    | Register `sync` with Task Scheduler, launchd, systemd, or cron          |
-| `process`                     | Flags that keep child processes from opening Windows console windows    |
-| `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                          |
+| Module                        | Responsibility                                                         |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `config`                      | Parse and validate `config.json` (JSONC) into frozen dataclasses       |
+| `conditions`, `selection`     | Define sync profiles; choose the active ones and narrow routes to them |
+| `sources`                     | Read a library completely, expanding plugins, or raise `SourceError`   |
+| `remote`                      | Refresh Git sources into last-known-good cached checkouts              |
+| `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back          |
+| `profiles/*`                  | Per-harness layout and conversion; return files, blocks, and losses    |
+| `planner`                     | Select items per route, render, apply loss policy, detect clashes      |
+| `diff`                        | Compare desired files and blocks with disk and the manifest            |
+| `blocks`                      | Find, replace, and remove the managed block in a Markdown file         |
+| `entries`                     | Strict JSON, JSONC, and TOML editing of keyed entries in a shared file |
+| `jsonc`                       | Scan JSONC (config and `mcp.json`) and splice in-place edits           |
+| `manifest`                    | Load and atomically save per-destination ownership records             |
+| `applier`                     | Verify preconditions, write atomically, update the manifest            |
+| `lock`                        | Serialize overlapping `sync` runs                                      |
+| `report`                      | Text and versioned JSON output                                         |
+| `schema`                      | The bundled editor schema and the `$schema` insertion                  |
+| `upgrades`                    | Plan and apply one-time config upgrades and the local schema copy      |
+| `schedule`                    | Register `sync` with Task Scheduler, launchd, systemd, or cron         |
+| `process`                     | Flags that keep child processes from opening Windows console windows   |
+| `cli`, `commands`, `__main__` | Argument parsing, command handlers, exit codes                         |
 
 ## Ownership
 

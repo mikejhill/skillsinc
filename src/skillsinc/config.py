@@ -12,6 +12,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Final, NoReturn
 
+from skillsinc.conditions import SYSTEMS, Condition, SyncProfile
 from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.jsonc import Jsonc
@@ -19,7 +20,6 @@ from skillsinc.models import Customization, Kind, valid_name
 from skillsinc.paths import PROJECT_CONFIG, PROJECT_STATE, Environment, absolute
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schedule import parse_interval
-from skillsinc.selection import SYSTEMS, Condition, SyncProfile
 
 CONFIG_VERSION: Final = 1
 DEFAULT_EXCLUDE: Final = (".*", "INTENT.md", "*.intent.md", "__pycache__", "*.pyc")
