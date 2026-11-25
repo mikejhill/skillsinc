@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +39,77 @@ def child_environment(environment: Environment) -> dict[str, str]:
     variables["HOME"] = str(environment.home)
     variables["USERPROFILE"] = str(environment.home)
     return variables
+
+
+SENDER = """
+import sys, time
+from PySide6.QtNetwork import QLocalSocket
+name, delay, pieces = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
+time.sleep(delay)
+socket = QLocalSocket()
+socket.connectToServer(name)
+if not socket.waitForConnected(5000):
+    sys.exit(1)
+for piece in pieces:
+    socket.write(piece.encode("utf-8"))
+    socket.flush()
+    socket.waitForBytesWritten(2000)
+    time.sleep(0.1)
+socket.waitForDisconnected(5000)
+"""
+FORWARDER = """
+import sys, time
+from skillsinc.tray.instance import SingleInstance
+time.sleep(float(sys.argv[2]))
+sys.exit(0 if SingleInstance(sys.argv[1]).forward(sys.argv[3:]) else 1)
+"""
+
+LISTENER = """
+import json, sys
+from PySide6.QtCore import QCoreApplication
+from skillsinc.tray.instance import SingleInstance
+application = QCoreApplication([])
+instance = SingleInstance(sys.argv[1])
+if not instance.listen():
+    sys.exit(1)
+def received(arguments):
+    print(json.dumps(arguments), flush=True)
+    application.quit()
+instance.message_received.connect(received)
+print("ready", flush=True)
+application.exec()
+instance.close()
+"""
+
+
+def listen_in_process(name: str) -> subprocess.Popen[str]:
+    """Start a listener on ``name`` in another process; return once it listens.
+
+    It prints the first message it receives as JSON, then exits.
+    """
+    listener = subprocess.Popen(  # noqa: S603 - argv is built by the test
+        [sys.executable, "-c", LISTENER, name],
+        stdout=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    assert listener.stdout is not None
+    assert listener.stdout.readline() == "ready\n"
+    return listener
+
+
+def send_from_process(
+    name: str, pieces: Sequence[str], *, delay: float = 0.0, raw: bool = False
+) -> subprocess.Popen[bytes]:
+    """Send to the tray socket ``name`` from another process, as a launch does.
+
+    ``raw`` writes ``pieces`` as they are; otherwise they are the arguments a
+    launch forwards. Another process, because a sender blocks in Qt calls that
+    hold the interpreter lock, which would stall a listener on this process.
+    """
+    script = SENDER if raw else FORWARDER
+    return subprocess.Popen(  # noqa: S603 - argv is built by the test
+        [sys.executable, "-c", script, name, str(delay), *pieces]
+    )
 
 
 def add_profiles(config: Path, profiles: dict[str, dict[str, object]]) -> None:

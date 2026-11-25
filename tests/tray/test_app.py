@@ -5,8 +5,6 @@ from __future__ import annotations
 import io
 import logging
 import sys
-import threading
-import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
@@ -18,13 +16,15 @@ from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 from pytestqt.qtbot import QtBot
 from tests.conftest import Sandbox
+from tests.tray.conftest import send_from_process
 
 from skillsinc.__main__ import Application
 from skillsinc.tray import app, launch
 from skillsinc.tray.instance import SingleInstance
 from skillsinc.usersettings import ScheduleOptions, SettingsStore, UserSettings
 
-QUIT_FALLBACK_MS = 15_000
+QUIT_FALLBACK_MS = 20_000
+QUIT_DELAY_SECONDS = 0.5
 EXIT_HUNG = 99
 
 
@@ -33,17 +33,11 @@ def _name() -> str:
 
 
 def _quit_soon(name: str) -> QTimer:
-    """Send ``quit`` from another thread, as another launch would.
+    """Send ``quit`` from another process once the tray listens.
 
-    The forward blocks on the socket, so it must not run on the thread whose
-    event loop serves it. A fallback ends the event loop if it never arrives.
+    A fallback ends the event loop if it never arrives.
     """
-
-    def send() -> None:
-        time.sleep(0.2)
-        SingleInstance(name).forward(["quit"])
-
-    threading.Thread(target=send, daemon=True).start()
+    send_from_process(name, ["quit"], delay=QUIT_DELAY_SECONDS)
     fallback = QTimer()
     fallback.setSingleShot(True)
     fallback.timeout.connect(lambda: QApplication.exit(EXIT_HUNG))
@@ -79,23 +73,27 @@ class TestRun:
     """``app.run`` decides between forwarding, refusing, and running."""
 
     def test_request_goes_to_the_running_tray(
-        self, qtbot: QtBot, configured: Sandbox
+        self, qtbot: QtBot, configured: Sandbox, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """With a tray running, the request is sent and the launch ends."""
-        name = _name()
-        running = SingleInstance(name)
-        assert running.listen()
+        del qtbot
+        # Delivery itself is checked across threads in test_platform and
+        # across processes end to end; a forward cannot wait on this thread
+        sent: list[list[str]] = []
+
+        def forward(_instance: SingleInstance, arguments: list[str]) -> bool:
+            sent.append(arguments)
+            return True
+
+        monkeypatch.setattr(SingleInstance, "forward", forward)
         out = io.StringIO()
-        try:
-            with qtbot.waitSignal(running.message_received, timeout=5000) as blocker:
-                status = app.run(
-                    ["sync", "work"], configured.environment, out, instance_name=name
-                )
-        finally:
-            running.close()
+
+        status = app.run(
+            ["sync", "work"], configured.environment, out, instance_name=_name()
+        )
 
         assert status == app.EXIT_OK
-        assert blocker.args == [["sync", "work"]]
+        assert sent == [["sync", "work"]]
         assert out.getvalue() == "Sent to the running SkillSinc tray.\n"
 
     def test_quit_with_nothing_running(self, qtbot: QtBot, configured: Sandbox) -> None:

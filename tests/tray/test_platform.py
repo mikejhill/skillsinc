@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from PySide6.QtNetwork import QLocalServer
 from pytestqt.qtbot import QtBot
 from tests.conftest import Sandbox
-from tests.tray.conftest import FakeRunKey, add_profiles
+from tests.tray.conftest import (
+    FakeRunKey,
+    add_profiles,
+    listen_in_process,
+    send_from_process,
+)
 
 from skillsinc.paths import Environment
 from skillsinc.tray.catalog import CatalogReader
@@ -189,11 +196,46 @@ class TestSingleInstance:
         first = SingleInstance(name)
         assert first.listen()
         try:
-            with qtbot.waitSignal(first.message_received, timeout=5000) as blocker:
-                assert SingleInstance(name).forward(["sync", "work"])
-            assert blocker.args == [["sync", "work"]]
+            with qtbot.waitSignal(first.message_received, timeout=10_000) as blocker:
+                sender = send_from_process(name, ["sync", "work"])
+            qtbot.waitUntil(lambda: sender.poll() is not None, timeout=10_000)
         finally:
             first.close()
+
+        assert blocker.args == [["sync", "work"]]
+        assert sender.returncode == 0
+
+    def test_forward_to_another_process(self) -> None:
+        """A launch's forward reaches a tray in another process."""
+        name = f"skillsinc-test-{uuid.uuid4().hex}"
+        listener = listen_in_process(name)
+        try:
+            assert SingleInstance(name).forward(["show", "about"])
+            output, _ = listener.communicate(timeout=10)
+        finally:
+            if listener.poll() is None:
+                listener.kill()
+                listener.communicate()
+
+        assert json.loads(output) == ["show", "about"]
+
+    def test_message_in_pieces_is_delivered_once(self, qtbot: QtBot) -> None:
+        """A message split across writes, with more after it, arrives once."""
+        name = f"skillsinc-test-{uuid.uuid4().hex}"
+        first = SingleInstance(name)
+        assert first.listen()
+        received: list[object] = []
+        first.message_received.connect(received.append)
+        try:
+            sender = send_from_process(
+                name, ['["sy', 'nc"]\n', '["again"]\n'], raw=True
+            )
+            qtbot.waitUntil(lambda: sender.poll() is not None, timeout=10_000)
+            qtbot.wait(100)
+        finally:
+            first.close()
+
+        assert received == [["sync"]]
 
     def test_nobody_listening(self, qtbot: QtBot) -> None:
         """Forwarding with no running instance reports False."""
@@ -246,10 +288,14 @@ class TestSingleInstance:
         finally:
             first.close()
 
-    def test_unusable_name_cannot_listen(self, qtbot: QtBot, tmp_path: Path) -> None:
+    def test_unusable_name_cannot_listen(
+        self, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A name the system refuses leaves the launch without a tray."""
-        del qtbot
-        instance = SingleInstance(str(tmp_path / "missing" / "socket"))
+        del qtbot, tmp_path
+        # Any path is a valid pipe name on Windows, so the system refuses here
+        monkeypatch.setattr(QLocalServer, "listen", lambda *_args: False)
+        instance = SingleInstance(f"skillsinc-test-{uuid.uuid4().hex}")
 
         assert not instance.listen()
         instance._on_connection()
