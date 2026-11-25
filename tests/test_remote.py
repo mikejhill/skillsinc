@@ -152,7 +152,8 @@ def git_environment(tmp_path: Path) -> Environment:
         "GIT_COMMITTER_NAME": "Test",
         "GIT_COMMITTER_EMAIL": "test@example.invalid",
     }
-    return Environment(home, variables, sys.platform)
+    # Project discovery starts here, never in the checkout running the tests
+    return Environment(home, variables, sys.platform, tmp_path)
 
 
 @pytest.fixture
@@ -971,6 +972,18 @@ class TestAuthentication:
 
 class TestJourneys:
     """Plan, sync, and status through the application."""
+
+    def test_journeys_ignore_configs_above_the_checkout(
+        self, git_environment: Environment, tmp_path: Path
+    ) -> None:
+        """A config above the test run is never found as a project config."""
+        found = git_environment.project_config()
+
+        assert git_environment.working_directory == tmp_path, (
+            f"Expected discovery from {tmp_path},"
+            f" got {git_environment.working_directory}"
+        )
+        assert found is None, f"Expected no project config, got {found}"
 
     def test_sync_status_and_failure_journey(
         self, git_environment: Environment, repository: Repository
