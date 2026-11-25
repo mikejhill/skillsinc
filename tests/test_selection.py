@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 from dataclasses import replace
@@ -9,12 +10,16 @@ from pathlib import Path
 
 import pytest
 from tests.conftest import Sandbox
+from tests.test_schedule import FakeRunner
+from tests.test_schedule import settings as schedule_settings
 
+from skillsinc.commands import ScheduleCommand
 from skillsinc.conditions import Condition, host_name, system_name
 from skillsinc.config import ConfigLoader
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
+from skillsinc.schedule import Completed
 from skillsinc.selection import PROFILES_VARIABLE, Origin, ProfileSelector
 
 pytestmark = pytest.mark.integration
@@ -509,3 +514,25 @@ class TestReviewFixes:
         )
 
         assert "profile conditions" not in output, output
+
+    def test_install_warns_about_uncarried_variables(self, sandbox: Sandbox) -> None:
+        """A real install prints the same warning after registering."""
+        write(sandbox, profiles={"work": {"when": {"env": {"WORK": True}}}, "home": {}})
+        runner = FakeRunner({("crontab", "-l"): Completed(0, "")})
+        out = io.StringIO()
+        command = ScheduleCommand(sandbox.environment, runner, Path("/opt/py/bin/py"))
+
+        status = command.run(schedule_settings(), out)
+
+        assert status == 0, out.getvalue()
+        assert "Warning: profile conditions read WORK," in out.getvalue(), out
+
+    def test_conditions_without_env_do_not_warn(self, sandbox: Sandbox) -> None:
+        """Host and system conditions need nothing from the job's environment."""
+        write(sandbox)
+        out = io.StringIO()
+        command = ScheduleCommand(sandbox.environment, FakeRunner(), Path("/py"))
+
+        command.run(schedule_settings(dry_run=True), out)
+
+        assert "profile conditions" not in out.getvalue(), out.getvalue()
