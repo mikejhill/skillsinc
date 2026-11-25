@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -151,6 +152,27 @@ class ConfigDocument:
         """
         return loader(self._path, self.render())
 
+    def plan(self, loader: Validator) -> PendingWrite:
+        """Validate the edits and check the file; return the write to commit.
+
+        The checks run even when nothing changed, so the configuration a
+        settings change relies on is still valid and still the one on disk.
+
+        Raises:
+            ConfigurationError: If the edited configuration is invalid.
+            ConfigEditError: If the file is a link, or changed since it was read.
+        """
+        rendered = self.render()
+        loader(self._path, rendered)
+        if self._path.is_symlink():
+            msg = (
+                f"{self._path} is a link; edit the file it points to, or open"
+                " that file in settings"
+            )
+            raise ConfigEditError(msg)
+        self._unchanged()
+        return PendingWrite(self, rendered if self.changed else None)
+
     def save(self, loader: Validator) -> bool:
         """Validate and write the edits; False if nothing changed.
 
@@ -159,25 +181,27 @@ class ConfigDocument:
             ConfigEditError: If the file changed on disk since it was read.
             OSError: If it cannot be written.
         """
-        if not self.changed:
-            return False
-        rendered = self.render()
-        loader(self._path, rendered)
+        return self.plan(loader).commit()
+
+    def _unchanged(self) -> None:
+        """Raise if the file on disk is not the text this document read."""
         original = (self._bom + self._original).encode("utf-8")
+        try:
+            current = self._path.read_bytes()
+        except OSError as err:
+            msg = f"cannot read {self._path} ({err})"
+            raise ConfigEditError(msg) from err
+        if current != original:
+            msg = f"{self._path} changed since it was read; reopen settings"
+            raise ConfigEditError(msg)
+
+    def _write(self, rendered: str) -> None:
         before = self._path.stat()
-
-        def unchanged() -> None:
-            if self._path.read_bytes() != original:
-                msg = f"{self._path} changed since it was read; reopen settings"
-                raise ConfigEditError(msg)
-
-        unchanged()
         write_atomically(
-            self._path, self._bom + rendered, mode_from=before, check=unchanged
+            self._path, self._bom + rendered, mode_from=before, check=self._unchanged
         )
         self._original = rendered
         self._loaded = copy.deepcopy(self._data)
-        return True
 
     def _render_section(self, text: str, name: str) -> str:
         before = self._loaded.get(name)
@@ -203,6 +227,27 @@ class ConfigDocument:
             names = route.get(name) if isinstance(route, dict) else None
             if isinstance(route, dict) and isinstance(names, list):
                 route[name] = [new if item == old else item for item in names]
+
+
+@dataclass(frozen=True, slots=True)
+class PendingWrite:
+    """A validated configuration write, committed after every check passed."""
+
+    document: ConfigDocument
+    rendered: str | None
+    """The new text; None when nothing changed."""
+
+    def commit(self) -> bool:
+        """Write the new text; False if there was nothing to write.
+
+        Raises:
+            ConfigEditError: If the file changed since it was read.
+            OSError: If it cannot be written.
+        """
+        if self.rendered is None:
+            return False
+        self.document._write(self.rendered)
+        return True
 
 
 def describe(value: JsonValue) -> str:

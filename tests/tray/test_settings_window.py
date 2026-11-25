@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
@@ -15,9 +16,11 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLineEdit,
     QListWidget,
+    QPlainTextEdit,
     QTableWidget,
     QWidget,
 )
+from pytestqt.qtbot import QtBot
 from tests.tray.conftest import Tray, add_profiles
 
 from skillsinc.jsonc import Jsonc
@@ -57,8 +60,23 @@ def _check(listing: QWidget, *names: str) -> None:
 
 def _text(dialog: ElementDialog, key: str, value: str) -> None:
     widget = dialog.widgets[key]
+    if isinstance(widget, QPlainTextEdit):
+        widget.setPlainText(value)
+        return
     assert isinstance(widget, QLineEdit)
     widget.setText(value)
+
+
+def _disable_target(window: SettingsWindow) -> None:
+    """Make a pending configuration edit: switch the destination off."""
+    tab = window.section_tabs["destinations"]
+    tab.table.selectRow(0)
+    tab.edit()
+    dialog = _dialog(tab)
+    enabled = dialog.widgets["enabled"]
+    assert isinstance(enabled, QCheckBox)
+    enabled.setChecked(False)
+    dialog.try_accept()
 
 
 def _dialog(tab: SectionTab) -> ElementDialog:
@@ -189,7 +207,7 @@ class TestConfiguration:
         route = _dialog(routes)
         _check(route.widgets["sources"], "library")
         _check(route.widgets["destinations"], "extra")
-        _text(route, "include", "skills/*, agents/*")
+        _text(route, "include", "skills/*\nagents/[a,b]*")
         lossy = route.widgets["allow_lossy"]
         assert isinstance(lossy, QCheckBox)
         lossy.setChecked(True)
@@ -205,7 +223,7 @@ class TestConfiguration:
         assert data["routes"][1] == {
             "sources": ["library"],
             "destinations": ["extra"],
-            "include": ["skills/*", "agents/*"],
+            "include": ["skills/*", "agents/[a,b]*"],
             "allow_lossy": True,
         }
         text = tray.sandbox.config_path.read_text(encoding="utf-8")
@@ -227,6 +245,8 @@ class TestConfiguration:
         enabled = destination.widgets["enabled"]
         assert isinstance(enabled, QCheckBox)
         enabled.setChecked(False)
+        assert destination.name_edit is not None
+        destination.name_edit.setText("renamed")
         destination.try_accept()
         routes = window.section_tabs["routes"]
         routes.table.selectRow(0)
@@ -240,7 +260,9 @@ class TestConfiguration:
         data = _config(tray)
         assert list(data["sources"]) == ["mine"]
         assert data["routes"][0]["sources"] == ["mine"]
-        assert data["destinations"]["target"]["enabled"] is False
+        assert data["destinations"]["renamed"]["enabled"] is False
+        assert data["destinations"]["renamed"]["profile"] == "generic"
+        assert data["routes"][0]["destinations"] == ["renamed"]
 
     def test_invalid_configuration_is_not_written(
         self, tray: Tray, window: SettingsWindow
@@ -332,9 +354,14 @@ class TestProblems:
         assert window.schedule_enabled.isChecked()
         window.close()
 
-    def test_broken_configuration_disables_the_tabs(self, tray: Tray) -> None:
-        """An unreadable config.json leaves only the General tab."""
+    def test_broken_configuration_disables_the_tabs(
+        self, tray: Tray, tmp_path: Path
+    ) -> None:
+        """An unreadable config.json leaves only General, until a good one is named."""
+        good = tray.sandbox.config_path.read_text(encoding="utf-8")
         tray.sandbox.config_path.write_text("{", encoding="utf-8")
+        other = tmp_path / "other.json"
+        other.write_text(good, encoding="utf-8")
 
         tray.controller.show_settings()
 
@@ -342,22 +369,40 @@ class TestProblems:
         assert window is not None
         assert window.tabs.count() == 1
         assert "unavailable" in window.error.text()
+        assert not window.save()
+        assert "cannot be read" in window.error.text()
+        window.config_path.setText(str(other))
         assert window.save(), window.error.text()
+        assert tray.controller.settings.config == other
 
+    @pytest.mark.parametrize("edited", [True, False])
     def test_settings_edited_meanwhile_are_not_overwritten(
-        self, tray: Tray, window: SettingsWindow
+        self, tray: Tray, window: SettingsWindow, *, edited: bool
     ) -> None:
-        """A settings.json changed since opening is reported, not replaced."""
+        """A valid settings.json edit made meanwhile stops Save; neither file changes.
+
+        A pending configuration edit is not written either.
+        """
         store = SettingsStore.default(tray.sandbox.environment)
+        config_before = tray.sandbox.config_path.read_bytes()
+        _disable_target(window)
         window.keep.setValue(60)
-        window.schedule_enabled.setChecked(True)
-        store.path.write_text("not json", encoding="utf-8")
+        if edited:
+            store.save(UserSettings(schedule=ScheduleOptions(enabled=False)))
+        else:
+            store.path.unlink()
+        settings_before = store.path.read_bytes() if store.path.exists() else None
 
         assert not window.save()
-        assert window.error.text()
+
+        assert "changed since it was read" in window.error.text()
+        assert tray.sandbox.config_path.read_bytes() == config_before
+        after = store.path.read_bytes() if store.path.exists() else None
+        assert after == settings_before
 
     def test_reopening_reloads(self, tray: Tray, window: SettingsWindow) -> None:
         """Opening the window again shows the files as they are now."""
+        window.close()
         SettingsStore.default(tray.sandbox.environment).save(
             UserSettings(schedule=ScheduleOptions(interval=timedelta(hours=3)))
         )
@@ -365,6 +410,251 @@ class TestProblems:
         tray.controller.show_settings()
 
         assert window.interval.text() == "3h"
+
+    def test_showing_an_open_window_keeps_its_edits(
+        self, tray: Tray, window: SettingsWindow
+    ) -> None:
+        """Settings again, while the window is open, only raises it."""
+        window.interval.setText("2h")
+        _disable_target(window)
+
+        tray.controller.handle(["show", "settings"])
+
+        assert window.interval.text() == "2h"
+        assert window.document is not None
+        assert window.document.changed
+
+    def test_unparsable_settings_can_be_opened_and_are_left_alone(
+        self, tray: Tray
+    ) -> None:
+        """settings.json that is not JSON: General is disabled, Save skips it."""
+        store = SettingsStore.default(tray.sandbox.environment)
+        store.path.write_text("not json", encoding="utf-8")
+        tray.controller.show_settings()
+        window = tray.controller.settings_window
+        assert window is not None
+
+        assert not window.general_page.isEnabled()
+        assert "text editor" in window.error.text()
+        window.open_settings_button.click()
+        assert tray.opened == [store.path]
+        _disable_target(window)
+        assert window.save(), window.error.text()
+
+        assert store.path.read_text(encoding="utf-8") == "not json"
+        assert _config(tray)["destinations"]["target"]["enabled"] is False
+
+    def test_configuration_edited_meanwhile_stops_a_settings_save(
+        self, tray: Tray, window: SettingsWindow
+    ) -> None:
+        """A settings-only save still checks the configuration on disk."""
+        store = SettingsStore.default(tray.sandbox.environment)
+        before = store.path.read_bytes()
+        window.keep.setValue(70)
+        path = tray.sandbox.config_path
+        path.write_text(path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+        assert not window.save()
+
+        assert "changed since it was read" in window.error.text()
+        assert store.path.read_bytes() == before
+
+    def test_settings_write_failure_after_the_configuration(
+        self, tray: Tray, window: SettingsWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If settings.json fails after config.json was written, both are named."""
+
+        def fail(_write: object) -> bool:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(module.SettingsWrite, "commit", fail)
+        _disable_target(window)
+
+        assert not window.save()
+
+        assert "Saved" in window.error.text()
+        assert "but not settings.json: disk full" in window.error.text()
+        assert _config(tray)["destinations"]["target"]["enabled"] is False
+
+    def test_configuration_write_failure_saves_nothing(
+        self, tray: Tray, window: SettingsWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed configuration write leaves settings.json alone too."""
+
+        def fail(_write: object) -> bool:
+            raise OSError("read-only")
+
+        monkeypatch.setattr(module.PendingWrite, "commit", fail)
+        store = SettingsStore.default(tray.sandbox.environment)
+        before = store.path.read_bytes()
+        window.keep.setValue(80)
+
+        assert not window.save()
+
+        assert window.error.text() == "Nothing saved: read-only"
+        assert store.path.read_bytes() == before
+
+    def test_rebuilding_releases_the_old_tabs(
+        self, qtbot: QtBot, window: SettingsWindow
+    ) -> None:
+        """Reloading deletes the previous configuration tabs."""
+        old = window.section_tabs["sources"]
+
+        with qtbot.waitSignal(old.destroyed, timeout=5000):
+            window.load()
+
+        assert window.tabs.count() == 5
+
+
+class TestSelections:
+    """Scheduled profiles, route filters, harnesses, and the configuration file."""
+
+    def test_empty_profile_selection_is_refused(self, tray: Tray) -> None:
+        """Ticking "only these profiles" with none ticked would sync more: refused."""
+        add_profiles(tray.sandbox.config_path, {"work": {}})
+        tray.controller.show_settings()
+        window = tray.controller.settings_window
+        assert window is not None
+        window.only_profiles.setChecked(True)
+        _check(window.profiles)
+
+        assert not window.save()
+
+        assert "tick at least one profile" in window.error.text()
+
+    @pytest.mark.parametrize(("new", "expected"), [("office", ["office"]), ("", [])])
+    def test_profile_rename_and_removal_follow_into_the_schedule(
+        self, tray: Tray, new: str, expected: list[str]
+    ) -> None:
+        """A renamed scheduled profile stays ticked; a removed one is dropped."""
+        add_profiles(tray.sandbox.config_path, {"work": {}, "home": {}})
+        tray.controller.show_settings()
+        window = tray.controller.settings_window
+        assert window is not None
+        window.only_profiles.setChecked(True)
+        _check(window.profiles, "work")
+        profiles = window.section_tabs["profiles"]
+        profiles.table.selectRow(0)
+        if new:
+            profiles.edit()
+            dialog = _dialog(profiles)
+            assert dialog.name_edit is not None
+            dialog.name_edit.setText(new)
+            dialog.try_accept()
+        else:
+            profiles.remove()
+
+        assert sorted(window._checked_profiles()) == expected
+        listed = [
+            window.profiles.item(i).text() for i in range(window.profiles.count())
+        ]
+        assert "work" not in listed
+
+    def test_untouched_route_filters_are_kept_exactly(self, tray: Tray) -> None:
+        """An empty include list and a glob with a comma survive an unrelated edit."""
+        path = tray.sandbox.config_path
+        data = _config(tray)
+        data["routes"][0]["include"] = []
+        data["routes"][0]["exclude"] = ["skills/[a,b]*"]
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tray.controller.show_settings()
+        window = tray.controller.settings_window
+        assert window is not None
+        routes = window.section_tabs["routes"]
+        routes.table.selectRow(0)
+        routes.edit()
+        route = _dialog(routes)
+        lossy = route.widgets["allow_lossy"]
+        assert isinstance(lossy, QCheckBox)
+        lossy.setChecked(True)
+        route.try_accept()
+
+        assert window.save(), window.error.text()
+
+        saved = _config(tray)["routes"][0]
+        assert saved["include"] == []
+        assert saved["exclude"] == ["skills/[a,b]*"]
+        assert saved["allow_lossy"] is True
+
+    @pytest.mark.parametrize(("new", "harness"), [("office", "codex"), ("codex", None)])
+    def test_renaming_keeps_an_inferred_harness(
+        self, tray: Tray, new: str, harness: str | None
+    ) -> None:
+        """A destination named for its harness keeps that harness when renamed."""
+        path = tray.sandbox.config_path
+        data = _config(tray)
+        data["destinations"] = {"codex": {}}
+        data["routes"][0]["destinations"] = ["codex"]
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tray.controller.show_settings()
+        window = tray.controller.settings_window
+        assert window is not None
+        destinations = window.section_tabs["destinations"]
+        destinations.table.selectRow(0)
+        destinations.edit()
+        dialog = _dialog(destinations)
+        combo = dialog.widgets["profile"]
+        assert isinstance(combo, QComboBox)
+        assert combo.currentText() == "codex"
+        assert dialog.name_edit is not None
+        dialog.name_edit.setText(new)
+        dialog.try_accept()
+
+        assert window.document is not None
+        assert window.document.section("destinations")[new].get("profile") == harness
+
+    def test_switching_configuration_with_pending_edits_is_refused(
+        self, tray: Tray, window: SettingsWindow, tmp_path: Path
+    ) -> None:
+        """Edits stay with their file: switching first needs Save or Cancel."""
+        other = tmp_path / "other.json"
+        other.write_bytes(tray.sandbox.config_path.read_bytes())
+        _disable_target(window)
+
+        window.config_path.setText(str(other))
+        assert not window.save()
+
+        assert "Save or cancel" in window.error.text()
+        assert window.config_path.text() == ""
+        assert window.document is not None
+        assert window.document.path == tray.sandbox.config_path
+
+    def test_switching_configuration_edits_the_new_file(
+        self, tray: Tray, window: SettingsWindow, tmp_path: Path
+    ) -> None:
+        """With no pending edits, the tabs follow the chosen file and save there."""
+        other = tmp_path / "other.json"
+        before = tray.sandbox.config_path.read_bytes()
+        other.write_bytes(before)
+        window.config_path.setText(str(other))
+        assert window.follow_config()
+        _disable_target(window)
+
+        assert window.save(), window.error.text()
+
+        assert tray.sandbox.config_path.read_bytes() == before
+        assert "false" in other.read_text(encoding="utf-8")
+        assert tray.controller.settings.config == other
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="links need privileges")
+    def test_linked_configuration_is_not_replaced(
+        self, tray: Tray, tmp_path: Path
+    ) -> None:
+        """A config.json that is a link is refused, not replaced by a file."""
+        path = tray.sandbox.config_path
+        shared = tmp_path / "shared.json"
+        shared.write_bytes(path.read_bytes())
+        path.unlink()
+        path.symlink_to(shared)
+        tray.controller.show_settings()
+        window = tray.controller.settings_window
+        assert window is not None
+        _disable_target(window)
+
+        assert not window.save()
+
+        assert "is a link" in window.error.text()
+        assert path.is_symlink()
 
 
 class TestPieces:
@@ -399,3 +689,25 @@ class TestPieces:
 
         assert dialog.table() == {"when": {"platform": "linux"}}
         assert dialog.name() == "p"
+
+    def test_a_cleared_field_is_removed(self, qtbot: object) -> None:
+        """Emptying a field that had a value drops the key."""
+        del qtbot
+        fields = (Field("description", "Description"),)
+        dialog = ElementDialog("Profile", fields, {"description": "x"}, {}, name="p")
+        _text(dialog, "description", "")
+
+        assert dialog.table() == {}
+
+    def test_open_settings_without_an_opener(self, tray: Tray) -> None:
+        """A window built without a file opener ignores the request."""
+        window = SettingsWindow(
+            SettingsStore.default(tray.sandbox.environment),
+            default_config=lambda _settings: tray.sandbox.config_path,
+            validate=lambda _path, _text: pytest.fail("not validated"),
+            on_saved=lambda: None,
+        )
+
+        window.open_settings_file()
+
+        assert tray.opened == []

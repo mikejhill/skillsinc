@@ -230,6 +230,14 @@ class TestReadingAndSaving:
             document.validate(_loader(environment))
         assert config.read_text(encoding="utf-8") == TEXT
 
+    def test_file_removed_since_reading_is_reported(self, config: Path) -> None:
+        """A configuration that disappeared cannot be checked or saved."""
+        document = ConfigDocument.open(config)
+        config.unlink()
+
+        with pytest.raises(ConfigEditError, match="cannot read"):
+            document.plan(lambda _path, _text: None)  # ty: ignore[invalid-argument-type]
+
     def test_file_edited_since_reading_is_not_overwritten(self, config: Path) -> None:
         """Someone else's edit wins; the window is told to reopen."""
         document = ConfigDocument.open(config)

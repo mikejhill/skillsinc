@@ -10,8 +10,9 @@ both files, changing only what changed so comments stay.
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final
 
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -40,10 +42,18 @@ from PySide6.QtWidgets import (
 )
 
 from skillsinc.config import Config, ConfigurationError
-from skillsinc.configedit import ROUTES, ConfigDocument, ConfigEditError, Table
+from skillsinc.configedit import (
+    ROUTES,
+    ConfigDocument,
+    ConfigEditError,
+    PendingWrite,
+    Table,
+)
+from skillsinc.jsonc import Jsonc
 from skillsinc.models import JsonValue
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schedule import format_interval, parse_interval
+from skillsinc.schema import BOM
 from skillsinc.usersettings import (
     HISTORY_KEEP_RANGE,
     HistoryOptions,
@@ -51,6 +61,7 @@ from skillsinc.usersettings import (
     ScheduleOptions,
     SettingsFileError,
     SettingsStore,
+    SettingsWrite,
     StartupOptions,
     UpdateOptions,
     UserSettings,
@@ -67,7 +78,7 @@ class Field:
     key: str
     label: str
     kind: str = "text"
-    """``text``, ``bool``, ``choice``, ``list`` (comma-separated), or ``names``."""
+    """``text``, ``bool``, ``choice``, ``list`` (one per line), or ``names``."""
     choices: tuple[str, ...] = ()
     """For ``choice``: the values; for ``names``: the section listing them."""
     default: bool = False
@@ -121,12 +132,16 @@ PROFILES: Final = Section(
 ROUTE_FIELDS: Final = (
     Field("sources", "Sources", "names", ("sources",)),
     Field("destinations", "Destinations", "names", ("destinations",)),
-    Field("include", "Include", "list", hint="kind/name globs; default */*"),
-    Field("exclude", "Exclude", "list", hint="kind/name globs"),
+    Field("include", "Include", "list", hint="kind/name globs, one per line"),
+    Field("exclude", "Exclude", "list", hint="kind/name globs, one per line"),
     Field("allow_lossy", "Allow lossy conversions", "bool"),
     Field("profiles", "Profiles", "names", ("profiles",)),
 )
 ROUTE_COLUMNS: Final = ("sources", "destinations", "include", "profiles")
+
+
+type Changed = Callable[[str, str, str], None]
+"""Called with a section, an element's old name, and its new one ("": none)."""
 
 
 def cell(value: JsonValue | None) -> str:
@@ -154,8 +169,10 @@ class ElementDialog(QDialog):
         *,
         name: str | None = None,
         taken: Sequence[str] = (),
+        shown: Mapping[str, JsonValue] | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """``shown`` gives what an absent key effectively is, to display it."""
         super().__init__(parent)
         self.setWindowTitle(title)
         self._fields = tuple(fields)
@@ -167,12 +184,19 @@ class ElementDialog(QDialog):
         if name is not None:
             self.name_edit = QLineEdit(name, self)
             form.addRow("Name", self.name_edit)
+        effective = dict(shown or {})
         for item in self._fields:
-            widget = self._widget(item, table.get(item.key), names)
+            value = table.get(item.key, effective.get(item.key))
+            widget = self._widget(item, value, names)
             if item.hint:
                 widget.setToolTip(item.hint)
             self.widgets[item.key] = widget
             form.addRow(item.label, widget)
+        # What each field reads as before any edit: an untouched field keeps
+        # the element's value exactly, including an empty list or no key
+        self._initial = {
+            item.key: self._value(self.widgets[item.key]) for item in self._fields
+        }
         self.error = QLabel(self)
         self.error.setStyleSheet(ERROR_STYLE)
         self.error.setWordWrap(True)
@@ -207,7 +231,9 @@ class ElementDialog(QDialog):
         """Return the element with the entered values; unknown keys are kept."""
         table = copy.deepcopy(self._table)
         for item in self._fields:
-            value = self._value(item, self.widgets[item.key])
+            value = self._value(self.widgets[item.key])
+            if value == self._initial[item.key]:
+                continue
             present = item.key in self._table
             if value is None or (
                 item.kind == "bool" and value == item.default and not present
@@ -246,10 +272,15 @@ class ElementDialog(QDialog):
                 )
             listing.setMaximumHeight(110)
             return listing
+        if item.kind == "list":
+            lines = value if isinstance(value, list) else []
+            editor = QPlainTextEdit("\n".join(str(line) for line in lines), self)
+            editor.setMaximumHeight(80)
+            return editor
         return QLineEdit(cell(value) if value is not None else "", self)
 
     @staticmethod
-    def _value(item: Field, widget: QWidget) -> JsonValue | None:
+    def _value(widget: QWidget) -> JsonValue | None:
         if isinstance(widget, QCheckBox):
             return widget.isChecked()
         if isinstance(widget, QComboBox):
@@ -261,12 +292,12 @@ class ElementDialog(QDialog):
                 if widget.item(row).checkState() == Qt.CheckState.Checked
             ]
             return checked or None
-        assert isinstance(widget, QLineEdit)  # noqa: S101 - built by _widget
-        text = widget.text().strip()
-        if item.kind == "list":
-            parts: list[JsonValue] = [p.strip() for p in text.split(",") if p.strip()]
+        if isinstance(widget, QPlainTextEdit):
+            lines = widget.toPlainText().splitlines()
+            parts: list[JsonValue] = [line.strip() for line in lines if line.strip()]
             return parts or None
-        return text or None
+        assert isinstance(widget, QLineEdit)  # noqa: S101 - built by _widget
+        return widget.text().strip() or None
 
 
 class SectionTab(QWidget):
@@ -278,11 +309,14 @@ class SectionTab(QWidget):
         section: Section | None,
         names: Callable[[], Mapping[str, Sequence[str]]],
         parent: QWidget | None = None,
+        *,
+        changed: Changed | None = None,
     ) -> None:
         super().__init__(parent)
         self._document = document
         self._section = section
         self._names = names
+        self._changed = changed
         columns = ("Name", *section.summary) if section else ROUTE_COLUMNS
         self.table = QTableWidget(0, len(columns), self)
         self.table.setHorizontalHeaderLabels([c.capitalize() for c in columns])
@@ -340,6 +374,7 @@ class SectionTab(QWidget):
         else:
             key = list(self._document.section(self._section.name))[row]
             self._document.remove(self._section.name, key)
+            self._tell(key, "")
         self.refresh()
 
     def _rows(self) -> list[list[str]]:
@@ -371,6 +406,7 @@ class SectionTab(QWidget):
                 names,
                 name=key,
                 taken=[existing for existing in entries if existing != key],
+                shown=self._effective(key),
                 parent=self.window(),
             )
         self.dialog = dialog
@@ -391,22 +427,41 @@ class SectionTab(QWidget):
                 if (row is not None)
                 else ""
             )
-            self._document.put(
-                self._section.name, dialog.name(), dialog.table(), old_key=old
-            )
+            new, table = dialog.name(), dialog.table()
+            if self._section is DESTINATIONS and old and old != new:
+                # The harness was inferred from the old name: keep it
+                inferred = self._effective(old).get("profile")
+                if inferred is not None and "profile" not in table:
+                    table["profile"] = inferred
+            self._document.put(self._section.name, new, table, old_key=old)
+            self._tell(old, new)
         self.refresh()
+
+    def _effective(self, key: str) -> dict[str, JsonValue]:
+        """Return what absent keys of ``key`` mean: a destination's harness."""
+        if self._section is DESTINATIONS and key in HARNESSES:
+            return {"profile": key}
+        return {}
+
+    def _tell(self, old: str, new: str) -> None:
+        """Report a keyed element's rename (or removal: ``new`` empty)."""
+        assert self._section is not None  # noqa: S101 - keyed sections only
+        if self._changed is not None:
+            self._changed(self._section.name, old, new)
 
 
 class SettingsWindow(QDialog):
     """Application settings and the configuration, saved together."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - collaborators are injected for tests
         self,
         store: SettingsStore,
         default_config: Callable[[UserSettings], Path],
         validate: Callable[[Path, str], Config],
         on_saved: Callable[[], None],
         parent: QWidget | None = None,
+        *,
+        open_file: Callable[[Path], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("SkillSinc settings")
@@ -415,7 +470,11 @@ class SettingsWindow(QDialog):
         self._config_for = default_config
         self._validate = validate
         self._on_saved = on_saved
+        self._open_file = open_file
         self._settings = UserSettings()
+        self._snapshot: bytes | None = None
+        # False when settings.json cannot be parsed: Save leaves it alone
+        self.settings_editable = True
         self.document: ConfigDocument | None = None
         self.tabs = QTabWidget(self)
         self.error = QLabel(self)
@@ -431,11 +490,20 @@ class SettingsWindow(QDialog):
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.open_settings_button = QPushButton("Open settings.json", self)
+        self.open_settings_button.clicked.connect(
+            lambda _checked=False: self.open_settings_file()
+        )
+        self.open_settings_button.hide()
+        footer = QHBoxLayout()
+        footer.addWidget(self.open_settings_button)
+        footer.addStretch(1)
+        footer.addWidget(buttons)
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs, 1)
         layout.addWidget(self.config_note)
         layout.addWidget(self.error)
-        layout.addWidget(buttons)
+        layout.addLayout(footer)
         self._build_general()
         self.section_tabs: dict[str, SectionTab] = {}
 
@@ -444,28 +512,93 @@ class SettingsWindow(QDialog):
     def load(self) -> None:
         """Read both files into the window; problems show above the buttons."""
         problems: list[str] = []
+        self.settings_editable = True
         try:
+            self._snapshot = self._store.snapshot()
             self._settings = self._store.load()
         except SettingsFileError as err:
             self._settings = UserSettings()
-            problems.append(f"{err}. Showing defaults; saving replaces the values.")
+            self.settings_editable = self._is_object(self._snapshot)
+            if self.settings_editable:
+                problems.append(
+                    f"{err}. Showing defaults; Save writes the values shown."
+                )
+            else:
+                problems.append(
+                    f"{err}. Fix it in a text editor (Open settings.json);"
+                    " Save writes only the configuration."
+                )
+        self.general_page.setEnabled(self.settings_editable)
+        self.open_settings_button.setVisible(not self.settings_editable)
         self._show_settings(self._settings)
-        config = self._config_for(self._settings)
-        try:
-            self.document = ConfigDocument.open(config)
-        except ConfigEditError as err:
-            self.document = None
-            problems.append(f"{err}. The configuration tabs are unavailable.")
-        self._build_sections()
-        self.config_note.setText(f"Configuration: {config}")
+        problems.extend(self._open_document(self._config_for(self._settings)))
         self.error.setText("\n".join(problems))
 
     def present(self) -> None:
-        """Load and show the window, raised."""
-        self.load()
+        """Show the window, raised; a new editing session reads both files."""
+        if not self.isVisible():
+            self.load()
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def open_settings_file(self) -> None:
+        """Open settings.json in the desktop's editor, to repair it."""
+        if self._open_file is not None:
+            self._open_file(self._store.path)
+
+    def _is_object(self, snapshot: bytes | None) -> bool:
+        """Return True if ``snapshot`` parses as an object Save can edit."""
+        try:
+            text = (snapshot or b"").decode("utf-8").removeprefix(BOM)
+            plain = Jsonc.blank_trailing_commas(Jsonc.blank_comments(text))
+            return not plain.strip() or isinstance(json.loads(plain), dict)
+        except (ValueError, RecursionError):
+            return False
+
+    def _open_document(self, config: Path) -> list[str]:
+        """Edit ``config`` in the section tabs; return what went wrong."""
+        try:
+            self.document = ConfigDocument.open(config)
+            problems: list[str] = []
+        except ConfigEditError as err:
+            self.document = None
+            problems = [f"{err}. The configuration tabs are unavailable."]
+        self._config_shown = config
+        self._build_sections()
+        self.config_note.setText(f"Configuration: {config}")
+        return problems
+
+    def _target(self) -> Path:
+        """Return the configuration the General tab names."""
+        text = self.config_path.text().strip()
+        return self._config_for(
+            replace(self._settings, config=Path(text) if text else None)
+        )
+
+    def follow_config(self) -> bool:
+        """Edit the configuration the General tab names; False if refused.
+
+        Pending configuration edits must be saved or cancelled first, so they
+        never land in a file the user has moved away from.
+        """
+        target = self._target()
+        if target == self._config_shown:
+            return True
+        if self.document is not None and self.document.changed:
+            shown = self._config_shown
+            self.config_path.setText(
+                ""
+                if shown == self._config_for(replace(self._settings, config=None))
+                else str(shown)
+            )
+            self.error.setText(
+                "Save or cancel the configuration edits before choosing another"
+                " configuration file."
+            )
+            return False
+        self.error.setText("\n".join(self._open_document(target)))
+        return True
 
     # General tab
 
@@ -497,6 +630,7 @@ class SettingsWindow(QDialog):
         config_row = QHBoxLayout()
         config_row.addWidget(self.config_path, 1)
         config_row.addWidget(browse)
+        self.config_path.editingFinished.connect(self.follow_config)
         form.addRow(self.schedule_enabled)
         form.addRow("Every", self.interval)
         form.addRow(self.run_at_start)
@@ -509,6 +643,7 @@ class SettingsWindow(QDialog):
         form.addRow(self.launch_at_login)
         form.addRow("History keeps", self.keep)
         form.addRow("Configuration file", config_row)
+        self.general_page = page
         self.tabs.addTab(page, "General")
 
     def browse(self) -> None:
@@ -518,6 +653,7 @@ class SettingsWindow(QDialog):
         )
         if chosen:
             self.config_path.setText(chosen)
+            self.follow_config()
 
     def _show_settings(self, settings: UserSettings) -> None:
         schedule = settings.schedule
@@ -534,8 +670,10 @@ class SettingsWindow(QDialog):
         self.keep.setValue(settings.history.keep)
         self.config_path.setText(str(settings.config) if settings.config else "")
 
-    def _show_profile_choices(self) -> None:
-        chosen = list(self._settings.schedule.profiles or ())
+    def _show_profile_choices(self, checked: Sequence[str] | None = None) -> None:
+        chosen = list(
+            self._settings.schedule.profiles or () if checked is None else checked
+        )
         names = list(self._names().get("profiles", ()))
         names += [name for name in chosen if name not in names]
         self.profiles.clear()
@@ -559,6 +697,9 @@ class SettingsWindow(QDialog):
                 for row in range(self.profiles.count())
                 if self.profiles.item(row).checkState() == Qt.CheckState.Checked
             )
+            if not profiles:
+                msg = "tick at least one profile, or sync the ones active here"
+                raise ValueError(msg)
         config_text = self.config_path.text().strip()
         return UserSettings(
             config=Path(config_text) if config_text else None,
@@ -591,37 +732,99 @@ class SettingsWindow(QDialog):
             for section in ("sources", "destinations", "profiles")
         }
 
+    def _checked_profiles(self) -> list[str]:
+        return [
+            self.profiles.item(row).text()
+            for row in range(self.profiles.count())
+            if self.profiles.item(row).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _section_changed(self, section: str, old: str, new: str) -> None:
+        """Carry a profile's rename or removal into the scheduled selection."""
+        if section != "profiles":
+            return
+        checked = self._checked_profiles()
+        if old and old in checked:
+            checked = [
+                new if name == old else name for name in checked if new or name != old
+            ]
+        self._show_profile_choices(checked)
+
     def _build_sections(self) -> None:
+        checked = self._checked_profiles() if self.section_tabs else None
         while self.tabs.count() > 1:
+            page = self.tabs.widget(1)
             self.tabs.removeTab(1)
+            if page is not None:  # pragma: no branch - Qt's stubs allow None
+                page.deleteLater()
         self.section_tabs = {}
         document = self.document
         if document is not None:
             for section in (SOURCES, DESTINATIONS, PROFILES, None):
-                tab = SectionTab(document, section, self._names, self)
+                tab = SectionTab(
+                    document, section, self._names, self, changed=self._section_changed
+                )
                 name = section.name if section else ROUTES
                 title = section.title if section else "Routes"
                 self.section_tabs[name] = tab
                 self.tabs.addTab(tab, title)
-        self._show_profile_choices()
+        self._show_profile_choices(checked)
 
     # Saving
 
     def save(self) -> bool:
-        """Validate and write both files; keep the window open on an error."""
+        """Check both files, then write them; keep the window open on an error.
+
+        Nothing is written unless both writes are ready: the configuration is
+        valid and unchanged on disk, and settings.json is as it was read.
+        """
         try:
-            settings = self.settings()
+            settings = self.settings() if self.settings_editable else None
         except ValueError as err:
             self.error.setText(f"Settings: {err}")
             return False
+        if not self.follow_config():
+            return False
+        if self.document is None:
+            self.error.setText(
+                f"Cannot save: {self._config_shown} cannot be read as a configuration."
+            )
+            return False
         try:
-            if self.document is not None:
-                self.document.save(self._validate)
-            self._store.save(settings)
-        except (ConfigurationError, OSError) as err:
+            config_write = self.document.plan(self._validate)
+            settings_write = (
+                self._store.plan(settings, self._snapshot)
+                if settings is not None
+                else None
+            )
+        except ConfigurationError as err:
             self.error.setText(str(err))
             return False
-        self._settings = settings
+        return self._commit(config_write, settings_write, settings)
+
+    def _commit(
+        self,
+        config_write: PendingWrite,
+        settings_write: SettingsWrite | None,
+        settings: UserSettings | None,
+    ) -> bool:
+        """Write the checked configuration, then settings.json."""
+        document = config_write.document
+        try:
+            config_write.commit()
+        except (ConfigurationError, OSError) as err:
+            self.error.setText(f"Nothing saved: {err}")
+            return False
+        try:
+            if settings_write is not None:
+                settings_write.commit()
+                self._snapshot = self._store.snapshot()
+        except (ConfigurationError, OSError) as err:
+            self.error.setText(f"Saved {document.path}, but not settings.json: {err}")
+            self._on_saved()
+            return False
+        if settings is not None:
+            self._settings = settings
         self.error.clear()
         self._on_saved()
         self.accept()

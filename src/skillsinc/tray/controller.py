@@ -262,6 +262,7 @@ class TrayController(QObject):
                 default_config=lambda settings: settings.config_file(self._environment),
                 validate=ConfigLoader(ProfileRegistry(), self._environment).load,
                 on_saved=self._on_settings_saved,
+                open_file=self._open,
             )
         self.settings_window.present()
 
