@@ -7,6 +7,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Literal
 
+from skillsinc.history import Trigger
+
 
 @dataclass(frozen=True, slots=True)
 class InitSettings:
@@ -34,6 +36,18 @@ class PlanSettings:
     log_file: Path | None = None
     profiles: tuple[str, ...] = ()
     """Sync profiles named by ``--profile``; empty uses the machine's defaults."""
+    trigger: Trigger = Trigger.MANUAL
+    """What started a sync, as the history records it."""
+
+
+@dataclass(frozen=True, slots=True)
+class HistorySettings:
+    """Settings for ``skillsinc history``."""
+
+    config_path: Path
+    json_output: bool
+    limit: int
+    log_level: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +90,7 @@ class StatusSettings:
 
 type Settings = (
     HarnessesSettings
+    | HistorySettings
     | InitSettings
     | PlanSettings
     | ProfilesSettings

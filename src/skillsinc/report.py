@@ -9,6 +9,7 @@ from typing import Final
 
 from skillsinc.applier import DestinationResult
 from skillsinc.config import SourceConfig
+from skillsinc.history import SyncRecord
 from skillsinc.models import Kind
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
 from skillsinc.profiles.base import Profile
@@ -281,6 +282,44 @@ class Reporter:
             lines.append(f"Left alone: {skipped}\n")
         lines.extend(f"warning: {warning}\n" for warning in selection.warnings)
         return "".join(lines)
+
+    @staticmethod
+    def history_text(records: Sequence[SyncRecord]) -> str:
+        """Return recent syncs as a table, newest first."""
+        if not records:
+            return "No syncs recorded yet.\n"
+        rows = [("STARTED", "TRIGGER", "RESULT", "TIME", "PROFILES", "SUMMARY")]
+        for record in records:
+            profiles = record.profiles
+            rows.append(
+                (
+                    record.started.astimezone().strftime("%Y-%m-%d %H:%M:%S"),
+                    record.trigger.value,
+                    "ok" if record.ok else "FAILED",
+                    f"{record.duration:.1f}s",
+                    ", ".join(profiles) if profiles is not None and profiles else "-",
+                    record.summary(),
+                )
+            )
+        widths = [max(len(row[column]) for row in rows) for column in range(5)]
+        lines = [
+            "  ".join(
+                cell.ljust(width) for cell, width in zip(row, widths, strict=False)
+            )
+            + "  "
+            + row[5]
+            for row in rows
+        ]
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def history_json(records: Sequence[SyncRecord]) -> str:
+        """Return recent syncs as versioned JSON, newest first."""
+        data = {
+            "version": REPORT_VERSION,
+            "runs": [record.to_json() for record in records],
+        }
+        return json.dumps(data, indent=2) + "\n"
 
     @staticmethod
     def selection_json(selection: Selection) -> str:

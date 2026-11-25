@@ -477,3 +477,43 @@ class TestRemoteSource:
         assert skill.is_file(), "Expected the cached copy to keep the skill"
         assert failing.status == 1, f"Expected status to exit 1: {failing!r}"
         assert "Needs attention: shared." in failing.stdout, f"Got {failing!r}"
+
+
+class TestHistory:
+    """Every sync process leaves a record that ``history`` reads back."""
+
+    def test_syncs_from_any_trigger_are_listed_newest_first(
+        self, cli: Cli, library: Path
+    ) -> None:
+        """A scheduled run, a failed run, and a manual run are all recorded."""
+        Harnesses.install(cli.home)
+        assert cli.run("init", "--source", str(library)).status == 0
+        log = cli.state_directory / "sync.log"
+        assert (
+            cli.run("sync", "--trigger", "scheduled", "--log-file", str(log)).status
+            == 0
+        )
+        (cli.state_directory / "sync.lock").write_text("1\n", encoding="utf-8")
+        assert cli.run("sync", "--trigger", "tray").status == 1
+        (cli.state_directory / "sync.lock").unlink()
+        assert cli.run("sync").status == 0
+
+        result = cli.run("history", "--json")
+
+        runs = result.json()["runs"]
+        assert result.status == 0, f"Expected exit 0, got {result!r}"
+        assert [(run["trigger"], run["ok"]) for run in runs] == [
+            ("manual", True),
+            ("tray", False),
+            ("scheduled", True),
+        ], f"Got {runs}"
+        assert runs[2]["counts"].get("create", 0) > 0, f"Got {runs[2]}"
+        assert "in progress" in runs[1]["errors"][0], f"Got {runs[1]}"
+
+    def test_history_text_before_any_sync(self, cli: Cli, library: Path) -> None:
+        """A fresh install has nothing to show, and says so."""
+        assert cli.run("init", "--source", str(library)).status == 0
+
+        result = cli.run("history")
+
+        assert (result.status, result.stdout) == (0, "No syncs recorded yet.\n")

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mikejhill/skillsinc/main/src/skillsinc/settings.schema.json",
+  "title": "SkillSinc settings",
+  "description": "SkillSinc settings.json: how the SkillSinc tray behaves on this machine. Comments and trailing commas are allowed. Reference: https://github.com/mikejhill/skillsinc/blob/main/docs/guides/settings.md",
+  "allowComments": true,
+  "allowTrailingCommas": true,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema for editors. SkillSinc keeps ./settings.schema.json up to date beside this file."
+    },
+    "version": {
+      "const": 1,
+      "description": "Settings format version. Must be 1."
+    },
+    "config": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "Configuration file the tray syncs. Relative paths and ~ resolve against the folder holding settings.json. null: the user configuration."
+    },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "When the tray syncs on its own.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sync on a schedule while the tray runs."
+        },
+        "interval": {
+          "type": "string",
+          "default": "5m",
+          "description": "Time between scheduled syncs, such as 5m, 1h, or 00:05:00. At least one minute."
+        },
+        "profiles": {
+          "type": ["array", "null"],
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "pattern": "\\S"},
+          "default": null,
+          "description": "Profiles each scheduled sync selects. null: the profiles active on this machine."
+        },
+        "run_at_start": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sync as soon as the tray starts."
+        }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Tray notifications after a sync.",
+      "properties": {
+        "failures": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when a sync fails."
+        },
+        "changes": {
+          "type": "boolean",
+          "default": false,
+          "description": "Notify when a sync changes files."
+        }
+      }
+    },
+    "updates": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "New SkillSinc releases.",
+      "properties": {
+        "check": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check PyPI for a new release while the tray runs."
+        },
+        "install": {
+          "type": "boolean",
+          "default": false,
+          "description": "Install a release an automatic check finds without asking."
+        }
+      }
+    },
+    "startup": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Starting with Windows.",
+      "properties": {
+        "launch_at_login": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start the tray when you sign in."
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The sync history the tray shows.",
+      "properties": {
+        "keep": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100000,
+          "default": 500,
+          "description": "Number of sync runs to keep."
+        }
+      }
+    }
+  }
+}

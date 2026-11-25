@@ -8,7 +8,7 @@ comment, so edits splice text at the positions recorded here instead.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -221,6 +221,40 @@ class Jsonc:
             return Jsonc.apply(text, [(span.open + 1, span.close, "")])
         edits.append((start, min(end, len(text)), ""))
         return Jsonc.apply(text, edits)
+
+    @staticmethod
+    def set_path(text: str, path: Sequence[str], value: JsonValue) -> str:
+        """Return ``text`` with the member at object-key ``path`` set to ``value``.
+
+        Missing objects along the path are created; an equal value leaves the
+        text untouched. Only the replaced value changes, so comments elsewhere
+        (and beside the member) stay.
+
+        Raises:
+            ValueError: If ``path`` is empty or ``text`` is not a JSONC object.
+        """
+        if not path:
+            msg = "expected a non-empty path"
+            raise ValueError(msg)
+        bare = Jsonc.blank_comments(text)
+        span = Jsonc.object_at(bare, 0)
+        for depth, key in enumerate(path):
+            member = span.find(key)
+            nested = value
+            for name in reversed(path[depth + 1 :]):
+                nested = {name: nested}
+            if member is None:
+                return Jsonc.insert(text, span, {key: nested})
+            last = depth == len(path) - 1
+            if last or bare[member.value_start] != "{":
+                piece = Jsonc.blank_trailing_commas(
+                    bare[member.value_start : member.value_end]
+                )
+                if json.loads(piece) == nested:
+                    return text
+                return Jsonc.replace(text, span, {member: nested})
+            span = Jsonc.object_at(bare, member.value_start)
+        raise AssertionError  # pragma: no cover - the loop always returns
 
     @staticmethod
     def apply(text: str, edits: list[tuple[int, int, str]]) -> str:

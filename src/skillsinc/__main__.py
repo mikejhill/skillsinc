@@ -12,6 +12,7 @@ from typing import Final, TextIO
 from skillsinc.cli import CommandLine
 from skillsinc.commands import (
     HarnessesCommand,
+    HistoryCommand,
     InitCommand,
     PlanCommand,
     ProfilesCommand,
@@ -23,6 +24,7 @@ from skillsinc.paths import Environment
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.schedule import Runner
 from skillsinc.settings import (
+    HistorySettings,
     InitSettings,
     PlanSettings,
     ProfilesSettings,
@@ -101,7 +103,7 @@ class Application:
             logger.warning("Interrupted")
             return EXIT_INTERRUPTED
 
-    def _dispatch(self, settings: Settings) -> int:
+    def _dispatch(self, settings: Settings) -> int:  # noqa: PLR0911 - one per command
         """Run the handler for ``settings``."""
         if isinstance(settings, InitSettings):
             return InitCommand(self._profiles, self._environment).run(
@@ -119,6 +121,8 @@ class Application:
             return ScheduleCommand(self._environment, self._runner).run(
                 settings, self._out
             )
+        if isinstance(settings, HistorySettings):
+            return HistoryCommand(self._environment).run(settings, self._out)
         if isinstance(settings, ProfilesSettings):
             return ProfilesCommand(self._profiles, self._environment).run(
                 settings, self._out

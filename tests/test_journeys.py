@@ -37,7 +37,8 @@ class TestSourceScanFailure:
             path: path.read_bytes()
             for root in (sandbox.root, other, sandbox.environment.state_directory)
             for path in root.rglob("*")
-            if path.is_file()
+            # The history records the failed run too
+            if path.is_file() and not path.name.startswith("history.")
         }
         unreadable = sandbox.library / "skills/sample/references"
         original = os.scandir
