@@ -84,11 +84,14 @@ class DisableCase:
 
     @staticmethod
     def contents(root: Path) -> dict[str, bytes]:
-        """Snapshot file bytes without depending on timestamps or permissions."""
+        """Snapshot file bytes without depending on timestamps or permissions.
+
+        The sync history is left out: it records every run, blocked ones too.
+        """
         return {
             path.relative_to(root).as_posix(): path.read_bytes()
             for path in root.rglob("*")
-            if path.is_file()
+            if path.is_file() and path.name != "history.jsonl"
         }
 
 

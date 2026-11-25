@@ -17,14 +17,14 @@ from collections.abc import Callable
 from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
-from typing import Final
+from typing import ClassVar, Final
 
 from skillsinc.entries import JsonDocument
 from skillsinc.jsonc import Jsonc
 
 SCHEMA_FILE: Final = "config.schema.json"
 REFERENCE: Final = f"./{SCHEMA_FILE}"
-LOCAL_REFERENCES: Final = frozenset({SCHEMA_FILE, REFERENCE})
+SETTINGS_SCHEMA_FILE: Final = "settings.schema.json"
 BOM: Final = "﻿"
 # A schema copy larger than this is not SkillSinc's; never read it whole
 MAXIMUM_SCHEMA_BYTES: Final = 1 << 20
@@ -42,27 +42,41 @@ class SchemaState(StrEnum):
 
 
 class ConfigSchema:
-    """The bundled schema and the copy kept beside a configuration file."""
+    """The bundled schema and the copy kept beside a configuration file.
 
-    @staticmethod
-    def text() -> str:
+    Subclasses name another bundled schema with ``FILE``; ``settings.json``
+    keeps ``settings.schema.json`` beside it the same way.
+    """
+
+    FILE: ClassVar[str] = SCHEMA_FILE
+
+    @classmethod
+    def text(cls) -> str:
         """Return the schema bundled with this version of SkillSinc."""
-        return files("skillsinc").joinpath(SCHEMA_FILE).read_text(encoding="utf-8")
+        return files("skillsinc").joinpath(cls.FILE).read_text(encoding="utf-8")
 
     @classmethod
     def identifier(cls) -> str:
         """Return the schema's ``$id``, which marks a file as SkillSinc's schema."""
         return str(json.loads(cls.text())["$id"])
 
-    @staticmethod
-    def path(config: Path) -> Path:
+    @classmethod
+    def path(cls, config: Path) -> Path:
         """Return where the schema copy for ``config`` lives."""
-        return config.parent / SCHEMA_FILE
+        return config.parent / cls.FILE
 
-    @staticmethod
-    def references_local(reference: str | None) -> bool:
+    @classmethod
+    def local_reference(cls) -> str:
+        """Return the ``$schema`` value that names the copy beside the file."""
+        return f"./{cls.FILE}"
+
+    @classmethod
+    def references_local(cls, reference: str | None) -> bool:
         """Return True if ``$schema`` names the copy beside the configuration."""
-        return reference is not None and reference.strip() in LOCAL_REFERENCES
+        return reference is not None and reference.strip() in {
+            cls.FILE,
+            cls.local_reference(),
+        }
 
     @classmethod
     def state(cls, config: Path) -> SchemaState:
@@ -110,8 +124,8 @@ class ConfigSchema:
         value = data.get("$schema")
         return value if isinstance(value, str) else None
 
-    @staticmethod
-    def with_reference(text: str) -> str | None:
+    @classmethod
+    def with_reference(cls, text: str) -> str | None:
         """Return JSONC ``text`` with ``$schema`` as its first key, else None.
 
         Only the inserted text differs: comments, line endings, indentation,
@@ -127,7 +141,8 @@ class ConfigSchema:
         first = span.members[0].start
         line_start = text.rfind("\n", 0, first) + 1
         prefix = text[line_start:first]
-        member = f'"$schema": {json.dumps(REFERENCE)},'
+        reference = cls.local_reference()
+        member = f'"$schema": {json.dumps(reference)},'
         if line_start > span.open and not prefix.strip(" \t"):
             insertion = member + Jsonc.newline(text) + prefix
         else:
@@ -135,7 +150,7 @@ class ConfigSchema:
         updated = Jsonc.apply(text, [(first, first, insertion)])
         before = dict(JsonDocument.load(_plain(text)))
         after = dict(JsonDocument.load(_plain(updated)))
-        if after != {"$schema": REFERENCE, **before}:  # pragma: no cover - guard
+        if after != {"$schema": reference, **before}:  # pragma: no cover - guard
             msg = "inserting $schema would change other keys"
             raise ValueError(msg)
         return updated
@@ -200,6 +215,12 @@ class ConfigSchema:
         except ValueError:
             return False
         return isinstance(data, dict) and bool(data.get("$id") == cls.identifier())
+
+
+class SettingsSchema(ConfigSchema):
+    """The bundled ``settings.json`` schema and the copy kept beside it."""
+
+    FILE: ClassVar[str] = SETTINGS_SCHEMA_FILE
 
 
 def _plain(text: str) -> bytes:

@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
 from skillsinc.applier import Applier
 from skillsinc.config import ConfigLoader
 from skillsinc.exceptions import AppError, ConfigurationError
+from skillsinc.history import SyncHistory, SyncRecord, SyncRecorder
 from skillsinc.lock import StateLock
 from skillsinc.manifest import ManifestStore
-from skillsinc.paths import Environment
+from skillsinc.paths import Environment, absolute
 from skillsinc.planner import Planner
 from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.remote import RemoteCache
@@ -33,8 +36,9 @@ from skillsinc.schedule import (
 )
 from skillsinc.schema import ConfigSchema
 from skillsinc.selection import PROFILES_VARIABLE as SELECTION_VARIABLE
-from skillsinc.selection import ProfileSelector, Selection
+from skillsinc.selection import Origin, ProfileSelector, Selection
 from skillsinc.settings import (
+    HistorySettings,
     InitSettings,
     PlanSettings,
     ProfilesSettings,
@@ -43,7 +47,12 @@ from skillsinc.settings import (
 )
 from skillsinc.sources import SourceReader
 from skillsinc.starter import StarterConfig
-from skillsinc.upgrades import ConfigMaintenance
+from skillsinc.upgrades import ConfigMaintenance, current_version
+from skillsinc.usersettings import (
+    DEFAULT_HISTORY_KEEP,
+    SettingsFileError,
+    SettingsStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +129,51 @@ class InitCommand:
 class PlanCommand:
     """Preview (``plan``) or apply (``sync``) the configured routes."""
 
-    def __init__(self, profiles: ProfileRegistry, environment: Environment) -> None:
+    def __init__(
+        self,
+        profiles: ProfileRegistry,
+        environment: Environment,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC).astimezone(),
+    ) -> None:
         self._profiles = profiles
         self._environment = environment
+        self._clock = clock
 
     def run(self, settings: PlanSettings, out: TextIO) -> int:
-        """Plan, apply under the state lock when syncing, and report."""
+        """Plan, apply under the state lock when syncing, and report.
+
+        A sync is recorded in the history whether it succeeds or fails.
+        """
+        if not settings.apply:
+            return self._run(settings, out, None)
+        recorder = self._recorder(settings)
+        try:
+            return self._run(settings, out, recorder)
+        except AppError as err:
+            recorder.failed(str(err))
+            raise
+
+    def _recorder(self, settings: PlanSettings) -> SyncRecorder:
+        """Return the recorder for one sync, keeping as many runs as settings say."""
+        try:
+            keep = SettingsStore.default(self._environment).load().history.keep
+        except SettingsFileError as err:
+            logger.warning("%s; keeping %d history records", err, DEFAULT_HISTORY_KEEP)
+            keep = DEFAULT_HISTORY_KEEP
+        return SyncRecorder(
+            state=self._environment.state_directory,
+            keep=keep,
+            trigger=settings.trigger,
+            config=settings.config_path,
+            requested=settings.profiles,
+            version=current_version(),
+            clock=self._clock,
+        )
+
+    def _run(
+        self, settings: PlanSettings, out: TextIO, recorder: SyncRecorder | None
+    ) -> int:
+        """Plan, and when ``recorder`` is given apply and record the run."""
         config = ConfigLoader(self._profiles, self._environment).load(
             settings.config_path
         )
@@ -141,7 +189,7 @@ class PlanCommand:
         reporter = Reporter(verbose=settings.verbose)
 
         maintenance = ConfigMaintenance(state)
-        if not settings.apply:
+        if recorder is None:
             plan = planner.plan(
                 config, only=settings.destinations, adopt=settings.adopt
             )
@@ -166,6 +214,7 @@ class PlanCommand:
 
         if config.project is not None:
             ignore_state(state)
+        recorder.locate(state)
         lock = StateLock(state / "sync.lock")
         with lock:
             plan = planner.plan(
@@ -173,6 +222,18 @@ class PlanCommand:
             )
             results = Applier(store).apply(plan)
             maintained = maintenance.apply(config.path)
+            recorder.applied(
+                plan,
+                profiles=selection.active
+                if selection.origin is not Origin.NONE
+                else None,
+                errors=[
+                    f"{result.name}: {result.error}"
+                    for result in results
+                    if result.error is not None
+                ],
+                warnings=maintained.warnings,
+            )
         if settings.json_output:
             out.write(
                 reporter.plan_json(
@@ -263,6 +324,48 @@ class ProfilesCommand:
             else Reporter.selection_text(selection)
         )
         return 0
+
+
+class HistoryCommand:
+    """List recent syncs of one configuration, newest first."""
+
+    def __init__(self, environment: Environment) -> None:
+        self._environment = environment
+
+    def run(self, settings: HistorySettings, out: TextIO) -> int:
+        """Print the newest ``settings.limit`` records."""
+        records = self.records(settings.config_path, settings.limit)
+        out.write(
+            Reporter.history_json(records)
+            if settings.json_output
+            else Reporter.history_text(records)
+        )
+        return 0
+
+    def records(self, config: Path, limit: int) -> list[SyncRecord]:
+        """Return the newest records of syncs of ``config``.
+
+        A project's runs are in its own state directory; failures that came
+        before its configuration loaded are in the user's.
+        """
+        target = absolute(config)
+        directories = [self._environment.state_directory]
+        project = self._environment.state_directory
+        try:
+            loaded = ConfigLoader(ProfileRegistry(), self._environment).load(config)
+            project = loaded.state_directory(self._environment)
+        except AppError:
+            logger.debug("Reading history without a loadable configuration")
+        if project not in directories:
+            directories.append(project)
+        found = [
+            record
+            for directory in directories
+            for record in SyncHistory(directory, keep=DEFAULT_HISTORY_KEEP).records()
+            if absolute(Path(record.config)) == target
+        ]
+        found.sort(key=lambda record: record.started, reverse=True)
+        return found[:limit]
 
 
 class HarnessesCommand:
@@ -393,7 +496,7 @@ class ScheduleCommand:
         platform = self._environment.platform
         # -P keeps the job's working directory off the import path
         python = str(interpreter(self._executable, platform))
-        argv = [python, "-P", "-m", "skillsinc", "sync"]
+        argv = [python, "-P", "-m", "skillsinc", "sync", "--trigger", "scheduled"]
         log = None
         if chosen.writes_log:
             log = self._environment.state_directory / "sync.log"

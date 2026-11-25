@@ -38,6 +38,8 @@ graph LR
 | `manifest`                    | Load and atomically save per-destination ownership records             |
 | `applier`                     | Verify preconditions, write atomically, update the manifest            |
 | `lock`                        | Serialize overlapping `sync` runs                                      |
+| `history`                     | Record every `sync` run in `history.jsonl`; read it back newest first  |
+| `usersettings`                | Load and save `settings.json` (application settings), keeping comments |
 | `report`                      | Text and versioned JSON output                                         |
 | `schema`                      | The bundled editor schema and the `$schema` insertion                  |
 | `upgrades`                    | Plan and apply one-time config upgrades and the local schema copy      |

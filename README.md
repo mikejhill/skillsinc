@@ -147,6 +147,7 @@ Run `skillsinc harnesses` for the same table. See [harness profiles](docs/guides
 | `skillsinc plan`      | Show every change a sync would make; write nothing        |
 | `skillsinc sync`      | Apply the plan                                            |
 | `skillsinc status`    | Show each source's state, including remote failures       |
+| `skillsinc history`   | List recent syncs and how each went                       |
 | `skillsinc profiles`  | List sync profiles and which apply on this machine        |
 | `skillsinc harnesses` | List harness profiles and what each kind becomes          |
 | `skillsinc schedule`  | `install`, `remove`, or show `status` of a scheduled sync |
@@ -175,6 +176,7 @@ to retire a destination or remove distributed content deliberately.
 - [Project configurations](docs/guides/projects.md)
 - [Command-line reference](docs/guides/command-line.md)
 - [Scheduling](docs/guides/scheduling.md)
+- [Application settings](docs/guides/settings.md)
 - [Development guide](docs/guides/development.md)
 - [Roadmap](docs/planning/roadmap.md)
 - [Harness profiles](docs/guides/harness-profiles.md)

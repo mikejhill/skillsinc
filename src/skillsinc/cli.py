@@ -9,6 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Final
 
+from skillsinc.history import Trigger
 from skillsinc.paths import PROJECT_CONFIG, Environment
 from skillsinc.schedule import (
     DEFAULT_INTERVAL,
@@ -18,6 +19,7 @@ from skillsinc.schedule import (
 )
 from skillsinc.settings import (
     HarnessesSettings,
+    HistorySettings,
     InitSettings,
     PlanSettings,
     ProfilesSettings,
@@ -36,7 +38,7 @@ class CommandLine:
         self._environment = environment
         self._parser = self._build_parser()
 
-    def parse(self, argv: Sequence[str] | None = None) -> Settings:
+    def parse(self, argv: Sequence[str] | None = None) -> Settings:  # noqa: PLR0911
         """Parse ``argv`` into the settings for one command."""
         args = self._parser.parse_args(argv)
         log_level = str(args.log_level)
@@ -66,6 +68,10 @@ class CommandLine:
         )
         if command == "status":
             return StatusSettings(config_path, bool(args.json), log_level)
+        if command == "history":
+            return HistorySettings(
+                config_path, bool(args.json), int(args.limit), log_level
+            )
         profiles = tuple(args.profile or ())
         if command == "profiles":
             return ProfilesSettings(config_path, bool(args.json), log_level, profiles)
@@ -79,6 +85,7 @@ class CommandLine:
             log_level=log_level,
             log_file=Path(args.log_file) if args.log_file else None,
             profiles=profiles,
+            trigger=Trigger(getattr(args, "trigger", Trigger.MANUAL.value)),
         )
 
     def _init(self, args: argparse.Namespace, log_level: str) -> InitSettings:
@@ -204,6 +211,14 @@ class CommandLine:
                 help="append the report and diagnostics to PATH instead of"
                 " printing them",
             )
+            if name == "sync":
+                command.add_argument(
+                    "--trigger",
+                    choices=[trigger.value for trigger in Trigger],
+                    default=Trigger.MANUAL.value,
+                    help="what started this sync, as `skillsinc history` shows it"
+                    " (default: %(default)s; schedulers set it)",
+                )
 
         status = commands.add_parser(
             "status",
@@ -211,6 +226,20 @@ class CommandLine:
             help="show each source's state, including remote refresh failures",
         )
         status.add_argument("--json", action="store_true", help="print a JSON report")
+        history = commands.add_parser(
+            "history",
+            parents=[configured, discovered],
+            help="list recent syncs: when, what started them, and how they went",
+        )
+        history.add_argument(
+            "-n",
+            "--limit",
+            type=CommandLine._count,
+            default=20,
+            metavar="N",
+            help="show the newest N runs (default: %(default)s)",
+        )
+        history.add_argument("--json", action="store_true", help="print a JSON report")
         profiles = commands.add_parser(
             "profiles",
             parents=[configured, discovered, selected],
@@ -272,6 +301,18 @@ class CommandLine:
             parents=[common, which],
             help="show the scheduled sync and its last result",
         )
+
+    @staticmethod
+    def _count(text: str) -> int:
+        """Parse a positive whole number for argparse."""
+        try:
+            count = int(text)
+        except ValueError:
+            count = 0
+        if count < 1:
+            msg = f"expected a positive whole number, got {text!r}"
+            raise argparse.ArgumentTypeError(msg)
+        return count
 
     @staticmethod
     def _interval(text: str) -> timedelta:
