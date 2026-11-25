@@ -31,6 +31,7 @@ from skillsinc.settings import (
     ScheduleSettings,
     Settings,
     StatusSettings,
+    TraySettings,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,8 @@ class Application:
             return ScheduleCommand(self._environment, self._runner).run(
                 settings, self._out
             )
+        if isinstance(settings, TraySettings):
+            return self._tray(settings)
         if isinstance(settings, HistorySettings):
             return HistoryCommand(self._environment).run(settings, self._out)
         if isinstance(settings, ProfilesSettings):
@@ -128,6 +131,19 @@ class Application:
                 settings, self._out
             )
         return HarnessesCommand(self._profiles).run(self._out)
+
+    def _tray(self, settings: TraySettings) -> int:
+        """Run the tray, which needs the optional ``tray`` extra."""
+        try:
+            from skillsinc.tray import app  # noqa: PLC0415 - optional dependency
+        except ImportError as err:
+            msg = (
+                f"the tray needs PySide6 ({err}); install it with"
+                ' `uv tool install --reinstall "skillsinc[tray]"`'
+                ' or `pip install "skillsinc[tray]"`'
+            )
+            raise AppError(msg) from err
+        return app.run(settings.request, self._environment, self._out)
 
     @staticmethod
     def _configure_logging(level: str, stream: TextIO | None = None) -> None:

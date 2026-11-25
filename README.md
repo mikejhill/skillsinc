@@ -151,6 +151,7 @@ Run `skillsinc harnesses` for the same table. See [harness profiles](docs/guides
 | `skillsinc profiles`  | List sync profiles and which apply on this machine        |
 | `skillsinc harnesses` | List harness profiles and what each kind becomes          |
 | `skillsinc schedule`  | `install`, `remove`, or show `status` of a scheduled sync |
+| `skillsinc tray`      | Run as a tray app that syncs on its own schedule          |
 
 `plan` and `sync` accept `--profile NAME` ([sync profiles](docs/guides/configuration.md#profiles): one config, a different segment per machine), `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, `--config PATH`, and `--user`. Inside a project with `.config/skillsinc/config.json`, they use that file. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
@@ -177,6 +178,7 @@ to retire a destination or remove distributed content deliberately.
 - [Command-line reference](docs/guides/command-line.md)
 - [Scheduling](docs/guides/scheduling.md)
 - [Application settings](docs/guides/settings.md)
+- [Tray application](docs/guides/tray.md)
 - [Development guide](docs/guides/development.md)
 - [Roadmap](docs/planning/roadmap.md)
 - [Harness profiles](docs/guides/harness-profiles.md)

@@ -19,6 +19,7 @@ from skillsinc.settings import (
     PlanSettings,
     ProfilesSettings,
     ScheduleSettings,
+    TraySettings,
 )
 
 
@@ -99,6 +100,24 @@ class TestCommandLine:
             log_level="WARNING",
             profiles=("work", "home,x"),
         ), f"Expected profile settings, got {result!r}"
+
+    @pytest.mark.parametrize(
+        ("argv", "request_"),
+        [
+            ([], ()),
+            (["--sync"], ("sync",)),
+            (["--sync", "work", "*"], ("sync", "work", "*")),
+            (["--show", "about"], ("show", "about")),
+            (["--quit"], ("quit",)),
+        ],
+    )
+    def test_tray_requests_are_typed(
+        self, environment: Environment, argv: list[str], request_: tuple[str, ...]
+    ) -> None:
+        """``tray`` options become the request a running tray receives."""
+        result = CommandLine(environment).parse(["tray", *argv])
+
+        assert result == TraySettings(request_, "WARNING"), f"Got {result!r}"
 
     def test_sync_accepts_profiles(self, environment: Environment) -> None:
         """``sync --profile`` is repeatable and kept verbatim for the selector."""
@@ -242,6 +261,41 @@ class TestApplication:
                 "generic",
             )
         ), f"Expected all built-ins, got {status}: {output}"
+
+    def test_tray_dispatches_to_the_tray_app(
+        self, environment: Environment, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``skillsinc tray`` hands its request to the tray application."""
+        pytest.importorskip("PySide6")
+        from skillsinc.tray import app  # noqa: PLC0415 - optional dependency
+
+        calls: list[tuple[str, ...]] = []
+
+        def run(request: tuple[str, ...], *_args: object) -> int:
+            calls.append(request)
+            return 0
+
+        monkeypatch.setattr(app, "run", run)
+
+        assert Application(environment, io.StringIO()).run(["tray", "--quit"]) == 0
+        assert calls == [("quit",)]
+
+    def test_tray_without_the_extra_explains_the_install(
+        self,
+        environment: Environment,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Without PySide6 the tray says how to install it."""
+        import skillsinc.tray  # noqa: PLC0415
+
+        monkeypatch.setitem(sys.modules, "skillsinc.tray.app", None)
+        monkeypatch.delattr(skillsinc.tray, "app", raising=False)
+
+        status = Application(environment, io.StringIO()).run(["tray"])
+
+        assert status == 1
+        assert "skillsinc[tray]" in capsys.readouterr().err
 
     def test_keyboard_interrupt_returns_130(
         self, environment: Environment, monkeypatch: pytest.MonkeyPatch

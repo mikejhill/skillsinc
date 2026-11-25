@@ -25,6 +25,12 @@ dependencies = [
     "tomlkit>=0.13.3",
 ]
 
+[project.optional-dependencies]
+# The tray scheduler: `uv tool install "skillsinc[tray]"`, then `skillsinc tray`
+tray = [
+    "pyside6-essentials>=6.9.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/mikejhill/skillsinc"
 Issues = "https://github.com/mikejhill/skillsinc/issues"
@@ -33,17 +39,22 @@ Changelog = "https://github.com/mikejhill/skillsinc/blob/main/CHANGELOG.md"
 [project.scripts]
 skillsinc = "skillsinc.__main__:Application.main"
 
+[project.gui-scripts]
+skillsinc-tray = "skillsinc.tray.launch:main"
+
 [build-system]
 requires = ["uv_build>=0.11.32,<0.12.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "skillsinc[tray]",
     "hypothesis>=6.169.2",
     "jsonschema>=4.25",
     "poethepoet>=0.48.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pytest-qt>=4.5.0",
     "pytest-randomly>=5.0.0",
     "ruff>=0.17.0",
     "ty>=0.0.86",
@@ -103,7 +114,9 @@ markers = [
     "integration: user journeys through Application.run in one process",
     "e2e: the skillsinc process run against a throwaway home directory",
     "perf: time budgets for planning and syncing large libraries",
+    "ux: tray user journeys through real menu actions and sync processes",
 ]
+qt_api = "pyside6"
 
 [tool.coverage.run]
 source = ["skillsinc"]
@@ -136,7 +149,9 @@ check = { sequence = ["format-check", "lint", "typecheck", "test"], help = "Run 
 source_paths = ["src/skillsinc/"]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Process tests and timing budgets run the installed code, not the mutant
-pytest_add_cli_args = ["-p", "no:randomly", "-p", "no:cacheprovider", "-m", "not e2e and not perf"]
+pytest_add_cli_args = ["-p", "no:randomly", "-p", "no:cacheprovider", "-m", "not e2e and not perf", "--ignore=tests/tray"]
+# The tray is Qt glue covered by its own journeys; mutation testing it needs a display stack
+do_not_mutate = ["src/skillsinc/tray/*"]
 mutate_only_covered_lines = true
 # Files tests read beside the code
 also_copy = ["examples/", "scripts/"]

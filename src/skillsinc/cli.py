@@ -26,6 +26,7 @@ from skillsinc.settings import (
     ScheduleSettings,
     Settings,
     StatusSettings,
+    TraySettings,
 )
 
 LOG_LEVELS: Final = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -45,6 +46,8 @@ class CommandLine:
         command = str(args.command)
         if command == "harnesses":
             return HarnessesSettings(log_level=log_level)
+        if command == "tray":
+            return TraySettings(self._tray_request(args), log_level)
         if command == "schedule":
             return ScheduleSettings(
                 action=args.action,
@@ -252,7 +255,48 @@ class CommandLine:
             help="list harness profiles and what they support",
         )
         self._add_schedule(commands, configured, common)
+        self._add_tray(commands, common)
         return parser
+
+    @staticmethod
+    def _add_tray(
+        commands: argparse._SubParsersAction[argparse.ArgumentParser],
+        common: argparse.ArgumentParser,
+    ) -> None:
+        """Define ``tray``."""
+        tray = commands.add_parser(
+            "tray",
+            parents=[common],
+            help="run SkillSinc as its own scheduler in the system tray"
+            " (needs the tray extra)",
+        )
+        actions = tray.add_mutually_exclusive_group()
+        actions.add_argument(
+            "--sync",
+            nargs="*",
+            metavar="PROFILE",
+            help="sync now in the running tray (or start it and sync): the"
+            " scheduled profiles, or these",
+        )
+        actions.add_argument(
+            "--show",
+            choices=["popup", "history", "settings", "about"],
+            help="open a tray window",
+        )
+        actions.add_argument(
+            "--quit", action="store_true", help="exit the running tray"
+        )
+
+    @staticmethod
+    def _tray_request(args: argparse.Namespace) -> tuple[str, ...]:
+        """Return the request ``skillsinc tray`` passes to the tray."""
+        if args.sync is not None:
+            return ("sync", *(str(name) for name in args.sync))
+        if args.show is not None:
+            return ("show", str(args.show))
+        if args.quit:
+            return ("quit",)
+        return ()
 
     @staticmethod
     def _add_schedule(

@@ -14,6 +14,7 @@ This guide lists every command, option, exit code, and the JSON report format, f
 | `skillsinc profiles`                         | List the configuration's [sync profiles](configuration.md#profiles) and which apply here               |
 | `skillsinc harnesses`                        | List harness profiles and how each kind is supported (named `profiles` before 0.9.0)                   |
 | `skillsinc schedule install\|remove\|status` | Register, remove, or inspect a scheduled `sync` ([scheduling](scheduling.md))                          |
+| `skillsinc tray`                             | Run the [tray application](tray.md), or pass a request to the running one (needs `skillsinc[tray]`)    |
 
 Options go after the command, for example `skillsinc plan --json`.
 
