@@ -212,7 +212,7 @@ jobs:
             exe="$bin/skillsinc"
           fi
           wheel=$(ls dist/*.whl)
-          uv pip install --python "$RUNNER_TEMP/wheel-venv" "$wheel[tray]"
+          uv pip install --python "$RUNNER_TEMP/wheel-venv" "${wheel}[tray]"
           echo "command=$exe" >> "$GITHUB_OUTPUT"
       - run: uv sync
       - name: Install the Qt runtime libraries the tray tests load
