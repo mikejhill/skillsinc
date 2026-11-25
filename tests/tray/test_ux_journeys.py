@@ -292,15 +292,21 @@ class TestWindows:
 
         assert tray.controller.history_window.empty.isVisible()
 
-    def test_settings_entry_creates_and_opens_settings_json(self, tray: Tray) -> None:
-        """Settings… opens settings.json, writing it first if missing."""
-        store = SettingsStore.default(tray.sandbox.environment)
-        store.path.unlink()
-
+    def test_settings_entry_opens_the_settings_window(self, tray: Tray) -> None:
+        """Settings… opens the window over the current settings and config."""
         tray.controller.tray.action("settings").trigger()
 
-        assert tray.opened == [store.path]
-        assert store.exists()
+        window = tray.controller.settings_window
+        assert window is not None
+        assert window.isVisible()
+        assert not window.schedule_enabled.isChecked()
+        assert set(window.section_tabs) == {
+            "sources",
+            "destinations",
+            "profiles",
+            "routes",
+        }
+        window.close()
 
     def test_open_config_and_state_folder(self, tray: Tray) -> None:
         """The open entries hand the right paths to the desktop."""

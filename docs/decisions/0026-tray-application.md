@@ -15,12 +15,13 @@ Mike wants SkillSinc to be able to schedule itself: a tray icon with a menu (syn
 - **Killing a sync must not block the next.** Cancel and the timeout kill the child, which cannot release `sync.lock`, so the run lock now also counts as stale when the process it names no longer exists (not only after an hour).
 - **Fail closed.** An invalid `settings.json` at start holds scheduled syncs, sign-in changes, and Sync now until it reads cleanly; sign-in entries that are not SkillSinc's are never replaced or removed.
 - **Start at sign-in** is a `Run` value (Windows) or an XDG autostart entry (Linux) that `startup.launch_at_login` reconciles on start and on every settings change.
-- **Settings stay a file.** The tray watches `settings.json` and applies edits at once, keeping the previous settings when an edit is invalid. Its Settings entry opens the file until a settings window replaces it.
+- **Settings are files the window edits.** The tray watches `settings.json` and applies edits at once, keeping the previous settings when an edit is invalid. The settings window edits `settings.json` and each element of `config.json` through forms; Save validates the configuration with `ConfigLoader` (which now also takes candidate text) and splices only changed values into both files, refusing if either changed on disk since it was opened. Forms cover each element's common keys and keep the rest, rather than a generic JSON editor, so the common edits need no knowledge of the schema.
 
 ## Alternatives considered
 
 - **Run syncs in a thread of the tray.** Faster to start, but a sync's logging, signal handling, and failures would share the tray's process, and the result would differ from a command-line sync.
 - **Tkinter or a web UI.** Tkinter has no tray icon; a local web UI needs a browser and a server, and still no tray icon.
+- **A raw JSON editor for `config.json`.** Exact, but it gives no help with the schema, and "Open configuration file" already offers it.
 - **The full PySide6 package.** It adds several hundred megabytes of modules the tray never uses.
 
 ## Consequences

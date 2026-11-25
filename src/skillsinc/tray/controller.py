@@ -13,14 +13,17 @@ from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
+from skillsinc.config import ConfigLoader
 from skillsinc.history import SyncRecord, Trigger
 from skillsinc.paths import Environment
+from skillsinc.profiles.registry import ProfileRegistry
 from skillsinc.tray.about import AboutDialog, AboutFacts
 from skillsinc.tray.catalog import Catalog, CatalogReader
 from skillsinc.tray.history_view import HistoryPopup, HistoryWindow
 from skillsinc.tray.icons import TrayState
 from skillsinc.tray.menu import MenuState, TrayCommands, TrayIcon
 from skillsinc.tray.runner import SyncOutcome, SyncRequest, SyncRunner
+from skillsinc.tray.settings_window import SettingsWindow
 from skillsinc.tray.startup import LoginItem
 from skillsinc.tray.timing import ScheduleState, describe_delta
 from skillsinc.upgrades import current_version
@@ -113,6 +116,7 @@ class TrayController(QObject):
             open_folder=self.open_state,
         )
         self.about_dialog: AboutDialog | None = None
+        self.settings_window: SettingsWindow | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._on_timer)
@@ -251,14 +255,15 @@ class TrayController(QObject):
         self.history_window.present()
 
     def show_settings(self) -> None:
-        """Open settings.json in the default editor, creating it if missing."""
-        if not self._store.exists():
-            try:
-                self._store.save(self._settings)
-            except (OSError, SettingsFileError) as err:
-                self._notify(Notice("SkillSinc settings", str(err), failure=True))
-                return
-        self._open(self._store.path)
+        """Open the settings window, read afresh from both files."""
+        if self.settings_window is None:
+            self.settings_window = SettingsWindow(
+                self._store,
+                default_config=lambda settings: settings.config_file(self._environment),
+                validate=ConfigLoader(ProfileRegistry(), self._environment).load,
+                on_saved=self._on_settings_saved,
+            )
+        self.settings_window.present()
 
     def show_about(self) -> None:
         """Show the About window."""
@@ -311,6 +316,12 @@ class TrayController(QObject):
         self._reschedule()
 
     # Internals
+
+    def _on_settings_saved(self) -> None:
+        """Apply what the settings window saved without waiting for the watcher."""
+        self.reload_settings()
+        self._catalog = self._reader.profiles(self._config)
+        self._refresh_labels()
 
     def _commands(self) -> TrayCommands:
         return TrayCommands(

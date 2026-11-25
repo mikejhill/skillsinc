@@ -320,13 +320,13 @@ class ConfigLoader:
         self._profiles = profiles
         self._environment = environment
 
-    def load(self, path: Path) -> Config:
-        """Parse and validate ``path``.
+    def load(self, path: Path, text: str | None = None) -> Config:
+        """Parse and validate ``path``, or ``text`` as if it were its content.
 
         Raises:
             ConfigurationError: If the file is missing, malformed, or inconsistent.
         """
-        root = Table(self._read(path), path.name)
+        root = Table(self._read(path, text), path.name)
         schema = root.string("$schema")
         version = root.integer("version")
         if version != CONFIG_VERSION:
@@ -738,13 +738,14 @@ class ConfigLoader:
     # Internals
 
     @staticmethod
-    def _read(path: Path) -> dict[str, object]:
+    def _read(path: Path, text: str | None = None) -> dict[str, object]:
         """Read and parse the JSONC file: JSON plus comments and trailing commas."""
         if path.suffix == ".toml":
             msg = f"{path}: {TOML_RETIRED}"
             raise ConfigurationError(msg)
         try:
-            text = path.read_text(encoding="utf-8-sig")
+            if text is None:
+                text = path.read_text(encoding="utf-8-sig")
         except FileNotFoundError as err:
             legacy = path.with_suffix(".toml")
             hint = TOML_RETIRED if legacy.is_file() else "run `skillsinc init`"

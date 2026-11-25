@@ -257,6 +257,26 @@ class Jsonc:
         raise AssertionError  # pragma: no cover - the loop always returns
 
     @staticmethod
+    def delete_path(text: str, path: Sequence[str]) -> str:
+        """Return ``text`` without the member at object-key ``path``, if present.
+
+        Raises:
+            ValueError: If ``path`` is empty or ``text`` is not a JSONC object.
+        """
+        if not path:
+            msg = "expected a non-empty path"
+            raise ValueError(msg)
+        bare = Jsonc.blank_comments(text)
+        span = Jsonc.object_at(bare, 0)
+        for key in path[:-1]:
+            member = span.find(key)
+            if member is None or bare[member.value_start] != "{":
+                return text
+            span = Jsonc.object_at(bare, member.value_start)
+        member = span.find(path[-1])
+        return text if member is None else Jsonc.delete(text, span, member)
+
+    @staticmethod
     def apply(text: str, edits: list[tuple[int, int, str]]) -> str:
         """Apply non-overlapping ``(start, end, replacement)`` edits in one pass.
 

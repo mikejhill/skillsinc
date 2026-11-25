@@ -106,24 +106,6 @@ class TestSettingsEdges:
         finally:
             tray.controller.stop()
 
-    def test_settings_that_cannot_be_created_are_reported(
-        self, qtbot: QtBot, configured: Sandbox
-    ) -> None:
-        """Opening settings when settings.json cannot be written says why."""
-        tray = make_tray(qtbot, configured, save=False)
-        try:
-            folder = SettingsStore.default(configured.environment).path.parent
-            folder.mkdir(parents=True, exist_ok=True)
-            blocked = folder / "settings.json"
-            blocked.mkdir()
-
-            tray.controller.show_settings()
-
-            assert tray.opened == []
-            assert tray.notices[-1].failure
-        finally:
-            tray.controller.stop()
-
     def test_a_new_config_path_is_followed(self, tray: Tray, tmp_path: Path) -> None:
         """Pointing settings at another configuration syncs that one."""
         other = tmp_path / "other" / "config.json"

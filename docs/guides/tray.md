@@ -26,12 +26,21 @@ Set `startup.launch_at_login` in `settings.json` to start the tray when you sign
 ## What it shows
 
 - **Click the icon** for the newest syncs, with **Sync now**, **History**, and **Settings** buttons.
-- **Right-click** for the menu: the last sync and when the next one is due, **Sync now**, **Sync profile** (all profiles, or one; tooltips say why each is active or not), **Cancel sync** while one runs, **Pause scheduled syncs** (1 hour, 4 hours, 24 hours, or until resumed), **Sync history…**, **Settings…**, **Open configuration file**, **Open history and logs folder**, **About SkillSinc** (version, Python, Qt, configuration and state paths), and **Exit**.
+- **Right-click** for the menu: the last sync and when the next one is due, **Sync now**, **Sync profile** (all profiles, or one; tooltips say why each is active or not), **Cancel sync** while one runs, **Pause scheduled syncs** (1 hour, 4 hours, 24 hours, or until resumed), **Sync history…**, **Settings…** (the [settings window](#settings-window)), **Open configuration file**, **Open history and logs folder**, **About SkillSinc** (version, Python, Qt, configuration and state paths), and **Exit**.
 - **The icon** carries a badge while a sync runs, after a failure, and while syncs are paused.
 - **Notifications** report failed syncs, and also syncs that changed files when `notifications.changes` is on.
 - **Sync history…** lists recorded syncs (the same records as `skillsinc history`), newest first, a thousand at a time with **Load older runs**, and the selected run's changes and errors.
 
 Settings take effect when `settings.json` is saved; an invalid edit is reported and the previous settings stay in force. If `settings.json` is invalid when the tray starts, nothing automatic happens (no scheduled sync, no sign-in change, and Sync now refuses) until the file is fixed.
+
+## Settings window
+
+**Settings…** opens one window over both files:
+
+- **General**: the [`settings.json`](settings.md) values: schedule on or off, interval, sync at start, which profiles scheduled syncs select (the ones active here, or only those ticked), notifications, update checks, start at sign-in, history size, and which configuration file to sync.
+- **Sources**, **Destinations**, **Profiles**, **Routes**: every element of `config.json`, one row each, with **Add…**, **Edit…** (or double-click), and **Remove**. The forms cover each element's common keys (a source's folder, GitHub repository, or Git URL with ref, subdirectory, and refresh; a destination's harness, folder, and enabled switch; a profile's description and default; a route's sources, destinations, include and exclude patterns, lossy switch, and profiles). Keys the form does not show, such as a profile's `when` conditions, are kept as they are. Renaming a source, destination, or profile renames it in every route.
+
+**Save** checks the edited configuration with the same loader `skillsinc sync` uses and writes nothing if it is invalid, showing why. It then writes only what changed: comments and formatting elsewhere in both files stay (a changed element, or the routes list when a route changed, is rewritten as a whole). If either file was edited on disk while the window was open, Save refuses rather than overwrite that edit; reopen the window to start from the file as it is.
 
 ## How syncs run
 
