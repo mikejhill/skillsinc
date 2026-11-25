@@ -62,7 +62,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.source_sha || github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -81,7 +81,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.source_sha || github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -103,7 +103,7 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0 # Diff coverage compares against the base branch
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
@@ -158,7 +158,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.source_sha || github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -189,7 +189,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.source_sha || github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
@@ -244,7 +244,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.source_sha || github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -281,7 +281,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.source_sha || github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - name: Release and mutation alert boundary tests (no network or credentials)
