@@ -134,7 +134,7 @@ jobs:
         uv venv .smoke-venv
         uv pip install --python .smoke-venv/bin/python dist/*.whl
         .smoke-venv/bin/skillsinc --version
-        .smoke-venv/bin/skillsinc profiles
+        .smoke-venv/bin/skillsinc harnesses
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: dist-${{ github.sha }}

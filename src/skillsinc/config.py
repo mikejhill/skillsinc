@@ -12,6 +12,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Final, NoReturn
 
+from skillsinc.conditions import SYSTEMS, Condition, SyncProfile
 from skillsinc.entries import JsonDocument
 from skillsinc.exceptions import ConfigurationError
 from skillsinc.jsonc import Jsonc
@@ -141,6 +142,8 @@ class RouteConfig:
     include: tuple[str, ...] = ALL_ITEMS
     exclude: tuple[str, ...] = ()
     allow_lossy: bool = False
+    profiles: tuple[str, ...] = ()
+    """Sync profiles this route belongs to; empty applies on every run."""
 
     def selects(self, item: Customization) -> bool:
         """Return True if ``item`` comes from a routed source and passes the filters."""
@@ -172,6 +175,10 @@ class Config:
     """The project root for a project configuration, or None for the user's."""
     schema: str | None = None
     """The ``$schema`` value, which only editors read."""
+    profiles: Mapping[str, SyncProfile] = field(default_factory=dict[str, SyncProfile])
+    """Named sync profiles that routes may belong to."""
+    inactive_routes: tuple[RouteConfig, ...] = ()
+    """Routes left out by inactive profiles; still checked for source overlaps."""
 
     def state_directory(self, environment: Environment) -> Path:
         """Return where this configuration keeps its manifests and run lock.
@@ -222,6 +229,10 @@ class Table:
         ):
             self._fail(key, "an object of non-empty strings")
         return {str(name): str(item) for name, item in value.items()}
+
+    def value(self, key: str) -> object:
+        """Return a raw value (refusing null), or None when absent."""
+        return self._take(key)
 
     def boolean(self, key: str, *, default: bool) -> bool:
         """Return a boolean value, or ``default`` when absent."""
@@ -332,10 +343,14 @@ class ConfigLoader:
             name: self._destination(name, table, base, profiles)
             for name, table in root.tables("destinations").items()
         }
+        profiles = {
+            name: self._profile(name, table)
+            for name, table in root.tables("profiles").items()
+        }
         routes = tuple(self._route(table) for table in root.table_list("routes"))
         root.finish()
 
-        config = Config(path, sources, destinations, routes, project, schema)
+        config = Config(path, sources, destinations, routes, project, schema, profiles)
         self._check_references(config)
         self._check_overlaps(config)
         return config
@@ -606,6 +621,58 @@ class ConfigLoader:
             path = default
         return DestinationConfig(name, profile.name, path, enabled)
 
+    @classmethod
+    def _profile(cls, name: str, table: Table) -> SyncProfile:
+        """Build one sync profile."""
+        where = f"profiles.{name}"
+        if not valid_name(name):
+            msg = (
+                f"{where}: invalid profile name; use letters, digits, '.', '_',"
+                " and '-', starting with a letter or digit"
+            )
+            raise ConfigurationError(msg)
+        description = table.string("description", "") or ""
+        default = table.boolean("default", default=True)
+        when = table.table("when")
+        table.finish()
+        return SyncProfile(
+            name, description, default, None if when is None else cls._when(where, when)
+        )
+
+    @staticmethod
+    def _when(where: str, table: Table) -> Condition:
+        """Build a profile's ``when`` conditions."""
+        where = f"{where}.when"
+        hosts = table.strings("host")
+        systems = table.strings("os")
+        unknown = [system for system in systems if system not in SYSTEMS]
+        if unknown:
+            msg = (
+                f"{where}.os: unknown system(s) {', '.join(unknown)};"
+                f" use {', '.join(SYSTEMS)}"
+            )
+            raise ConfigurationError(msg)
+        raw = table.value("env")
+        variables: dict[str, str | bool] = {}
+        if raw is not None:
+            if not isinstance(raw, dict) or not all(
+                isinstance(key, str)
+                and key
+                and (isinstance(value, bool) or (isinstance(value, str) and value))
+                for key, value in raw.items()
+            ):
+                msg = (
+                    f"{where}.env: expected an object of variable names to a value"
+                    " pattern, true, or false"
+                )
+                raise ConfigurationError(msg)
+            variables = {str(key): value for key, value in raw.items()}
+        table.finish()
+        if not (hosts or systems or variables):
+            msg = f"{where}: list at least one of host, os, or env"
+            raise ConfigurationError(msg)
+        return Condition(hosts, systems, variables)
+
     @staticmethod
     def _route(table: Table) -> RouteConfig:
         """Build one route."""
@@ -615,6 +682,7 @@ class ConfigLoader:
             include=table.strings("include", ALL_ITEMS),
             exclude=table.strings("exclude"),
             allow_lossy=table.boolean("allow_lossy", default=False),
+            profiles=table.strings("profiles"),
         )
         table.finish()
         return route
@@ -635,6 +703,13 @@ class ConfigLoader:
             ]
             if missing:
                 msg = f"{where}: unknown source/destination: {', '.join(missing)}"
+                raise ConfigurationError(msg)
+            undefined = [name for name in route.profiles if name not in config.profiles]
+            if undefined:
+                msg = (
+                    f"{where}.profiles: undefined profile(s): {', '.join(undefined)};"
+                    " define them under the top-level profiles"
+                )
                 raise ConfigurationError(msg)
 
     @staticmethod

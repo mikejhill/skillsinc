@@ -33,9 +33,9 @@ class TestEntryPoint:
             f"Expected exit 0 and {expected!r}, got {result.status}: {result!r}"
         )
 
-    def test_profiles_lists_every_harness(self, cli: Cli) -> None:
-        """``profiles`` prints a row for each built-in harness."""
-        result = cli.run("profiles")
+    def test_harnesses_lists_every_harness(self, cli: Cli) -> None:
+        """``harnesses`` prints a row for each built-in harness."""
+        result = cli.run("harnesses")
 
         names = {line.split()[0] for line in result.stdout.splitlines()[1:] if line}
         expected = {"claude", "copilot", "vscode", "codex", "agents", "generic"}

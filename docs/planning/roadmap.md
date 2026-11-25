@@ -4,13 +4,13 @@ This is the prioritized list of work after the 2026-10 rebuild, with enough cont
 
 ## Status
 
-| Area                                     | State                                                                                                                            |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| CLI (`init`, `plan`, `sync`, `profiles`) | Complete, tested                                                                                                                 |
-| Profiles                                 | `claude`, `copilot`, `vscode`, `codex`, `agents`, `generic`                                                                      |
-| MCP servers                              | Claude Code, Copilot CLI, VS Code, Codex; see the [gap list](gap-list.md)                                                        |
-| Harness locations                        | Verified on Windows on 2026-10-21 for Claude Code, Copilot CLI, and Codex; see [harness profiles](../guides/harness-profiles.md) |
-| Releases                                 | Automated with release-please; see [releasing](../guides/releasing.md)                                                           |
+| Area                                                  | State                                                                                                                            |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| CLI (`init`, `plan`, `sync`, `profiles`, `harnesses`) | Complete, tested                                                                                                                 |
+| Profiles                                              | `claude`, `copilot`, `vscode`, `codex`, `agents`, `generic`                                                                      |
+| MCP servers                                           | Claude Code, Copilot CLI, VS Code, Codex; see the [gap list](gap-list.md)                                                        |
+| Harness locations                                     | Verified on Windows on 2026-10-21 for Claude Code, Copilot CLI, and Codex; see [harness profiles](../guides/harness-profiles.md) |
+| Releases                                              | Automated with release-please; see [releasing](../guides/releasing.md)                                                           |
 
 Published releases are alpha releases for developers. The test matrix covers
 Windows, macOS, and Linux filesystem and CLI behavior; it does not establish

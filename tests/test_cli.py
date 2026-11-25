@@ -14,6 +14,7 @@ from skillsinc.__main__ import Application
 from skillsinc.cli import CommandLine
 from skillsinc.paths import Environment
 from skillsinc.settings import (
+    HarnessesSettings,
     InitSettings,
     PlanSettings,
     ProfilesSettings,
@@ -78,13 +79,33 @@ class TestCommandLine:
             log_level="WARNING",
         ), f"Expected init settings, got {result!r}"
 
-    def test_profiles_settings_are_typed(self, environment: Environment) -> None:
-        """The profile table command needs no configuration file."""
-        result = CommandLine(environment).parse(["profiles"])
+    def test_harnesses_settings_are_typed(self, environment: Environment) -> None:
+        """The harness table command needs no configuration file."""
+        result = CommandLine(environment).parse(["harnesses"])
 
-        assert result == ProfilesSettings("WARNING"), (
-            f"Expected profile settings, got {result!r}"
+        assert result == HarnessesSettings("WARNING"), (
+            f"Expected harness settings, got {result!r}"
         )
+
+    def test_profiles_settings_are_typed(self, environment: Environment) -> None:
+        """``profiles`` reads the configuration and accepts --profile and --json."""
+        result = CommandLine(environment).parse(
+            ["profiles", "--json", "-p", "work", "--profile", "home,x"]
+        )
+
+        assert result == ProfilesSettings(
+            environment.config_file(),
+            json_output=True,
+            log_level="WARNING",
+            profiles=("work", "home,x"),
+        ), f"Expected profile settings, got {result!r}"
+
+    def test_sync_accepts_profiles(self, environment: Environment) -> None:
+        """``sync --profile`` is repeatable and kept verbatim for the selector."""
+        result = CommandLine(environment).parse(["sync", "-p", "a", "-p", "b,c"])
+
+        assert isinstance(result, PlanSettings), f"Expected plan settings: {result!r}"
+        assert result.profiles == ("a", "b,c"), f"Got {result.profiles!r}"
 
     def test_schedule_install_settings_are_typed(
         self, environment: Environment
@@ -205,9 +226,9 @@ class TestApplication:
         assert status == 0, f"Expected success, got {status}: {output}"
         assert "0 */1 * * *" in output, f"Expected an hourly line, got {output}"
 
-    def test_profiles_lists_builtin_harnesses(self, sandbox: Sandbox) -> None:
-        """Expose the supported profiles without reading a configuration."""
-        status, output = sandbox.run("profiles")
+    def test_harnesses_lists_builtin_profiles(self, sandbox: Sandbox) -> None:
+        """Expose the supported harness profiles without reading a configuration."""
+        status, output = sandbox.run("harnesses")
 
         assert status == 0, f"Expected all built-ins, got {status}: {output}"
         assert all(
@@ -229,7 +250,7 @@ class TestApplication:
         out = io.StringIO()
         monkeypatch.setattr(out, "write", self.interrupt)
 
-        result = Application(environment, out).run(["profiles"])
+        result = Application(environment, out).run(["harnesses"])
 
         assert result == 130, f"Expected interrupted exit 130, got {result}"
 
@@ -245,7 +266,7 @@ class TestApplication:
         monkeypatch.setattr(Environment, "current", lambda: environment)
 
         with pytest.raises(SystemExit) as caught:
-            Application.main(["profiles"])
+            Application.main(["harnesses"])
 
         assert caught.value.code == 0, (
             f"Expected main exit 0, got {caught.value.code!r}"
