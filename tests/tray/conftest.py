@@ -49,6 +49,25 @@ def add_profiles(config: Path, profiles: dict[str, dict[str, object]]) -> None:
     config.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+class FakeRunKey:
+    """An in-memory Run key."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def read(self, name: str) -> str | None:
+        """Return the named value."""
+        return self.values.get(name)
+
+    def write(self, name: str, value: str) -> None:
+        """Set the named value."""
+        self.values[name] = value
+
+    def delete(self, name: str) -> None:
+        """Remove the named value."""
+        self.values.pop(name, None)
+
+
 @dataclass
 class Tray:
     """A started controller over a sandbox, with what it opened and notified."""
@@ -116,7 +135,8 @@ def make_tray(  # noqa: PLR0913 - every collaborator a test may replace
         store=store,
         runner=runner,
         opener=opener,
-        login_item=login_item or LoginItem(sandbox.environment, ["skillsinc-tray"]),
+        login_item=login_item
+        or LoginItem(sandbox.environment, ["skillsinc-tray"], FakeRunKey()),
         quit_application=lambda: quits.append(True),
     )
     tray = Tray(controller, sandbox, qtbot, opened, [], quits)

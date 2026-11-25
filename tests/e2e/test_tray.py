@@ -42,7 +42,11 @@ class TestTrayProcess:
         """A second launch hands its request to the running tray."""
         Harnesses.install(cli.home)
         assert cli.run("init", "--source", str(library)).status == 0
-        environment = cli.environment | {"QT_QPA_PLATFORM": "offscreen"}
+        # Never touch the developer's real sign-in entry (HKCU is not per home)
+        environment = cli.environment | {
+            "QT_QPA_PLATFORM": "offscreen",
+            "SKILLSINC_TRAY_SIGN_IN": "off",
+        }
         cli.environment = environment
         tray = subprocess.Popen(  # noqa: S603 - argv is built by the test
             [*cli.command, "tray"],

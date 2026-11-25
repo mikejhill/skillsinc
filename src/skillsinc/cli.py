@@ -42,8 +42,8 @@ class CommandLine:
     def parse(self, argv: Sequence[str] | None = None) -> Settings:  # noqa: PLR0911
         """Parse ``argv`` into the settings for one command."""
         args = self._parser.parse_args(argv)
-        log_level = str(args.log_level)
         command = str(args.command)
+        log_level = str(args.log_level or ("INFO" if command == "tray" else "WARNING"))
         if command == "harnesses":
             return HarnessesSettings(log_level=log_level)
         if command == "tray":
@@ -128,9 +128,9 @@ class CommandLine:
         common = argparse.ArgumentParser(add_help=False)
         common.add_argument(
             "--log-level",
-            default="WARNING",
+            default=None,
             choices=LOG_LEVELS,
-            help="diagnostic verbosity on stderr (default: %(default)s)",
+            help="diagnostic verbosity on stderr (default: WARNING; tray: INFO)",
         )
         configured = argparse.ArgumentParser(add_help=False, parents=[common])
         configured.add_argument(

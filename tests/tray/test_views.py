@@ -76,7 +76,7 @@ class TestWindows:
 
     def test_clearing_the_selection_keeps_the_details(self, qtbot: QtBot) -> None:
         """Moving to no row leaves the last details in place."""
-        window = HistoryWindow(lambda: [_record()], _nothing, _nothing)
+        window = HistoryWindow(lambda _limit: [_record()], _nothing, _nothing)
         qtbot.addWidget(window)
         window.refresh()
         shown = window.details.toPlainText()
@@ -111,3 +111,21 @@ class TestWindows:
         QApplication.sendEvent(popup, key)
 
         assert not popup.isVisible()
+
+
+def test_history_window_pages_older_runs(qtbot: QtBot) -> None:
+    """Load older runs reads another page; it hides when all are shown."""
+    records = [_record(id=f"r{n}") for n in range(5)]
+    window = HistoryWindow(lambda limit: records[:limit], _nothing, _nothing)
+    qtbot.addWidget(window)
+    window.limit = 2
+    window.show()
+
+    window.refresh()
+    shown = window.model.rowCount()
+    visible = window.more_button.isVisible()
+    window.more_button.click()
+
+    assert (shown, visible) == (2, True)
+    assert window.model.rowCount() == 5
+    assert not window.more_button.isVisible()

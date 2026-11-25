@@ -118,7 +118,7 @@ def test_menu_rebuild_with_many_profiles(qtbot: QtBot) -> None:
 def test_history_window_with_a_full_history(qtbot: QtBot, tmp_path: Path) -> None:
     """Opening the history window over a full history stays under a second."""
     records = _records(tmp_path)
-    window = HistoryWindow(lambda: records, _nothing, _nothing)
+    window = HistoryWindow(lambda limit: records[:limit], _nothing, _nothing)
     qtbot.addWidget(window)
 
     elapsed = _timed(lambda: (window.refresh(), window.show()))

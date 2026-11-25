@@ -143,7 +143,12 @@ class Application:
                 ' or `pip install "skillsinc[tray]"`'
             )
             raise AppError(msg) from err
-        return app.run(settings.request, self._environment, self._out)
+        return app.run(
+            settings.request,
+            self._environment,
+            self._out,
+            log_level=settings.log_level,
+        )
 
     @staticmethod
     def _configure_logging(level: str, stream: TextIO | None = None) -> None:

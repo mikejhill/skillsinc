@@ -223,3 +223,17 @@ class TestIcons:
         icon.set_icon_state(TrayState.FAILED)
 
         assert icon.icon_state is TrayState.FAILED
+
+
+def test_rebuilding_releases_old_submenus(qtbot: QtBot) -> None:
+    """Refreshing the menu many times does not accumulate submenus."""
+    from PySide6.QtCore import QCoreApplication, QEvent  # noqa: PLC0415
+    from PySide6.QtWidgets import QMenu  # noqa: PLC0415
+
+    del qtbot
+    icon = TrayIcon(Calls().commands())
+    for _ in range(50):
+        icon.update_menu(MenuState(catalog=CATALOG))
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert len(icon.menu.findChildren(QMenu)) <= 4

@@ -106,6 +106,9 @@ class TrayIcon(QSystemTrayIcon):
     def update_menu(self, state: MenuState) -> None:
         """Rebuild the menu for ``state``."""
         self._state = state
+        for submenu in self._menu.findChildren(QMenu):
+            # clear() keeps submenus as children; release them with their actions
+            submenu.deleteLater()
         self._menu.clear()
         self._actions.clear()
         c = self._commands

@@ -38,6 +38,8 @@ FAILED_MARK: Final = "✗"
 OK_COLOR: Final = "#2F9E6E"
 FAILED_COLOR: Final = "#E5484D"
 POPUP_ROWS: Final = 8
+# Runs the history window reads at a time; Load older runs adds another page
+PAGE: Final = 1000
 TRIGGER_LABELS: Final = {
     "manual": "Terminal",
     "scheduled": "OS scheduler",
@@ -169,13 +171,14 @@ class HistoryWindow(QWidget):
 
     def __init__(
         self,
-        load: Callable[[], Sequence[SyncRecord]],
+        load: Callable[[int], Sequence[SyncRecord]],
         sync_now: Callable[[], object],
         open_folder: Callable[[], None],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._load = load
+        self.limit = PAGE
         self.setWindowTitle("SkillSinc sync history")
         self.resize(900, 560)
         self.model = HistoryModel(self)
@@ -202,12 +205,16 @@ class HistoryWindow(QWidget):
         self.sync_button.clicked.connect(lambda _checked=False: sync_now())
         self.refresh_button = QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
+        self.more_button = QPushButton("Load older runs", self)
+        self.more_button.clicked.connect(lambda _checked=False: self.load_more())
+        self.more_button.setVisible(False)
         self.folder_button = QPushButton("Open folder", self)
         self.folder_button.clicked.connect(lambda _checked=False: open_folder())
         buttons = QHBoxLayout()
         buttons.addWidget(self.sync_button)
         buttons.addWidget(self.refresh_button)
         buttons.addStretch(1)
+        buttons.addWidget(self.more_button)
         buttons.addWidget(self.folder_button)
         layout = QVBoxLayout(self)
         layout.addLayout(buttons)
@@ -218,7 +225,8 @@ class HistoryWindow(QWidget):
     def refresh(self) -> None:
         """Reload the records, keeping the selected run selected."""
         selected = self.selected()
-        self.model.set_records(self._load())
+        self.model.set_records(self._load(self.limit))
+        self.more_button.setVisible(self.model.rowCount() >= self.limit)
         has_rows = self.model.rowCount() > 0
         self.empty.setVisible(not has_rows)
         if not has_rows:
@@ -233,6 +241,11 @@ class HistoryWindow(QWidget):
             0,
         )
         self.table.selectRow(row)
+
+    def load_more(self) -> None:
+        """Show another page of older runs."""
+        self.limit += PAGE
+        self.refresh()
 
     def selected(self) -> SyncRecord | None:
         """Return the selected run, if any."""

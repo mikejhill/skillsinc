@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -9,33 +10,14 @@ from pathlib import Path
 import pytest
 from pytestqt.qtbot import QtBot
 from tests.conftest import Sandbox
-from tests.tray.conftest import add_profiles
+from tests.tray.conftest import FakeRunKey, add_profiles
 
 from skillsinc.paths import Environment
 from skillsinc.tray.catalog import CatalogReader
 from skillsinc.tray.instance import SingleInstance
-from skillsinc.tray.startup import VALUE_NAME, LoginItem, tray_command
+from skillsinc.tray.startup import VALUE_NAME, EntryState, LoginItem, tray_command
 
 COMMAND = ["C:\\Program Files\\Python\\pythonw.exe", "-P", "-m", "skillsinc", "tray"]
-
-
-class FakeRunKey:
-    """An in-memory Run key."""
-
-    def __init__(self) -> None:
-        self.values: dict[str, str] = {}
-
-    def read(self, name: str) -> str | None:
-        """Return the named value."""
-        return self.values.get(name)
-
-    def write(self, name: str, value: str) -> None:
-        """Set the named value."""
-        self.values[name] = value
-
-    def delete(self, name: str) -> None:
-        """Remove the named value."""
-        self.values.pop(name, None)
 
 
 class TestLoginItem:
@@ -65,6 +47,97 @@ class TestLoginItem:
         item = LoginItem(replace(environment, platform="win32"), COMMAND, key)
 
         assert not item.enabled()
+
+    @pytest.mark.parametrize(
+        ("value", "state"),
+        [
+            ("old.exe -m skillsinc tray", EntryState.OWNED),
+            (r"C:\Tools\skillsinc-tray.exe", EntryState.OWNED),
+            ("C:\\Other\\app.exe --start", EntryState.CONFLICT),
+        ],
+    )
+    def test_windows_entries_are_owned_or_conflicting(
+        self, environment: Environment, value: str, state: EntryState
+    ) -> None:
+        """Only a SkillSinc tray command is replaced; others are refused."""
+        key = FakeRunKey()
+        key.values[VALUE_NAME] = value
+        item = LoginItem(replace(environment, platform="win32"), COMMAND, key)
+
+        assert item.state() is state
+        if state is EntryState.CONFLICT:
+            with pytest.raises(OSError, match="belongs to another program"):
+                item.apply(enabled=True)
+            assert item.apply(enabled=False)
+            assert key.values[VALUE_NAME] == value
+        else:
+            assert item.apply(enabled=True)
+            assert item.enabled()
+
+    def test_windows_disabling_when_absent(self, environment: Environment) -> None:
+        """Nothing registered: disabling deletes nothing."""
+        key = FakeRunKey()
+        item = LoginItem(replace(environment, platform="win32"), COMMAND, key)
+
+        assert item.state() is EntryState.ABSENT
+        assert item.apply(enabled=False)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="links need privileges")
+    def test_linux_foreign_and_linked_entries_are_left_alone(
+        self, environment: Environment, tmp_path: Path
+    ) -> None:
+        """Another program's file, or a link, at the entry's path is refused."""
+        linux = replace(environment, platform="linux")
+        item = LoginItem(linux, ["skillsinc-tray"])
+        path = environment.config_home / "autostart" / "skillsinc-tray.desktop"
+        path.parent.mkdir(parents=True)
+        path.write_text("[Desktop Entry]\nExec=other\n", encoding="utf-8")
+
+        assert item.state() is EntryState.CONFLICT
+        with pytest.raises(OSError, match="another program"):
+            item.apply(enabled=True)
+        assert item.apply(enabled=False)
+        assert path.read_text(encoding="utf-8") == "[Desktop Entry]\nExec=other\n"
+
+        target = tmp_path / "victim.txt"
+        target.write_text("keep", encoding="utf-8")
+        path.unlink()
+        path.symlink_to(target)
+
+        assert item.state() is EntryState.CONFLICT
+        with pytest.raises(OSError, match="another program"):
+            item.apply(enabled=True)
+        assert target.read_text(encoding="utf-8") == "keep"
+
+    def test_linux_older_skillsinc_entry_is_replaced(
+        self, environment: Environment
+    ) -> None:
+        """An entry with SkillSinc's marker but another command is updated."""
+        linux = replace(environment, platform="linux")
+        item = LoginItem(linux, ["skillsinc-tray"])
+        path = environment.config_home / "autostart" / "skillsinc-tray.desktop"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "[Desktop Entry]\nExec=/old/python -m skillsinc tray\n"
+            "X-SkillSinc-Tray=true\n",
+            encoding="utf-8",
+        )
+
+        assert item.state() is EntryState.OWNED
+        assert item.apply(enabled=True)
+        assert item.enabled()
+
+    def test_linux_unreadable_entry_is_a_conflict(
+        self, environment: Environment
+    ) -> None:
+        """A file that is not text is somebody else's."""
+        linux = replace(environment, platform="linux")
+        item = LoginItem(linux, ["skillsinc-tray"])
+        path = environment.config_home / "autostart" / "skillsinc-tray.desktop"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"\xff\xfe")
+
+        assert item.state() is EntryState.CONFLICT
 
     def test_linux_autostart_entry(self, environment: Environment) -> None:
         """Enabling writes a desktop entry; disabling deletes it."""
@@ -180,6 +253,21 @@ class TestSingleInstance:
 
         assert not instance.listen()
         instance._on_connection()
+
+    def test_lock_holder_keeps_the_role(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """While one launch holds the start lock, another cannot listen."""
+        del qtbot
+        lock = tmp_path / "tray.lock"
+        first = SingleInstance(f"skillsinc-test-{uuid.uuid4().hex}")
+        second = SingleInstance(f"skillsinc-test-{uuid.uuid4().hex}")
+        assert first.listen(lock)
+        try:
+            assert not second.listen(lock)
+            assert not second.forward_when_ready(["sync"], 0)
+        finally:
+            first.close()
+        assert second.listen(lock)
+        second.close()
 
     def test_name_is_per_user_and_state_folder(
         self, environment: Environment, tmp_path: Path

@@ -2,22 +2,45 @@
 
 Windows: a value under the user's ``Run`` key. Linux: an XDG autostart entry.
 macOS is not supported yet; ``supported`` says so and nothing is written.
+
+Only SkillSinc's own entries are replaced or removed: a ``Run`` value or a
+desktop file at the same name that runs something else, or a desktop file that
+is a link or not a regular file, is a conflict and is left alone.
 """
 
 from __future__ import annotations
 
+import re
+import stat
 import subprocess
 import sys
 from collections.abc import Sequence
+from enum import Enum
 from pathlib import Path
 from typing import Final, Protocol
 
 from skillsinc.paths import Environment
+from skillsinc.schema import write_atomically
 
 VALUE_NAME: Final = "SkillSinc"
 RUN_KEY: Final = r"Software\Microsoft\Windows\CurrentVersion\Run"
 DESKTOP_FILE: Final = "skillsinc-tray.desktop"
 NOT_WINDOWS: Final = "the Run key exists only on Windows"
+MARKER: Final = "X-SkillSinc-Tray=true"
+# A Run value that starts some SkillSinc tray, from any installation
+OWNED_COMMAND: Final = re.compile(r"-m\s+skillsinc\s+tray\b|skillsinc-tray", re.I)
+
+
+class EntryState(Enum):
+    """What is registered at the sign-in entry's name."""
+
+    ABSENT = "absent"
+    CURRENT = "current"
+    """SkillSinc's entry, running this installation's command."""
+    OWNED = "owned"
+    """SkillSinc's entry, running another command (an older installation)."""
+    CONFLICT = "conflict"
+    """Something else: never replaced or removed."""
 
 
 class RunKey(Protocol):
@@ -99,29 +122,72 @@ class LoginItem:
             return subprocess.list2cmdline(self._command)
         return " ".join(_quote(part) for part in self._command)
 
+    def state(self) -> EntryState:
+        """Return what is registered at the entry's name now."""
+        if self._platform == "win32":
+            return self._run_value_state()
+        if self._platform.startswith("linux"):
+            return self._desktop_state()
+        return EntryState.ABSENT
+
+    def _run_value_state(self) -> EntryState:
+        value = self._key().read(VALUE_NAME)
+        if value is None:
+            return EntryState.ABSENT
+        if value == self.command_line:
+            return EntryState.CURRENT
+        if OWNED_COMMAND.search(value):
+            return EntryState.OWNED
+        return EntryState.CONFLICT
+
+    def _desktop_state(self) -> EntryState:
+        path = self._desktop_file()
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            return EntryState.ABSENT
+        try:
+            text = path.read_text(encoding="utf-8") if stat.S_ISREG(mode) else ""
+        except (OSError, UnicodeDecodeError):
+            text = ""
+        if text == self._entry():
+            return EntryState.CURRENT
+        return EntryState.OWNED if MARKER in text.splitlines() else EntryState.CONFLICT
+
     def enabled(self) -> bool:
         """Return True if the tray starts at sign-in with this command."""
-        if self._platform == "win32":
-            return self._key().read(VALUE_NAME) == self.command_line
-        if self._platform.startswith("linux"):
-            path = self._desktop_file()
-            return path.is_file() and path.read_text(encoding="utf-8") == self._entry()
-        return False
+        return self.state() is EntryState.CURRENT
 
     def apply(self, *, enabled: bool) -> bool:
-        """Start the tray at sign-in or stop doing so; False if unsupported."""
+        """Start the tray at sign-in or stop doing so; False if unsupported.
+
+        Raises:
+            OSError: If another program's entry holds the name, or on a write
+                failure.
+        """
         if not self.supported:
             return False
+        state = self.state()
+        if state is EntryState.CONFLICT:
+            if not enabled:
+                return True
+            where = (
+                rf"HKCU\{RUN_KEY}\{VALUE_NAME}"
+                if self._platform == "win32"
+                else str(self._desktop_file())
+            )
+            msg = f"{where} belongs to another program; leaving it alone"
+            raise OSError(msg)
         if self._platform == "win32":
             if enabled:
                 self._key().write(VALUE_NAME, self.command_line)
-            else:
+            elif state is not EntryState.ABSENT:
                 self._key().delete(VALUE_NAME)
             return True
         path = self._desktop_file()
         if enabled:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(self._entry(), encoding="utf-8")
+            write_atomically(path, self._entry())
         else:
             path.unlink(missing_ok=True)
         return True
@@ -142,6 +208,7 @@ class LoginItem:
             "Comment=Sync agent skills on a schedule\n"
             f"Exec={self.command_line}\n"
             "X-GNOME-Autostart-enabled=true\n"
+            f"{MARKER}\n"
         )
 
 

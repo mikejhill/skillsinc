@@ -7,9 +7,17 @@ import hashlib
 import json
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Final
 
-from PySide6.QtCore import QCoreApplication, QObject, Signal
+from PySide6.QtCore import (
+    QCoreApplication,
+    QDeadlineTimer,
+    QLockFile,
+    QObject,
+    QThread,
+    Signal,
+)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from skillsinc.paths import Environment
@@ -17,6 +25,7 @@ from skillsinc.paths import Environment
 logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT_MS: Final = 500
+RETRY_MS: Final = 100
 
 
 class SingleInstance(QObject):
@@ -28,6 +37,7 @@ class SingleInstance(QObject):
         super().__init__(parent)
         self._name = name or f"SkillSinc-tray-{getpass.getuser()}"
         self._server: QLocalServer | None = None
+        self._lock: QLockFile | None = None
 
     @staticmethod
     def name_for(environment: Environment) -> str:
@@ -57,8 +67,28 @@ class SingleInstance(QObject):
         socket.disconnectFromServer()
         return True
 
-    def listen(self) -> bool:
-        """Become the running tray; False if the name cannot be taken."""
+    def forward_when_ready(self, arguments: Sequence[str], wait_ms: int) -> bool:
+        """Forward ``arguments`` once a starting tray listens, within ``wait_ms``."""
+        deadline = QDeadlineTimer(wait_ms)
+        while True:
+            if self.forward(arguments):
+                return True
+            if deadline.hasExpired():
+                return False
+            QThread.msleep(RETRY_MS)
+
+    def listen(self, lock: Path | None = None) -> bool:
+        """Become the running tray; False if another holds ``lock`` or the name.
+
+        The lock file serializes launches, so a stale socket is removed only
+        by the launch that will listen on it.
+        """
+        if lock is not None:
+            claim = QLockFile(str(lock))
+            claim.setStaleLockTime(0)  # stale only when its process is gone
+            if not claim.tryLock(0):
+                return False
+            self._lock = claim
         QLocalServer.removeServer(self._name)
         server = QLocalServer(self)
         server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
@@ -66,6 +96,7 @@ class SingleInstance(QObject):
             logger.warning(
                 "Could not listen on %s: %s", self._name, server.errorString()
             )
+            self.close()
             return False
         server.newConnection.connect(self._on_connection)
         self._server = server
@@ -76,6 +107,9 @@ class SingleInstance(QObject):
         if self._server is not None:
             self._server.close()
             self._server = None
+        if self._lock is not None:
+            self._lock.unlock()
+            self._lock = None
 
     def _on_connection(self) -> None:
         server = self._server

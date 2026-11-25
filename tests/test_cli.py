@@ -117,7 +117,7 @@ class TestCommandLine:
         """``tray`` options become the request a running tray receives."""
         result = CommandLine(environment).parse(["tray", *argv])
 
-        assert result == TraySettings(request_, "WARNING"), f"Got {result!r}"
+        assert result == TraySettings(request_, "INFO"), f"Got {result!r}"
 
     def test_sync_accepts_profiles(self, environment: Environment) -> None:
         """``sync --profile`` is repeatable and kept verbatim for the selector."""
@@ -271,14 +271,16 @@ class TestApplication:
 
         calls: list[tuple[str, ...]] = []
 
-        def run(request: tuple[str, ...], *_args: object) -> int:
-            calls.append(request)
+        def run(request: tuple[str, ...], *_args: object, log_level: str) -> int:
+            calls.append((*request, log_level))
             return 0
 
         monkeypatch.setattr(app, "run", run)
 
-        assert Application(environment, io.StringIO()).run(["tray", "--quit"]) == 0
-        assert calls == [("quit",)]
+        out = io.StringIO()
+        assert Application(environment, out).run(["tray", "--quit"]) == 0
+        assert Application(environment, out).run(["tray", "--log-level", "ERROR"]) == 0
+        assert calls == [("quit", "INFO"), ("ERROR",)]
 
     def test_tray_without_the_extra_explains_the_install(
         self,

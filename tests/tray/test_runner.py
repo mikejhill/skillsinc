@@ -207,3 +207,19 @@ class TestRunnerEdges:
 
         assert len(outcome.output.encode()) <= MAXIMUM_OUTPUT
         assert outcome.output.endswith("END\n") or outcome.output.endswith("END\r\n")
+
+
+def test_queued_request_keeps_its_configuration(
+    qtbot: QtBot, tmp_path: Path, fake: Path
+) -> None:
+    """Changing the configuration does not redirect a sync already queued."""
+    runner = _runner(tmp_path, fake, sleep=0.5)
+    first, second = SyncRequest(Trigger.TRAY), SyncRequest(Trigger.TRAY, ("home",))
+    with qtbot.waitSignals([runner.finished, runner.finished], timeout=20_000):
+        assert runner.request(first)
+        assert runner.request(second)
+        runner.set_config(tmp_path / "other.json")
+        assert runner.request(second), "Expected the new configuration queued too"
+
+    lines = fake.read_text(encoding="utf-8").splitlines()
+    assert str(tmp_path / "config.json") in lines[1]

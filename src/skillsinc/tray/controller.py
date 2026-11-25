@@ -28,7 +28,6 @@ from skillsinc.usersettings import SettingsFileError, SettingsStore, UserSetting
 
 logger = logging.getLogger(__name__)
 
-HISTORY_LIMIT: Final = 1000
 POPUP_LIMIT: Final = 8
 # Re-read settings.json this long after the last change event
 SETTINGS_DEBOUNCE_MS: Final = 300
@@ -86,6 +85,10 @@ class TrayController(QObject):
         self._quit = quit_application or QApplication.quit
         self._reader = CatalogReader(environment)
         self._settings, self._settings_error = self._read_settings()
+        # Until settings.json reads cleanly, nothing automatic happens: no
+        # scheduled syncs and no sign-in changes from default values
+        self._held = bool(self._settings_error)
+        self._before_id = ""
         self._config = self._settings.config_file(environment)
         self._runner = runner or SyncRunner(self._config, parent=self)
         self._runner.set_config(self._config)
@@ -105,7 +108,7 @@ class TrayController(QObject):
             open_settings=self.show_settings,
         )
         self.history_window = HistoryWindow(
-            load=lambda: self._reader.history(self._config, HISTORY_LIMIT),
+            load=lambda limit: self._reader.history(self._config, limit),
             sync_now=lambda: self.sync_now(()),
             open_folder=self.open_state,
         )
@@ -145,7 +148,7 @@ class TrayController(QObject):
             last = self._last_attempt
         schedule = self._settings.schedule
         return ScheduleState(
-            enabled=schedule.enabled,
+            enabled=schedule.enabled and not self._held,
             interval=schedule.interval,
             last_started=last,
             started_at=self._started_at,
@@ -203,6 +206,15 @@ class TrayController(QObject):
 
     def sync_now(self, profiles: tuple[str, ...]) -> bool:
         """Sync now: ``profiles`` selects, empty uses the scheduled set."""
+        if self._held:
+            self._notify(
+                Notice(
+                    "SkillSinc settings",
+                    "Fix settings.json before syncing: " + self._settings_error,
+                    failure=True,
+                )
+            )
+            return False
         selected = profiles or tuple(self._settings.schedule.profiles or ())
         return self._runner.request(SyncRequest(Trigger.TRAY, selected))
 
@@ -281,9 +293,11 @@ class TrayController(QObject):
         settings, error = self._read_settings(self._settings)
         self._watch()
         if error:
+            self._settings_error = error
             self._notify(Notice("SkillSinc settings", error, failure=True))
             return
-        if settings == self._settings:
+        held, self._held, self._settings_error = self._held, False, ""
+        if settings == self._settings and not held:
             return
         self._settings = settings
         config = settings.config_file(self._environment)
@@ -320,21 +334,26 @@ class TrayController(QObject):
             return self._store.load(), ""
         except SettingsFileError as err:
             logger.warning("%s", err)
-            kept = "the previous settings" if previous is not None else "defaults"
-            return previous or UserSettings(), f"{err}. Using {kept}."
+            if previous is not None:
+                return previous, f"{err}. Using the previous settings."
+            return UserSettings(), f"{err}. Automatic syncs wait until it is fixed."
 
     def _watch(self) -> None:
-        watched = [str(self._store.path.parent)]
+        """Watch settings.json, or the nearest folder above it that exists."""
+        folder = self._store.path.parent
+        while not folder.is_dir() and folder.parent != folder:
+            folder = folder.parent
+        watched = [str(folder)]
         if self._store.exists():
             watched.append(str(self._store.path))
         current = set(self._watcher.files()) | set(self._watcher.directories())
         missing = [path for path in watched if path not in current]
-        if self._store.path.parent.is_dir() and missing:
+        if missing:
             self._watcher.addPaths(missing)
 
     def _apply_startup(self) -> None:
         item = self._login_item
-        if item is None or not item.supported:
+        if item is None or not item.supported or self._held:
             return
         wanted = self._settings.startup.launch_at_login
         try:
@@ -352,6 +371,8 @@ class TrayController(QObject):
         self._last_record = newest[0] if newest else None
 
     def _on_timer(self) -> None:
+        # A terminal or OS-scheduled sync may have run since the last look
+        self._refresh_records()
         state = self.schedule_state()
         now = self._clock()
         if state.is_due(now) and not self._runner.busy:
@@ -370,13 +391,17 @@ class TrayController(QObject):
         self._reschedule()
 
     def _reschedule(self) -> None:
+        """Arm the timer; a running sync rearms it when it ends."""
         wait = self.schedule_state().wait(self._clock())
-        if wait is None:
+        if wait is None or self._runner.busy:
             self._timer.stop()
             return
         self._timer.start(max(0, int(wait.total_seconds() * 1000)))
 
     def _on_started(self, request: SyncRequest) -> None:
+        self._refresh_records()
+        self._before_id = self._last_record.id if self._last_record else ""
+        self._timer.stop()
         self.tray.set_icon_state(TrayState.SYNCING)
         self._refresh_labels(syncing=request)
 
@@ -408,9 +433,12 @@ class TrayController(QObject):
         self.synced.emit(record)
 
     def _covers(self, record: SyncRecord, outcome: SyncOutcome) -> bool:
-        """Return True if ``record`` is the run ``outcome`` reports."""
-        return record.trigger is outcome.request.trigger and record.started >= (
-            self._started_at - timedelta(seconds=1)
+        """Return True if ``record`` is the run ``outcome`` reports.
+
+        The run's record is the newest one, new since the run started.
+        """
+        return record.trigger is outcome.request.trigger and (
+            record.id != self._before_id
         )
 
     def _icon_state(self) -> TrayState:
@@ -441,6 +469,8 @@ class TrayController(QObject):
 
     def _next_text(self) -> str:
         schedule = self._settings.schedule
+        if self._held:
+            return "Scheduled syncs wait for a valid settings.json"
         if not schedule.enabled:
             return "Scheduled syncs are off"
         if self._paused:

@@ -70,6 +70,7 @@ class SyncOutcome:
 class _Running:
     request: SyncRequest
     process: QProcess
+    config: Path | None = None
     output: bytearray = field(default_factory=bytearray)
 
 
@@ -93,7 +94,8 @@ class SyncRunner(QObject):
         self._program = list(program) if program is not None else self._default()
         self._environment = environment
         self._timeout_ms = timeout_ms
-        self._queue: deque[SyncRequest] = deque()
+        # Each request keeps the configuration current when it was made
+        self._queue: deque[tuple[SyncRequest, Path]] = deque()
         self._running: _Running | None = None
         self._done: QProcess | None = None
         self._deadline = QTimer(self)
@@ -119,21 +121,21 @@ class SyncRunner(QObject):
     @property
     def pending(self) -> tuple[SyncRequest, ...]:
         """Return the queued requests, oldest first."""
-        return tuple(self._queue)
+        return tuple(request for request, _config in self._queue)
 
     def set_config(self, config: Path) -> None:
         """Sync ``config`` from the next run on."""
         self._config = config
 
-    def arguments(self, request: SyncRequest) -> list[str]:
-        """Return the full command line for ``request``."""
+    def arguments(self, request: SyncRequest, config: Path | None = None) -> list[str]:
+        """Return the full command line for ``request`` on ``config``."""
         argv: list[str] = [
             *self._program,
             "sync",
             "--trigger",
             request.trigger.value,
             "--config",
-            str(self._config),
+            str(config or self._config),
         ]
         for profile in request.profiles:
             argv += ["--profile", profile]
@@ -148,11 +150,12 @@ class SyncRunner(QObject):
         scheduled = request.trigger in {Trigger.TRAY_SCHEDULED, Trigger.TRAY_STARTUP}
         if scheduled and (self._running is not None or self._queue):
             return False
-        if request in self._queue or (
-            self._running is not None and self._running.request == request
+        if (request, self._config) in self._queue or (
+            self._running is not None
+            and (self._running.request, self._running.config) == (request, self._config)
         ):
             return False
-        self._queue.append(request)
+        self._queue.append((request, self._config))
         if self._running is None:
             self._start_next()
         return True
@@ -174,7 +177,7 @@ class SyncRunner(QObject):
         self._done = None
         if not self._queue or self._running is not None:
             return
-        request = self._queue.popleft()
+        request, config = self._queue.popleft()
         process = QProcess()
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         if self._environment is not None:
@@ -182,14 +185,14 @@ class SyncRunner(QObject):
             for name, value in self._environment.items():
                 environment.insert(name, value)
             process.setProcessEnvironment(environment)
-        running = _Running(request, process)
+        running = _Running(request, process, config)
         self._running = running
         process.readyReadStandardOutput.connect(lambda: self._read(running))
         process.finished.connect(
             lambda code, status: self._on_finished(running, code, status)
         )
         process.errorOccurred.connect(lambda error: self._on_error(running, error))
-        argv = self.arguments(request)
+        argv = self.arguments(request, config)
         logger.info("Starting %s", " ".join(argv))
         self.started.emit(request)
         self._deadline.start(self._timeout_ms)

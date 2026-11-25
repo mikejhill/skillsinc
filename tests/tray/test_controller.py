@@ -72,20 +72,37 @@ def test_open_with_desktop_asks_qt(
 class TestSettingsEdges:
     """Broken, missing, and changed settings."""
 
-    def test_broken_settings_at_start_are_reported(
+    def test_broken_settings_at_start_hold_automatic_work(
         self, qtbot: QtBot, configured: Sandbox
     ) -> None:
-        """Starting over an invalid settings.json notifies and uses defaults."""
+        """An invalid settings.json at start syncs nothing until it is fixed."""
         store = SettingsStore.default(configured.environment)
         store.path.parent.mkdir(parents=True, exist_ok=True)
         store.path.write_text('{"schedule": {"enabled": "yes"}}', encoding="utf-8")
-        tray = make_tray(qtbot, configured, save=False, start=False)
+        linux = replace(configured.environment, platform="linux")
+        item = LoginItem(linux, ["skillsinc-tray"], run_key=None)
+        item.apply(enabled=True)
+        tray = make_tray(qtbot, configured, save=False, start=False, login_item=item)
         try:
             tray.controller.start()
 
-            assert tray.notices
-            assert tray.notices[0].failure
-            assert "Using defaults" in tray.notices[0].message
+            assert not tray.controller.runner.busy
+            assert "wait until it is fixed" in tray.notices[0].message
+            assert tray.controller.tray.state.next_sync == (
+                "Scheduled syncs wait for a valid settings.json"
+            )
+            assert not tray.controller.sync_now(())
+            assert "Fix settings.json" in tray.notices[-1].message
+            assert item.enabled(), "Expected the sign-in entry left alone"
+            store.path.write_text('{"history": {"keep": 1}}', encoding="utf-8")
+            tray.controller.reload_settings()
+            assert "wait for a valid" in tray.controller.tray.state.next_sync
+
+            store.save(UserSettings(schedule=OFF))
+            tray.controller.reload_settings()
+
+            assert tray.controller.tray.state.next_sync == "Scheduled syncs are off"
+            assert not item.enabled()
         finally:
             tray.controller.stop()
 
@@ -318,3 +335,103 @@ class TestLabels:
         tray.controller._notify(controller_module.Notice("t", "m"))
 
         assert tray.notices[-1].message == "m"
+
+
+class TestScheduleFixes:
+    """The schedule sees outside syncs, never spins, and reports the right run."""
+
+    def test_an_outside_sync_postpones_the_schedule(
+        self, qtbot: QtBot, configured: Sandbox
+    ) -> None:
+        """A terminal sync just before the deadline moves the next one."""
+        settings = UserSettings(
+            schedule=ScheduleOptions(interval=timedelta(minutes=5), run_at_start=False)
+        )
+        now = [datetime.now(UTC)]
+        tray = make_tray(qtbot, configured, settings, start=False)
+        tray.controller._clock = lambda: now[0]
+        tray.controller._started_at = now[0]
+        tray.controller.start()
+        try:
+            now[0] += timedelta(minutes=5)
+            SyncHistory(configured.environment.state_directory, keep=10).append(
+                SyncRecord(
+                    id="outside",
+                    started=now[0] - timedelta(minutes=1),
+                    finished=now[0] - timedelta(seconds=50),
+                    trigger=Trigger.MANUAL,
+                    ok=True,
+                    config=str(configured.config_path),
+                )
+            )
+
+            tray.controller._on_timer()
+
+            assert not tray.controller.runner.busy
+            due = tray.controller.schedule_state().next_due()
+            assert due is not None
+            assert abs(due - (now[0] + timedelta(minutes=4))) < timedelta(seconds=1)
+        finally:
+            tray.controller.stop()
+
+    def test_timer_is_idle_while_a_sync_runs(
+        self, qtbot: QtBot, configured: Sandbox
+    ) -> None:
+        """An overdue deadline during a sync does not rearm at zero."""
+        settings = UserSettings(schedule=ScheduleOptions(run_at_start=True))
+        runner = _program_runner(configured, "import time; time.sleep(1)")
+        tray = make_tray(qtbot, configured, settings, runner=runner, start=False)
+        try:
+            with qtbot.waitSignal(tray.controller.synced, timeout=20_000):
+                tray.controller.start()
+                qtbot.waitUntil(lambda: tray.controller.runner.busy)
+                timer = tray.controller._timer
+                assert not timer.isActive()
+                tray.controller._on_timer()
+                assert not timer.isActive()
+        finally:
+            tray.controller.stop()
+
+    def test_failure_is_not_reported_with_an_older_success(
+        self, qtbot: QtBot, configured: Sandbox
+    ) -> None:
+        """A failed run that left no record is not matched to the last success."""
+        runner = _program_runner(configured, "print('broke'); raise SystemExit(4)")
+        tray = make_tray(qtbot, configured, runner=runner)
+        SyncHistory(configured.environment.state_directory, keep=10).append(
+            SyncRecord(
+                id="earlier",
+                started=datetime.now(UTC),
+                finished=datetime.now(UTC),
+                trigger=Trigger.TRAY,
+                ok=True,
+                config=str(configured.config_path),
+            )
+        )
+        try:
+            record = tray.wait_for_sync(lambda: tray.controller.sync_now(()))
+
+            assert record is None
+            assert tray.notices[-1].message == "broke"
+        finally:
+            tray.controller.stop()
+
+    def test_settings_folder_created_later_is_watched(
+        self, qtbot: QtBot, configured: Sandbox
+    ) -> None:
+        """Settings written after start, in a new folder, still apply."""
+        folder = configured.environment.config_home / "skillsinc"
+        store = SettingsStore(folder / "nested" / "settings.json")
+        runner = _program_runner(configured, "pass")
+        tray = make_tray(qtbot, configured, save=False, start=False, runner=runner)
+        tray.controller._store = store
+        tray.controller.start()
+        try:
+            store.save(UserSettings(schedule=OFF))
+
+            qtbot.waitUntil(
+                lambda: tray.controller.settings == UserSettings(schedule=OFF),
+                timeout=5000,
+            )
+        finally:
+            tray.controller.stop()
