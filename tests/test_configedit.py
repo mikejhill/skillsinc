@@ -47,7 +47,7 @@ def _plain(text: str) -> Any:  # noqa: ANN401 - tests index freely
 def config(tmp_path: Path) -> Path:
     """Write the sample configuration and its library folder."""
     path = tmp_path / "config.json"
-    path.write_text(TEXT, encoding="utf-8")
+    path.write_bytes(TEXT.encode("utf-8"))
     (tmp_path / "library").mkdir()
     return path
 
