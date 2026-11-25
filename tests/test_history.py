@@ -250,6 +250,15 @@ class TestStore:
         assert last is not None
         assert last.id == "id4"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+    def test_new_history_is_private_to_the_user(self, tmp_path: Path) -> None:
+        """Records name paths and errors, so only the owner may read them."""
+        history = SyncHistory(tmp_path, keep=10)
+
+        history.append(_record())
+
+        assert stat.S_IMODE(history.path.stat().st_mode) & 0o077 == 0
+
     def test_missing_file_has_no_records(self, tmp_path: Path) -> None:
         """A machine that never synced has an empty history."""
         history = SyncHistory(tmp_path / "missing", keep=10)

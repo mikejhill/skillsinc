@@ -381,7 +381,7 @@ class SyncHistory:
             msg = "not a regular file; leaving it alone"
             raise OSError(msg)
         flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | NO_FOLLOW | NON_BLOCKING | BINARY
-        descriptor = os.open(self._path, flags, 0o644)
+        descriptor = os.open(self._path, flags, 0o600)
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 msg = "not a regular file; leaving it alone"

@@ -141,7 +141,7 @@ class TestParse:
             ('{"history": {"keep": null}}', "history.keep must not be null"),
             ('{"schedule": null}', "schedule must not be null"),
             ('{"schedule": {"interval": "1000000000d"}}', "settings:"),
-            pytest.param("[" * 100_000 + "]" * 100_000, "not valid JSON", id="nested"),
+            pytest.param("[" * 100_000 + "]" * 100_000, "^settings: ", id="nested"),
         ],
     )
     def test_invalid_values_name_the_key(self, text: str, message: str) -> None:
