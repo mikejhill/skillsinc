@@ -11,6 +11,7 @@ from typing import Final, TextIO
 
 from skillsinc.cli import CommandLine
 from skillsinc.commands import (
+    HarnessesCommand,
     InitCommand,
     PlanCommand,
     ProfilesCommand,
@@ -24,6 +25,7 @@ from skillsinc.schedule import Runner
 from skillsinc.settings import (
     InitSettings,
     PlanSettings,
+    ProfilesSettings,
     ScheduleSettings,
     Settings,
     StatusSettings,
@@ -117,7 +119,11 @@ class Application:
             return ScheduleCommand(self._environment, self._runner).run(
                 settings, self._out
             )
-        return ProfilesCommand(self._profiles).run(self._out)
+        if isinstance(settings, ProfilesSettings):
+            return ProfilesCommand(self._profiles, self._environment).run(
+                settings, self._out
+            )
+        return HarnessesCommand(self._profiles).run(self._out)
 
     @staticmethod
     def _configure_logging(level: str, stream: TextIO | None = None) -> None:

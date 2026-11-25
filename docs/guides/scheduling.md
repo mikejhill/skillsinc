@@ -43,7 +43,7 @@ How each scheduler behaves:
 
 ### Environment
 
-Schedulers start jobs without your shell's environment. `install` writes `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `CLAUDE_CONFIG_DIR`, `COPILOT_HOME`, and `CODEX_HOME`, when set, into the launchd agent, the systemd service, or the crontab line, so scheduled runs use the same configuration, manifests, and harness folders. Run `install` again after changing them.
+Schedulers start jobs without your shell's environment. `install` writes `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `CLAUDE_CONFIG_DIR`, `COPILOT_HOME`, `CODEX_HOME`, `SKILLSINC_PROFILES`, and `SKILLSINC_HOSTNAME`, when set, into the launchd agent, the systemd service, or the crontab line, so scheduled runs use the same configuration, manifests, and harness folders. Run `install` again after changing them.
 
 Task Scheduler cannot carry variables: tasks read your saved user variables. If you set any of these, save them with `setx` or System Properties; `install` reminds you when it sees one.
 

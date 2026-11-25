@@ -32,13 +32,25 @@ class PlanSettings:
     verbose: bool
     log_level: str
     log_file: Path | None = None
+    profiles: tuple[str, ...] = ()
+    """Sync profiles named by ``--profile``; empty uses the machine's defaults."""
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessesSettings:
+    """Settings for ``skillsinc harnesses``."""
+
+    log_level: str
 
 
 @dataclass(frozen=True, slots=True)
 class ProfilesSettings:
     """Settings for ``skillsinc profiles``."""
 
+    config_path: Path
+    json_output: bool
     log_level: str
+    profiles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,5 +75,10 @@ class StatusSettings:
 
 
 type Settings = (
-    InitSettings | PlanSettings | ProfilesSettings | ScheduleSettings | StatusSettings
+    HarnessesSettings
+    | InitSettings
+    | PlanSettings
+    | ProfilesSettings
+    | ScheduleSettings
+    | StatusSettings
 )

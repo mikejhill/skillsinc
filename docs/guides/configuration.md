@@ -165,13 +165,14 @@ SkillSinc writes copies and records what it owns; it does not link harness folde
 
 ## `routes[]`
 
-| Key            | Required | Default   | Meaning                                                  |
-| -------------- | -------- | --------- | -------------------------------------------------------- |
-| `sources`      | yes      | —         | Source names                                             |
-| `destinations` | yes      | —         | Destination names                                        |
-| `include`      | no       | `["*/*"]` | `kind/name` glob patterns to select                      |
-| `exclude`      | no       | `[]`      | `kind/name` glob patterns to drop after `include`        |
-| `allow_lossy`  | no       | `false`   | Accept conversions that drop fields or change activation |
+| Key            | Required | Default   | Meaning                                                                      |
+| -------------- | -------- | --------- | ---------------------------------------------------------------------------- |
+| `sources`      | yes      | —         | Source names                                                                 |
+| `destinations` | yes      | —         | Destination names                                                            |
+| `include`      | no       | `["*/*"]` | `kind/name` glob patterns to select                                          |
+| `exclude`      | no       | `[]`      | `kind/name` glob patterns to drop after `include`                            |
+| `allow_lossy`  | no       | `false`   | Accept conversions that drop fields or change activation                     |
+| `profiles`     | no       | `[]`      | [Sync profiles](#profiles) this route belongs to; empty applies on every run |
 
 Plugin items match both `kind/name` and `plugins/<plugin>/kind/name`, so `"include": ["plugins/kit/*"]` selects one whole plugin and `"exclude": ["plugins/kit/*"]` drops it. Because a plugin item is also a plain item, `"include": ["agents/*"]` selects plugin agents too; add `"exclude": ["plugins/*/*/*"]` to a route that should carry library items only. Anything a plugin holds that SkillSinc does not sync (hooks, LSP servers, scripts, runtime manifest keys) is a loss on each of its items, so syncing part of a plugin needs `"allow_lossy": true`.
 
@@ -210,6 +211,53 @@ Starting with **0.7.0**, `sources.<name>.rename` gives items new names, which re
 ```
 
 Keys are exact selectors (`kind/name` or `plugins/plugin/kind/name`, no wildcards); values are item names (letters, digits, `.`, `_`, `-`; not ending in `.`, and not a Windows device name such as `CON` or `NUL`). A rename that changes only letter case is refused, because case-insensitive file systems cannot tell the two apart. A renamed item takes the new name everywhere: its output paths, its `kind/name` for `include`, `disabled`, and route filters, and the `name` field of a skill, instruction, agent, or prompt that has one. MCP servers and hooks keep their content and change only their key or file name. Renaming onto a name another item uses, or naming one item with two keys, blocks the destinations that receive either item. A key that matches nothing prints a warning. Renaming an item that was already delivered removes the old copy and writes the new one, like any rename in the library.
+
+## `profiles`
+
+Starting with **0.9.0**, one configuration can hold several named profiles, so one file replicated across machines syncs a different segment on each ([decision 0024](../decisions/0024-sync-profiles.md)). A profile is a name that routes opt into; it selects content by selecting routes.
+
+```jsonc
+"profiles": {
+  "work": { "description": "Work machine only", "when": { "host": ["X1*"] } },
+  "windows": { "when": { "os": ["windows"] } },
+  "experiments": { "default": false },
+},
+"routes": [
+  // No profiles: applies on every machine and every run
+  { "sources": ["library"], "destinations": ["claude", "agents"] },
+  { "sources": ["work-skills"], "destinations": ["claude"], "profiles": ["work"] },
+  { "sources": ["library"], "destinations": ["vscode"], "profiles": ["windows"] },
+  { "sources": ["lab"], "destinations": ["claude"], "profiles": ["experiments"] },
+],
+```
+
+| Key           | Default | Meaning                                                                            |
+| ------------- | ------- | ---------------------------------------------------------------------------------- |
+| `description` | —       | Shown by `skillsinc profiles`                                                      |
+| `default`     | `true`  | `false` applies the profile only when selected by name (below)                     |
+| `when`        | —       | Apply by default only where every listed condition holds; omit to apply everywhere |
+
+`when` takes any of:
+
+| Key    | Matches when                                                                                              |
+| ------ | --------------------------------------------------------------------------------------------------------- |
+| `host` | Any glob matches the host name, case-insensitively, either the full name or the part before the first `.` |
+| `os`   | The system is one of `windows`, `macos`, `linux`                                                          |
+| `env`  | Every variable matches: a value glob, `true` (set and non-empty), or `false` (unset or empty)             |
+
+**Which profiles are active**, first match wins:
+
+1. `--profile NAME` on `plan`, `sync`, or `profiles` (repeatable, comma-separated, globs such as `'*'`). An unknown name is an error.
+2. `SKILLSINC_PROFILES=work,home` in the environment: a per-machine choice kept out of the shared file. Names this configuration does not define print a warning, so one variable can serve several configurations.
+3. Each profile's `default` and `when`.
+
+Either explicit choice replaces the defaults and ignores `when`. Run `skillsinc profiles` to see each profile, whether it is active on this machine, and why. `SKILLSINC_HOSTNAME` overrides the host name `when` sees.
+
+**What an inactive profile does.** Its routes are dropped from the run. A destination that receives something from an active route is planned as usual, so anything an inactive route delivered there before is removed on that sync, exactly like narrowing a route's `include`. A destination that only inactive routes reach is left alone, like `"enabled": false`: it is neither written nor destroyed, so a machine never touches harness folders outside its profiles. `--destination` naming such a destination is an error. Sources that no active route reads are not read or fetched.
+
+A narrower `--profile` on a one-off run therefore removes the other profiles' items from shared destinations until the next run with the full set (a scheduled sync restores them). Preview with `skillsinc plan --profile NAME` first.
+
+A configuration without `profiles` behaves exactly as before. Versions before 0.9.0 reject the `profiles` keys, so upgrade every machine that shares the file before adding them.
 
 ## Removing things
 

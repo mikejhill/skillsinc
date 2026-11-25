@@ -9,6 +9,7 @@ from typing import TextIO
 
 from skillsinc.applier import Applier
 from skillsinc.config import ConfigLoader
+from skillsinc.exceptions import ConfigurationError
 from skillsinc.lock import StateLock
 from skillsinc.manifest import ManifestStore
 from skillsinc.paths import Environment
@@ -31,9 +32,11 @@ from skillsinc.schedule import (
     interpreter,
 )
 from skillsinc.schema import ConfigSchema
+from skillsinc.selection import ProfileSelector, Selection
 from skillsinc.settings import (
     InitSettings,
     PlanSettings,
+    ProfilesSettings,
     ScheduleSettings,
     StatusSettings,
 )
@@ -125,6 +128,10 @@ class PlanCommand:
         config = ConfigLoader(self._profiles, self._environment).load(
             settings.config_path
         )
+        config, selection = ProfileSelector(self._environment).select(
+            config, settings.profiles
+        )
+        self._check_destinations(settings, selection)
         profiles = self._profiles.scoped(config.project)
         state = config.state_directory(self._environment)
         store = ManifestStore(state, config.project)
@@ -143,6 +150,7 @@ class PlanCommand:
                     plan,
                     configuration=pending.changes,
                     configuration_warnings=pending.warnings,
+                    selection=selection,
                 )
                 if settings.json_output
                 else reporter.plan_text(
@@ -150,6 +158,7 @@ class PlanCommand:
                     applied=False,
                     configuration=pending.changes,
                     configuration_warnings=pending.warnings,
+                    selection=selection,
                 )
             )
             return 0 if plan.ok else 1
@@ -170,6 +179,7 @@ class PlanCommand:
                     results,
                     configuration=maintained.applied,
                     configuration_warnings=maintained.warnings,
+                    selection=selection,
                 )
             )
         else:
@@ -179,11 +189,33 @@ class PlanCommand:
                     applied=True,
                     configuration=maintained.applied,
                     configuration_warnings=maintained.warnings,
+                    selection=selection,
                 )
             )
             out.write(reporter.results_text(results))
         failed = any(result.error is not None for result in results)
         return 0 if plan.ok and not failed else 1
+
+    @staticmethod
+    def _check_destinations(settings: PlanSettings, selection: Selection) -> None:
+        """Refuse ``--destination`` names that only inactive profiles reach.
+
+        Raises:
+            ConfigurationError: If a named destination is left out by profiles.
+        """
+        left_out = [
+            name
+            for name in settings.destinations
+            if name in selection.inactive_destinations
+        ]
+        if left_out:
+            active = ", ".join(selection.active) or "none"
+            msg = (
+                f"destination(s) {', '.join(left_out)} receive nothing from the"
+                f" active profiles ({active}); select a profile that routes to"
+                " them with --profile"
+            )
+            raise ConfigurationError(msg)
 
 
 class StatusCommand:
@@ -210,13 +242,36 @@ class StatusCommand:
 
 
 class ProfilesCommand:
-    """List built-in profiles."""
+    """List the configuration's sync profiles and which apply on this machine."""
+
+    def __init__(self, profiles: ProfileRegistry, environment: Environment) -> None:
+        self._profiles = profiles
+        self._environment = environment
+
+    def run(self, settings: ProfilesSettings, out: TextIO) -> int:
+        """Print each profile, whether it is active, and why."""
+        config = ConfigLoader(self._profiles, self._environment).load(
+            settings.config_path
+        )
+        _, selection = ProfileSelector(self._environment).select(
+            config, settings.profiles
+        )
+        out.write(
+            Reporter.selection_json(selection)
+            if settings.json_output
+            else Reporter.selection_text(selection)
+        )
+        return 0
+
+
+class HarnessesCommand:
+    """List built-in harness profiles."""
 
     def __init__(self, profiles: ProfileRegistry) -> None:
         self._profiles = profiles
 
     def run(self, out: TextIO) -> int:
-        """Print the profile table."""
+        """Print the harness profile table."""
         out.write(Reporter.profiles_text(self._profiles.profiles))
         return 0
 

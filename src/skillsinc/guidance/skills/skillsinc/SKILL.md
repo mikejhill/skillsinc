@@ -46,7 +46,8 @@ Do not install a scheduler or push a Git remote as part of editing guidance.
 Instructions render as Claude rules, Copilot instructions, VS Code instructions,
 and a managed block in Codex `AGENTS.md`. Codex discovers skills through the
 `agents` profile's `~/.agents/skills`; the `codex` profile does not copy skills.
-Run `skillsinc profiles` to check the installed version's support. Existing
+Run `skillsinc harnesses` (`skillsinc profiles` before 0.9.0) to check the
+installed version's support. Existing
 discovery rules can suppress redundant copies across default harness folders.
 
 Review the source Git diff and stage only intended files. Commit locally within

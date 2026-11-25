@@ -13,6 +13,7 @@ from skillsinc.models import Kind
 from skillsinc.plan import Action, Change, DestinationPlan, Plan
 from skillsinc.profiles.base import Profile
 from skillsinc.remote import RemoteCache
+from skillsinc.selection import Origin, Selection
 from skillsinc.upgrades import ConfigChange
 
 REPORT_VERSION: Final = 1
@@ -107,6 +108,7 @@ class Reporter:
         applied: bool,
         configuration: Sequence[ConfigChange] = (),
         configuration_warnings: Sequence[str] = (),
+        selection: Selection | None = None,
     ) -> str:
         """Return a readable plan, one section per destination.
 
@@ -114,6 +116,12 @@ class Reporter:
         schema beside it: planned for ``plan``, made for ``sync``.
         """
         lines: list[str] = [f"Project: {plan.project}"] if plan.project else []
+        if selection is not None and selection.origin is not Origin.NONE:
+            active = ", ".join(selection.active) or "none"
+            lines.append(f"Profiles: {active} (from {selection.origin.value})")
+            if selection.inactive_destinations:
+                skipped = ", ".join(selection.inactive_destinations)
+                lines.append(f"Left alone by profiles: {skipped}")
         lines.extend(f"error: {message}" for message in plan.source_errors.values())
         lines.extend(f"warning: {message}" for message in plan.source_warnings.values())
         for destination in plan.destinations:
@@ -123,7 +131,11 @@ class Reporter:
         if configuration:
             lines.append("Configuration:")
             lines.extend(f"  + {change.describe()}" for change in configuration)
-        warnings = [*plan.warnings, *configuration_warnings]
+        warnings = [
+            *plan.warnings,
+            *configuration_warnings,
+            *(selection.warnings if selection is not None else ()),
+        ]
         if warnings:
             lines.append("")
             lines.extend(f"warning: {warning}" for warning in warnings)
@@ -138,6 +150,7 @@ class Reporter:
         *,
         configuration: Sequence[ConfigChange] = (),
         configuration_warnings: Sequence[str] = (),
+        selection: Selection | None = None,
     ) -> str:
         """Return the plan (and, after a sync, the results) as versioned JSON."""
         outcome = {result.name: result for result in results or ()}
@@ -148,7 +161,12 @@ class Reporter:
             "project": plan.project or None,
             "source_errors": dict(plan.source_errors),
             "source_warnings": dict(plan.source_warnings),
-            "warnings": [*plan.warnings, *configuration_warnings],
+            "warnings": [
+                *plan.warnings,
+                *configuration_warnings,
+                *(selection.warnings if selection is not None else ()),
+            ],
+            "profiles": Reporter._profiles_summary(selection),
             "configuration": [
                 {"action": change.action.value, "path": str(change.path)}
                 for change in configuration
@@ -235,6 +253,79 @@ class Reporter:
         if status.state == "missing":
             return "directory not found"
         return "ok"
+
+    @staticmethod
+    def selection_text(selection: Selection) -> str:
+        """Return each sync profile, whether it applies here, and why."""
+        if selection.origin is Origin.NONE:
+            return (
+                "No sync profiles are defined; every route applies.\n"
+                "Define them under profiles and tag routes with them; see"
+                " docs/guides/configuration.md#profiles.\n"
+            )
+        header = ["profile", "active", "routes", "reason", "description"]
+        rows = [
+            [
+                state.profile.name,
+                "yes" if state.active else "no",
+                str(state.routes),
+                state.reason,
+                state.profile.description,
+            ]
+            for state in selection.states
+        ]
+        lines = [Reporter._table([header, *rows])]
+        lines.append(f"\nSelected by: {selection.origin.value}\n")
+        if selection.inactive_destinations:
+            skipped = ", ".join(selection.inactive_destinations)
+            lines.append(f"Left alone: {skipped}\n")
+        lines.extend(f"warning: {warning}\n" for warning in selection.warnings)
+        return "".join(lines)
+
+    @staticmethod
+    def selection_json(selection: Selection) -> str:
+        """Return the sync profiles and their states as versioned JSON."""
+        data = {
+            "version": REPORT_VERSION,
+            "origin": selection.origin.value,
+            "active": list(selection.active),
+            "inactive_destinations": list(selection.inactive_destinations),
+            "warnings": list(selection.warnings),
+            "profiles": [
+                {
+                    "name": state.profile.name,
+                    "description": state.profile.description,
+                    "active": state.active,
+                    "reason": state.reason,
+                    "routes": state.routes,
+                }
+                for state in selection.states
+            ],
+        }
+        return json.dumps(data, indent=2) + "\n"
+
+    @staticmethod
+    def _profiles_summary(selection: Selection | None) -> dict[str, object] | None:
+        """Return the plan report's ``profiles`` member, or None without profiles."""
+        if selection is None or selection.origin is Origin.NONE:
+            return None
+        return {
+            "origin": selection.origin.value,
+            "active": list(selection.active),
+            "inactive_destinations": list(selection.inactive_destinations),
+        }
+
+    @staticmethod
+    def _table(rows: Sequence[Sequence[str]]) -> str:
+        """Return ``rows`` as left-aligned columns, the first row a header."""
+        widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+        return "".join(
+            "  ".join(
+                cell.ljust(width) for cell, width in zip(row, widths, strict=True)
+            ).rstrip()
+            + "\n"
+            for row in rows
+        )
 
     @staticmethod
     def profiles_text(profiles: Sequence[Profile]) -> str:

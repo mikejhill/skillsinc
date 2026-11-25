@@ -137,20 +137,21 @@ See [remote sources](docs/guides/configuration.md#remote-sources).
 | `agents`  | `skills/` | —                            | —                    | —                    | —                              | —                                     | —                       |
 | `generic` | verbatim  | verbatim                     | verbatim             | verbatim             | verbatim                       | verbatim                              | verbatim                |
 
-Run `skillsinc profiles` for the same table. See [harness profiles](docs/guides/harness-profiles.md) for exact conversions.
+Run `skillsinc harnesses` for the same table. See [harness profiles](docs/guides/harness-profiles.md) for exact conversions.
 
 ## Commands
 
-| Command              | Purpose                                                   |
-| -------------------- | --------------------------------------------------------- |
-| `skillsinc init`     | Write a starter configuration                             |
-| `skillsinc plan`     | Show every change a sync would make; write nothing        |
-| `skillsinc sync`     | Apply the plan                                            |
-| `skillsinc status`   | Show each source's state, including remote failures       |
-| `skillsinc profiles` | List harness profiles and what each kind becomes          |
-| `skillsinc schedule` | `install`, `remove`, or show `status` of a scheduled sync |
+| Command               | Purpose                                                   |
+| --------------------- | --------------------------------------------------------- |
+| `skillsinc init`      | Write a starter configuration                             |
+| `skillsinc plan`      | Show every change a sync would make; write nothing        |
+| `skillsinc sync`      | Apply the plan                                            |
+| `skillsinc status`    | Show each source's state, including remote failures       |
+| `skillsinc profiles`  | List sync profiles and which apply on this machine        |
+| `skillsinc harnesses` | List harness profiles and what each kind becomes          |
+| `skillsinc schedule`  | `install`, `remove`, or show `status` of a scheduled sync |
 
-`plan` and `sync` accept `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, `--config PATH`, and `--user`. Inside a project with `.config/skillsinc/config.json`, they use that file. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
+`plan` and `sync` accept `--profile NAME` ([sync profiles](docs/guides/configuration.md#profiles): one config, a different segment per machine), `--destination NAME` (repeatable), `--adopt`, `--json`, `--verbose`, `--log-file PATH`, `--config PATH`, and `--user`. Inside a project with `.config/skillsinc/config.json`, they use that file. Exit codes: `0` success, `1` a destination was blocked or failed, `2` configuration or usage error, `130` interrupted.
 
 ## Editing, recovery, and uninstalling
 

@@ -97,6 +97,21 @@ class TestBundledSchema:
             {"version": 1, "sources": {"a": {"path": "x", "include": ["skills/ "]}}},
             {"version": 1, "destinations": {"a": {"profile": "generic"}}},
             {"version": 1, "destinations": {"generic": {}}},
+            {"version": 1, "profiles": {"bad name": {}}},
+            {"version": 1, "profiles": {"p": {"when": {}}}},
+            {"version": 1, "profiles": {"p": {"when": {"os": ["bsd"]}}}},
+            {"version": 1, "profiles": {"p": {"when": {"env": {"A": 1}}}}},
+            {"version": 1, "profiles": {"p": {"when": {"host": "x1"}}}},
+            {"version": 1, "profiles": {"p": {"default": "no"}}},
+            {"version": 1, "profiles": {"p": {"colour": "red"}}},
+            {
+                "version": 1,
+                "sources": {"a": {"path": "x"}},
+                "destinations": {"generic": {"path": "out"}},
+                "routes": [
+                    {"sources": ["a"], "destinations": ["generic"], "profiles": [""]},
+                ],
+            },
         ],
     )
     def test_schema_flags_what_the_loader_refuses(
@@ -124,6 +139,29 @@ class TestBundledSchema:
             },
             {"version": 1, "destinations": {"generic": {"path": "out"}}},
             {"version": 1, "destinations": {"generic": {"profile": "claude"}}},
+            {
+                "version": 1,
+                "sources": {"a": {"path": "x"}},
+                "destinations": {"generic": {"path": "out"}},
+                "profiles": {
+                    "work": {
+                        "description": "Work",
+                        "when": {
+                            "host": ["X1*"],
+                            "os": ["windows"],
+                            "env": {"A": True, "B": False, "C": "w*"},
+                        },
+                    },
+                    "home.v2": {"default": False},
+                },
+                "routes": [
+                    {
+                        "sources": ["a"],
+                        "destinations": ["generic"],
+                        "profiles": ["work", "home.v2"],
+                    }
+                ],
+            },
         ],
     )
     def test_schema_accepts_what_the_loader_accepts(

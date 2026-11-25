@@ -55,6 +55,16 @@
         }
       }
     },
+    "profiles": {
+      "type": "object",
+      "description": "Named sync profiles. Tag routes with them so each machine applies a subset. Selected by --profile, else SKILLSINC_PROFILES, else each profile's default and when.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      }
+    },
     "routes": {
       "type": "array",
       "description": "Which items flow from which sources to which destinations.",
@@ -312,6 +322,67 @@
         "allow_lossy": {
           "type": "boolean",
           "description": "Accept conversions that drop fields or change activation. Default: false."
+        },
+        "profiles": {
+          "$ref": "#/$defs/texts",
+          "description": "Sync profiles this route belongs to; it applies when one is active. Omit to apply on every run."
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/text",
+          "description": "Shown by skillsinc profiles."
+        },
+        "default": {
+          "type": "boolean",
+          "description": "false applies the profile only when selected by --profile or SKILLSINC_PROFILES. Default: true."
+        },
+        "when": {
+          "$ref": "#/$defs/condition",
+          "description": "Apply by default only where every listed condition holds. Omit to apply everywhere."
+        }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/texts",
+          "description": "Host name globs, case-insensitive; matches the full or short name."
+        },
+        "os": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "windows",
+              "macos",
+              "linux"
+            ]
+          },
+          "description": "Operating systems."
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variable to a value glob, true (set and non-empty), or false (unset or empty).",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "#/$defs/text"
+              }
+            ]
+          },
+          "propertyNames": {
+            "minLength": 1
+          }
         }
       }
     }

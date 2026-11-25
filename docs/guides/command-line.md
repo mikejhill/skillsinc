@@ -4,38 +4,40 @@ This guide lists every command, option, exit code, and the JSON report format, f
 
 ## Commands
 
-| Command                                      | Purpose                                                                       |
-| -------------------------------------------- | ----------------------------------------------------------------------------- |
-| `skillsinc init`                             | Write a starter configuration                                                 |
-| `skillsinc plan`                             | Show every change a sync would make; write nothing                            |
-| `skillsinc sync`                             | Plan and apply, holding the run lock                                          |
-| `skillsinc status`                           | Show each source's state, including remote refresh failures                   |
-| `skillsinc profiles`                         | List harness profiles and how each kind is supported                          |
-| `skillsinc schedule install\|remove\|status` | Register, remove, or inspect a scheduled `sync` ([scheduling](scheduling.md)) |
+| Command                                      | Purpose                                                                                  |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `skillsinc init`                             | Write a starter configuration                                                            |
+| `skillsinc plan`                             | Show every change a sync would make; write nothing                                       |
+| `skillsinc sync`                             | Plan and apply, holding the run lock                                                     |
+| `skillsinc status`                           | Show each source's state, including remote refresh failures                              |
+| `skillsinc profiles`                         | List the configuration's [sync profiles](configuration.md#profiles) and which apply here |
+| `skillsinc harnesses`                        | List harness profiles and how each kind is supported (named `profiles` before 0.9.0)     |
+| `skillsinc schedule install\|remove\|status` | Register, remove, or inspect a scheduled `sync` ([scheduling](scheduling.md))            |
 
 Options go after the command, for example `skillsinc plan --json`.
 
 This reference follows `main`. `--with-guidance` requires 0.3.0 or later; check
 `skillsinc --version` and use the matching release tag for an older installation.
 
-| Option                     | Commands                                   | Meaning                                                                                                                                                                                                     |
-| -------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--config PATH`            | init, plan, sync, status, schedule install | Configuration file (default: the nearest `.config/skillsinc/config.json` above the working directory, else `$XDG_CONFIG_HOME/skillsinc/config.json`; `init` and `schedule install` skip the project lookup) |
-| `--user`                   | plan, sync, status                         | Use the user configuration even inside a [project](projects.md)                                                                                                                                             |
-| `--project`                | init                                       | Write `./.config/skillsinc/config.json`, a project configuration for the working directory                                                                                                                  |
-| `--source DIR`             | init                                       | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`)                                                                                                      |
-| `--with-guidance`          | init                                       | Add a portable SkillSinc skill and global instruction to that source; no implicit sync, scheduler, or Git operations                                                                                        |
-| `--force`                  | init                                       | Overwrite an existing configuration                                                                                                                                                                         |
-| `-d`, `--destination NAME` | plan, sync                                 | Limit to this destination; repeatable                                                                                                                                                                       |
-| `--adopt`                  | plan, sync                                 | Take ownership of existing files instead of blocking                                                                                                                                                        |
-| `--json`                   | plan, sync, status                         | Print the JSON report instead of text                                                                                                                                                                       |
-| `-v`, `--verbose`          | plan, sync                                 | List unsupported items, accepted losses, and every skill file                                                                                                                                               |
-| `--log-file PATH`          | plan, sync                                 | Append the report and diagnostics to PATH under a timestamped header instead of printing them; rotates to `PATH.1` past 1 MiB                                                                               |
-| `--interval DURATION`      | schedule install                           | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS` (default `1h`)                                                                                                                                  |
-| `--dry-run`                | schedule install                           | Print the scheduler definition without registering it                                                                                                                                                       |
-| `--scheduler NAME`         | schedule                                   | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default                                                                                                                           |
-| `--log-level LEVEL`        | all                                        | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                                                                                                                                 |
-| `--version`                | none                                       | Print the version                                                                                                                                                                                           |
+| Option                     | Commands                                             | Meaning                                                                                                                                                                                                     |
+| -------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--config PATH`            | init, plan, sync, status, profiles, schedule install | Configuration file (default: the nearest `.config/skillsinc/config.json` above the working directory, else `$XDG_CONFIG_HOME/skillsinc/config.json`; `init` and `schedule install` skip the project lookup) |
+| `--user`                   | plan, sync, status, profiles                         | Use the user configuration even inside a [project](projects.md)                                                                                                                                             |
+| `--project`                | init                                                 | Write `./.config/skillsinc/config.json`, a project configuration for the working directory                                                                                                                  |
+| `--source DIR`             | init                                                 | Library to write into the starter configuration (default: create `$XDG_CONFIG_HOME/skillsinc/library`)                                                                                                      |
+| `--with-guidance`          | init                                                 | Add a portable SkillSinc skill and global instruction to that source; no implicit sync, scheduler, or Git operations                                                                                        |
+| `--force`                  | init                                                 | Overwrite an existing configuration                                                                                                                                                                         |
+| `-d`, `--destination NAME` | plan, sync                                           | Limit to this destination; repeatable                                                                                                                                                                       |
+| `-p`, `--profile NAME`     | plan, sync, profiles                                 | Apply only these [sync profiles](configuration.md#profiles); repeatable, comma-separated, globs. Default: `$SKILLSINC_PROFILES`, else each profile's `default` and `when`                                   |
+| `--adopt`                  | plan, sync                                           | Take ownership of existing files instead of blocking                                                                                                                                                        |
+| `--json`                   | plan, sync, status, profiles                         | Print the JSON report instead of text                                                                                                                                                                       |
+| `-v`, `--verbose`          | plan, sync                                           | List unsupported items, accepted losses, and every skill file                                                                                                                                               |
+| `--log-file PATH`          | plan, sync                                           | Append the report and diagnostics to PATH under a timestamped header instead of printing them; rotates to `PATH.1` past 1 MiB                                                                               |
+| `--interval DURATION`      | schedule install                                     | Time between runs: `5m`, `1h`, `1h30m`, `1d`, or `HH:MM:SS` (default `1h`)                                                                                                                                  |
+| `--dry-run`                | schedule install                                     | Print the scheduler definition without registering it                                                                                                                                                       |
+| `--scheduler NAME`         | schedule                                             | `task-scheduler`, `launchd`, `systemd`, or `cron` instead of the platform default                                                                                                                           |
+| `--log-level LEVEL`        | all                                                  | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR`, on stderr                                                                                                                                                 |
+| `--version`                | none                                                 | Print the version                                                                                                                                                                                           |
 
 ## Exit codes
 
@@ -75,6 +77,7 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`, or `.config/skillsinc/state/s
   "source_warnings": {},
   "warnings": [],
   "configuration": [],
+  "profiles": {"origin": "defaults", "active": ["work"], "inactive_destinations": ["vscode"]},
   "destinations": [
     {
       "name": "claude",
@@ -96,21 +99,22 @@ A run lock (`$XDG_STATE_HOME/skillsinc/sync.lock`, or `.config/skillsinc/state/s
 }
 ```
 
-| Field                    | Meaning                                                               |
-| ------------------------ | --------------------------------------------------------------------- |
-| `ok`                     | False if any source failed, destination blocked, or apply step failed |
-| `applied`                | True for `sync`                                                       |
-| `project`                | Project root of a project configuration, else null                    |
-| `source_errors`          | Source name to error message                                          |
-| `source_warnings`        | Source name to warning: a remote served from its last good checkout   |
-| `warnings`               | Non-blocking problems, such as an `include` selector matching nothing |
-| `configuration`          | Config file and `config.schema.json` changes (see configuration)      |
-| `destinations[].retired` | True if removed from the configuration; `profile` is null             |
-| `destinations[].errors`  | Blocking errors; also apply failures after `sync`                     |
-| `destinations[].changes` | `entry` names the `container/key` changed inside a shared JSON file   |
-| `destinations[].skipped` | Items not delivered; `lossy` marks ones `allow_lossy` would accept    |
-| `destinations[].notes`   | Losses accepted through `allow_lossy`                                 |
-| `destinations[].applied` | Number of changes applied by `sync`                                   |
+| Field                    | Meaning                                                                                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok`                     | False if any source failed, destination blocked, or apply step failed                                                                                            |
+| `applied`                | True for `sync`                                                                                                                                                  |
+| `project`                | Project root of a project configuration, else null                                                                                                               |
+| `source_errors`          | Source name to error message                                                                                                                                     |
+| `source_warnings`        | Source name to warning: a remote served from its last good checkout                                                                                              |
+| `warnings`               | Non-blocking problems, such as an `include` selector matching nothing                                                                                            |
+| `configuration`          | Config file and `config.schema.json` changes (see configuration)                                                                                                 |
+| `profiles`               | Null without [sync profiles](configuration.md#profiles); else `origin` (`command line`, `SKILLSINC_PROFILES`, `defaults`), `active`, and destinations left alone |
+| `destinations[].retired` | True if removed from the configuration; `profile` is null                                                                                                        |
+| `destinations[].errors`  | Blocking errors; also apply failures after `sync`                                                                                                                |
+| `destinations[].changes` | `entry` names the `container/key` changed inside a shared JSON file                                                                                              |
+| `destinations[].skipped` | Items not delivered; `lossy` marks ones `allow_lossy` would accept                                                                                               |
+| `destinations[].notes`   | Losses accepted through `allow_lossy`                                                                                                                            |
+| `destinations[].applied` | Number of changes applied by `sync`                                                                                                                              |
 
 ## Source status
 

@@ -25,6 +25,7 @@ graph LR
 | Module                        | Responsibility                                                          |
 | ----------------------------- | ----------------------------------------------------------------------- |
 | `config`                      | Parse and validate `config.json` (JSONC) into frozen dataclasses        |
+| `selection`                   | Choose active sync profiles; narrow routes and destinations to them     |
 | `sources`                     | Read a library completely, expanding plugins, or raise `SourceError`    |
 | `remote`                      | Refresh Git sources into last-known-good cached checkouts               |
 | `frontmatter`                 | Split Markdown into YAML frontmatter and body; render it back           |

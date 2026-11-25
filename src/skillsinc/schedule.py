@@ -37,6 +37,8 @@ VARIABLES: Final = (
     "CLAUDE_CONFIG_DIR",
     "COPILOT_HOME",
     "CODEX_HOME",
+    "SKILLSINC_PROFILES",
+    "SKILLSINC_HOSTNAME",
 )
 
 _UNITS: Final = {"d": 86400, "h": 3600, "m": 60, "s": 1}

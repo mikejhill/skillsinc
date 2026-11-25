@@ -17,6 +17,7 @@ from skillsinc.schedule import (
     parse_interval,
 )
 from skillsinc.settings import (
+    HarnessesSettings,
     InitSettings,
     PlanSettings,
     ProfilesSettings,
@@ -40,8 +41,8 @@ class CommandLine:
         args = self._parser.parse_args(argv)
         log_level = str(args.log_level)
         command = str(args.command)
-        if command == "profiles":
-            return ProfilesSettings(log_level=log_level)
+        if command == "harnesses":
+            return HarnessesSettings(log_level=log_level)
         if command == "schedule":
             return ScheduleSettings(
                 action=args.action,
@@ -65,6 +66,9 @@ class CommandLine:
         )
         if command == "status":
             return StatusSettings(config_path, bool(args.json), log_level)
+        profiles = tuple(args.profile or ())
+        if command == "profiles":
+            return ProfilesSettings(config_path, bool(args.json), log_level, profiles)
         return PlanSettings(
             config_path=config_path,
             apply=command == "sync",
@@ -74,6 +78,7 @@ class CommandLine:
             verbose=bool(args.verbose),
             log_level=log_level,
             log_file=Path(args.log_file) if args.log_file else None,
+            profiles=profiles,
         )
 
     def _init(self, args: argparse.Namespace, log_level: str) -> InitSettings:
@@ -131,6 +136,16 @@ class CommandLine:
             action="store_true",
             help="use the user config even inside a project",
         )
+        selected = argparse.ArgumentParser(add_help=False)
+        selected.add_argument(
+            "-p",
+            "--profile",
+            action="append",
+            metavar="NAME",
+            help="apply only these sync profiles (repeatable, comma-separated, globs"
+            " such as '*'); default: $SKILLSINC_PROFILES, else each profile's"
+            " default and when conditions",
+        )
 
         commands = parser.add_subparsers(
             dest="command", required=True, metavar="COMMAND"
@@ -160,7 +175,7 @@ class CommandLine:
             ("sync", "apply the plan to every enabled destination"),
         ):
             command = commands.add_parser(
-                name, parents=[configured, discovered], help=summary
+                name, parents=[configured, discovered, selected], help=summary
             )
             command.add_argument(
                 "-d",
@@ -196,8 +211,14 @@ class CommandLine:
             help="show each source's state, including remote refresh failures",
         )
         status.add_argument("--json", action="store_true", help="print a JSON report")
-        commands.add_parser(
+        profiles = commands.add_parser(
             "profiles",
+            parents=[configured, discovered, selected],
+            help="list the configuration's sync profiles and which apply here",
+        )
+        profiles.add_argument("--json", action="store_true", help="print a JSON report")
+        commands.add_parser(
+            "harnesses",
             parents=[common],
             help="list harness profiles and what they support",
         )
