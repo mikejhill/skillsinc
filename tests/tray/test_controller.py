@@ -66,7 +66,7 @@ def test_open_with_desktop_asks_qt(
     monkeypatch.setattr(controller_module.QDesktopServices, "openUrl", open_url)
 
     assert open_with_desktop(tmp_path)
-    assert asked == [str(tmp_path)]
+    assert [Path(item) for item in asked] == [tmp_path]
 
 
 class TestSettingsEdges:

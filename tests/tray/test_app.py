@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import logging
 import sys
+import threading
+import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
@@ -12,7 +14,8 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QLockFile, QTimer
-from PySide6.QtWidgets import QSystemTrayIcon
+from PySide6.QtNetwork import QLocalServer
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 from pytestqt.qtbot import QtBot
 from tests.conftest import Sandbox
 
@@ -21,9 +24,31 @@ from skillsinc.tray import app, launch
 from skillsinc.tray.instance import SingleInstance
 from skillsinc.usersettings import ScheduleOptions, SettingsStore, UserSettings
 
+QUIT_FALLBACK_MS = 15_000
+EXIT_HUNG = 99
+
 
 def _name() -> str:
     return f"skillsinc-test-{uuid.uuid4().hex}"
+
+
+def _quit_soon(name: str) -> QTimer:
+    """Send ``quit`` from another thread, as another launch would.
+
+    The forward blocks on the socket, so it must not run on the thread whose
+    event loop serves it. A fallback ends the event loop if it never arrives.
+    """
+
+    def send() -> None:
+        time.sleep(0.2)
+        SingleInstance(name).forward(["quit"])
+
+    threading.Thread(target=send, daemon=True).start()
+    fallback = QTimer()
+    fallback.setSingleShot(True)
+    fallback.timeout.connect(lambda: QApplication.exit(EXIT_HUNG))
+    fallback.start(QUIT_FALLBACK_MS)
+    return fallback
 
 
 @pytest.fixture
@@ -91,12 +116,13 @@ class TestRun:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If the single-instance socket cannot be taken, the launch fails."""
-        del qtbot
+        del qtbot, tmp_path
         monkeypatch.setattr(app, "STARTING_WAIT_MS", 0)
+        # A path is a valid pipe name on Windows, so refuse every name instead
+        monkeypatch.setattr(QLocalServer, "listen", lambda *_args: False)
         out = io.StringIO()
-        name = str(tmp_path / "missing" / "socket")
 
-        status = app.run([], configured.environment, out, instance_name=name)
+        status = app.run([], configured.environment, out, instance_name=_name())
 
         assert status == app.EXIT_UNAVAILABLE
         assert "Could not start the SkillSinc tray" in out.getvalue()
@@ -112,10 +138,11 @@ class TestRun:
             UserSettings(schedule=ScheduleOptions(enabled=False, run_at_start=False))
         )
         name = _name()
-        QTimer.singleShot(200, lambda: SingleInstance(name).forward(["quit"]))
+        fallback = _quit_soon(name)
         out = io.StringIO()
 
         status = app.run([], configured.environment, out, instance_name=name)
+        fallback.stop()
 
         assert status == app.EXIT_OK
         assert "Not logging" in out.getvalue()
@@ -136,7 +163,7 @@ class TestRun:
             UserSettings(schedule=ScheduleOptions(enabled=False, run_at_start=False))
         )
         name = _name()
-        QTimer.singleShot(200, lambda: SingleInstance(name).forward(["quit"]))
+        fallback = _quit_soon(name)
 
         status = app.run(
             ["show", "history"],
@@ -144,6 +171,7 @@ class TestRun:
             io.StringIO(),
             instance_name=name,
         )
+        fallback.stop()
 
         assert status == app.EXIT_OK
         log = configured.environment.state_directory / app.LOG_FILE
