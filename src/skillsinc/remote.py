@@ -27,7 +27,7 @@ from skillsinc.config import COMMIT, RemoteConfig, SourceConfig, mask
 from skillsinc.exceptions import LockError, SourceError
 from skillsinc.lock import StateLock
 from skillsinc.paths import Environment
-from skillsinc.process import NO_WINDOW
+from skillsinc.process import ChildWindows
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ class GitRunner:
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout,
-                creationflags=NO_WINDOW,
+                creationflags=ChildWindows().flags(),
             )
         except FileNotFoundError as err:
             return Ran(MISSING_PROGRAM, "", str(err))
