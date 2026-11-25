@@ -23,6 +23,7 @@ from typing import Final, Protocol, assert_never
 
 from skillsinc.exceptions import AppError
 from skillsinc.paths import Environment
+from skillsinc.process import NO_WINDOW
 
 MINIMUM_INTERVAL: Final = timedelta(minutes=1)
 MAXIMUM_INTERVAL: Final = timedelta(days=31)  # Task Scheduler's repetition limit
@@ -131,6 +132,7 @@ class Runner:
                 encoding="utf-8",
                 errors="replace",
                 timeout=60,
+                creationflags=NO_WINDOW,
             )
         except FileNotFoundError as err:
             return Completed(127, "", str(err))

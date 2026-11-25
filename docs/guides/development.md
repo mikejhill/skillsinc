@@ -46,6 +46,7 @@ The gate enforces most rules; the rest are conventions to keep:
 - **Typing:** every parameter and return annotated; no `Any`; untyped input (JSONC, YAML, JSON, argparse) is converted to dataclasses at the boundary (`config.Table`, `FrontmatterCodec`, `ManifestStore._parse`, `CommandLine.parse`).
 - **Docs in code:** every file, class, and method has a one-line docstring; comments are short block headers, not narration.
 - **Errors:** raise subclasses of `AppError` from `exceptions.py`. `ConfigurationError` exits 2, other `AppError`s exit 1. Diagnostics go to stderr via `logging`; command output goes to the `out` stream.
+- **Child processes:** pass `creationflags=process.NO_WINDOW` to every `subprocess` call. Scheduled runs use windowless `pythonw.exe`, and without the flag each `git`, `gh`, or `schtasks` call opens a console window.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/); PR titles are linted and squash-merged, and they generate the changelog; do not edit `CHANGELOG.md` by hand.
 
 ## Tests
