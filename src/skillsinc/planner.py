@@ -331,7 +331,16 @@ class Planner:
             )
             return DestinationPlan(destination, errors=(reason,))
 
-        overlap = self._source_overlap(config, destination, own_routes)
+        # Routes inactive profiles left out still guard the libraries they read
+        guarded = [
+            *own_routes,
+            *(
+                route
+                for route in config.inactive_routes
+                if destination.name in route.destinations
+            ),
+        ]
+        overlap = self._source_overlap(config, destination, guarded)
         if overlap is not None:
             return DestinationPlan(destination, errors=(overlap,))
 

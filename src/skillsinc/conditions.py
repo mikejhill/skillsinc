@@ -34,6 +34,22 @@ def host_name(environment: Environment) -> str:
     return environment.variables.get("SKILLSINC_HOSTNAME", "") or socket.gethostname()
 
 
+def variable(environment: Environment, name: str) -> str:
+    """Return a variable's value, or empty; names ignore case on Windows."""
+    value = environment.variables.get(name)
+    if value is None and environment.platform == "win32":
+        folded = name.upper()
+        value = next(
+            (
+                found
+                for key, found in environment.variables.items()
+                if key.upper() == folded
+            ),
+            None,
+        )
+    return value or ""
+
+
 @dataclass(frozen=True, slots=True)
 class Condition:
     """When a profile applies by default; every listed key must match.
@@ -65,7 +81,7 @@ class Condition:
             if system not in self.systems:
                 failed.append(f"system {system} is not {' or '.join(self.systems)}")
         for name, expected in self.variables.items():
-            value = environment.variables.get(name, "")
+            value = variable(environment, name)
             if expected is True:
                 held = bool(value)
                 wanted = "set"

@@ -153,7 +153,7 @@ Deleting `$XDG_STATE_HOME/skillsinc/remotes/` is safe; the next run fetches agai
 
 | Key       | Required      | Default                   | Meaning                                |
 | --------- | ------------- | ------------------------- | -------------------------------------- |
-| `profile` | no            | the destination name      | One of `skillsinc profiles`            |
+| `profile` | no            | the destination name      | One of `skillsinc harnesses`           |
 | `path`    | for `generic` | the profile's user folder | Directory the harness reads            |
 | `enabled` | no            | `true`                    | `false` skips the destination entirely |
 
@@ -251,7 +251,7 @@ Starting with **0.9.0**, one configuration can hold several named profiles, so o
 2. `SKILLSINC_PROFILES=work,home` in the environment: a per-machine choice kept out of the shared file. Names this configuration does not define print a warning, so one variable can serve several configurations.
 3. Each profile's `default` and `when`.
 
-Either explicit choice replaces the defaults and ignores `when`. Run `skillsinc profiles` to see each profile, whether it is active on this machine, and why. `SKILLSINC_HOSTNAME` overrides the host name `when` sees.
+Either explicit choice replaces the defaults and ignores `when`; an empty `--profile ""` is an error rather than a fallback. On Windows, `env` variable names ignore case. Scheduled jobs see only the variables listed in [scheduling](scheduling.md#environment), so `schedule install` warns when a profile's `env` condition reads any other variable; set `SKILLSINC_PROFILES` on that machine instead. Run `skillsinc profiles` to see each profile, whether it is active on this machine, and why. `SKILLSINC_HOSTNAME` overrides the host name `when` sees.
 
 **What an inactive profile does.** Its routes are dropped from the run. A destination that receives something from an active route is planned as usual, so anything an inactive route delivered there before is removed on that sync, exactly like narrowing a route's `include`. A destination that only inactive routes reach is left alone, like `"enabled": false`: it is neither written nor destroyed, so a machine never touches harness folders outside its profiles. `--destination` naming such a destination is an error. Sources that no active route reads are not read or fetched.
 

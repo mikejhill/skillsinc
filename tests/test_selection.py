@@ -433,3 +433,79 @@ class TestCommands:
 
         assert status == 0, output
         assert "No sync profiles are defined" in output, output
+
+
+class TestReviewFixes:
+    """Safeguards that must hold however profiles narrow the run."""
+
+    def test_inactive_route_still_guards_its_source(self, sandbox: Sandbox) -> None:
+        """A destination inside a library an inactive route reads stays blocked."""
+        root = sandbox.environment.home
+        inner = sandbox.library / "out"
+        data = {
+            "version": 1,
+            "sources": {
+                "library": {"path": sandbox.library.as_posix()},
+                "other": {"path": (root / "other").as_posix()},
+            },
+            "destinations": {"d": {"profile": "generic", "path": inner.as_posix()}},
+            "profiles": {"lab": {"default": False}},
+            "routes": [
+                {"sources": ["other"], "destinations": ["d"]},
+                {"sources": ["library"], "destinations": ["d"], "profiles": ["lab"]},
+            ],
+        }
+        (root / "other").mkdir()
+        sandbox.config_path.parent.mkdir(parents=True, exist_ok=True)
+        sandbox.config_path.write_text(json.dumps(data), encoding="utf-8")
+
+        status, output = run(sandbox, "plan")
+
+        assert status == 1, output
+        assert "overlaps source 'library'" in output, output
+
+    @pytest.mark.parametrize("value", ["", " , "])
+    def test_empty_profile_option_is_an_error(
+        self, sandbox: Sandbox, value: str
+    ) -> None:
+        """``--profile ""`` never falls back to the variable or defaults."""
+        write(sandbox)
+        config = sandbox.load()
+
+        with pytest.raises(ConfigurationError, match="names no profile"):
+            ProfileSelector(sandbox.environment).select(config, (value,))
+
+    def test_windows_variable_names_ignore_case(self, environment: Environment) -> None:
+        """On Windows ``UserName`` finds ``USERNAME``; elsewhere case matters."""
+        condition = Condition(variables={"UserName": "mike"})
+        windows = replace(environment, platform="win32", variables={"USERNAME": "mike"})
+        linux = replace(environment, platform="linux", variables={"USERNAME": "mike"})
+
+        assert condition.failures(windows) == [], "Expected a match on Windows"
+        assert condition.failures(linux) == ["UserName is not 'mike'"], "POSIX"
+
+    def test_schedule_warns_about_uncarried_variables(self, sandbox: Sandbox) -> None:
+        """``schedule install`` flags ``when.env`` variables a job does not carry."""
+        write(
+            sandbox,
+            profiles={
+                "work": {"when": {"env": {"WORK_MODE": True}}},
+                "home": {"default": False, "when": {"env": {"HOME_MODE": True}}},
+            },
+        )
+        argv = ("schedule", "install", "--scheduler", "cron", "--dry-run")
+
+        _, output = run(sandbox, *argv)
+        _, chosen = run(sandbox, *argv, **{PROFILES_VARIABLE: "work"})
+
+        assert "Warning: profile conditions read WORK_MODE," in output, output
+        assert "HOME_MODE" not in output, "default false profiles never auto-apply"
+        assert "profile conditions" not in chosen, chosen
+
+    def test_schedule_without_config_does_not_warn(self, sandbox: Sandbox) -> None:
+        """A missing or invalid configuration adds no warning to ``install``."""
+        _, output = run(
+            sandbox, "schedule", "install", "--scheduler", "cron", "--dry-run"
+        )
+
+        assert "profile conditions" not in output, output

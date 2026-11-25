@@ -350,7 +350,6 @@
     "condition": {
       "type": "object",
       "additionalProperties": false,
-      "minProperties": 1,
       "properties": {
         "host": {
           "$ref": "#/$defs/texts",
@@ -384,7 +383,39 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "host"
+          ],
+          "properties": {
+            "host": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "os"
+          ],
+          "properties": {
+            "os": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "env"
+          ],
+          "properties": {
+            "env": {
+              "minProperties": 1
+            }
+          }
+        }
+      ]
     }
   }
 }

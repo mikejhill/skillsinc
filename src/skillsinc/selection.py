@@ -88,6 +88,9 @@ class ProfileSelector:
             return config, Selection(Origin.NONE)
         warnings: list[str] = []
         names = [name for raw in requested for name in self.split(raw)]
+        if requested and not names:
+            msg = "--profile names no profile; pass a name, a list, or '*'"
+            raise ConfigurationError(msg)
         if names:
             explicit = self._match(config, names, strict=True, warnings=warnings)
             origin = Origin.COMMAND_LINE
@@ -194,4 +197,11 @@ class ProfileSelector:
             else destination
             for name, destination in config.destinations.items()
         }
-        return replace(config, routes=routes, destinations=destinations), inactive
+        dropped = tuple(route for route in config.routes if route not in routes)
+        narrowed = replace(
+            config,
+            routes=routes,
+            destinations=destinations,
+            inactive_routes=dropped,
+        )
+        return narrowed, inactive

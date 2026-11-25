@@ -99,6 +99,8 @@ class TestBundledSchema:
             {"version": 1, "destinations": {"generic": {}}},
             {"version": 1, "profiles": {"bad name": {}}},
             {"version": 1, "profiles": {"p": {"when": {}}}},
+            {"version": 1, "profiles": {"p": {"when": {"os": []}}}},
+            {"version": 1, "profiles": {"p": {"when": {"host": [], "env": {}}}}},
             {"version": 1, "profiles": {"p": {"when": {"os": ["bsd"]}}}},
             {"version": 1, "profiles": {"p": {"when": {"env": {"A": 1}}}}},
             {"version": 1, "profiles": {"p": {"when": {"host": "x1"}}}},
@@ -153,6 +155,7 @@ class TestBundledSchema:
                         },
                     },
                     "home.v2": {"default": False},
+                    "linux": {"when": {"host": [], "os": ["linux"]}},
                 },
                 "routes": [
                     {

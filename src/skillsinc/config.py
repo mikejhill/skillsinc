@@ -177,6 +177,8 @@ class Config:
     """The ``$schema`` value, which only editors read."""
     profiles: Mapping[str, SyncProfile] = field(default_factory=dict[str, SyncProfile])
     """Named sync profiles that routes may belong to."""
+    inactive_routes: tuple[RouteConfig, ...] = ()
+    """Routes left out by inactive profiles; still checked for source overlaps."""
 
     def state_directory(self, environment: Environment) -> Path:
         """Return where this configuration keeps its manifests and run lock.

@@ -9,7 +9,7 @@ from typing import TextIO
 
 from skillsinc.applier import Applier
 from skillsinc.config import ConfigLoader
-from skillsinc.exceptions import ConfigurationError
+from skillsinc.exceptions import AppError, ConfigurationError
 from skillsinc.lock import StateLock
 from skillsinc.manifest import ManifestStore
 from skillsinc.paths import Environment
@@ -32,6 +32,7 @@ from skillsinc.schedule import (
     interpreter,
 )
 from skillsinc.schema import ConfigSchema
+from skillsinc.selection import PROFILES_VARIABLE as SELECTION_VARIABLE
 from skillsinc.selection import ProfileSelector, Selection
 from skillsinc.settings import (
     InitSettings,
@@ -317,9 +318,12 @@ class ScheduleCommand:
         """Register the job, or print its definition for ``--dry-run``."""
         job, log = self._job(chosen, settings)
         temporary = disposable(Path(job.argv[0]))
+        uncarried = self._uncarried_conditions(settings, job)
         if settings.dry_run:
             out.write(f"Would register with {chosen.title} ({chosen.location}):\n")
             out.write(chosen.definition(job))
+            if uncarried:
+                out.write(f"Warning: {uncarried}\n")
             if temporary:
                 out.write(f"Warning: {TEMPORARY_PYTHON.format(job.argv[0])}\n")
             return 0
@@ -342,11 +346,45 @@ class ScheduleCommand:
                 f"Note: tasks read saved user variables only; set {names} with"
                 " setx so scheduled runs see the same values.\n"
             )
+        if uncarried:
+            out.write(f"Warning: {uncarried}\n")
         out.write(
             "Check it with `skillsinc schedule status`;"
             " remove it with `skillsinc schedule remove`.\n"
         )
         return 0
+
+    def _uncarried_conditions(self, settings: ScheduleSettings, job: Job) -> str:
+        """Explain profile ``when.env`` variables the scheduled job may not see.
+
+        A job carries only the fixed variables, so a profile selected by
+        another shell variable can be active interactively and inactive when
+        scheduled, and the scheduled run would then remove its items from
+        shared destinations. Values are never copied into job files.
+        """
+        if SELECTION_VARIABLE in job.variables:
+            return ""
+        path = settings.config_path or self._environment.default_config_file
+        try:
+            config = ConfigLoader(ProfileRegistry(), self._environment).load(path)
+        except AppError:
+            return ""
+        names = sorted(
+            {
+                name
+                for profile in config.profiles.values()
+                if profile.default and profile.when is not None
+                for name in profile.when.variables
+                if name not in job.variables
+            }
+        )
+        if not names:
+            return ""
+        return (
+            f"profile conditions read {', '.join(names)}, which scheduled runs may"
+            f" not see; set {SELECTION_VARIABLE} to the profiles this machine"
+            " applies (saved with setx on Windows) and run install again"
+        )
 
     def _job(
         self, chosen: Backend, settings: ScheduleSettings
