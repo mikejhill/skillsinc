@@ -41,8 +41,10 @@ class TrayCommands:
     open_state: Callable[[], None]
     about: Callable[[], None]
     exit: Callable[[], None]
-    update: Callable[[], None] | None = None
+    check_updates: Callable[[], None] | None = None
     """None: no update entry."""
+    install_update: Callable[[], None] | None = None
+    """Install the release the menu names."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +56,8 @@ class MenuState:
     syncing: bool = False
     paused: bool = False
     catalog: Catalog = field(default_factory=Catalog)
-    update_label: str = CHECK_UPDATES
+    update_version: str = ""
+    """A newer release to offer; "" offers a check."""
     update_busy: bool = False
 
 
@@ -135,13 +138,24 @@ class TrayIcon(QSystemTrayIcon):
         self._add("open_config", "Open configuration file", c.open_config)
         self._add("open_state", "Open history and logs folder", c.open_state)
         self._menu.addSeparator()
-        if c.update is not None:
-            label = "Checking for updates…" if state.update_busy else state.update_label
-            self._add("update", label, c.update).setEnabled(not state.update_busy)
+        if c.check_updates is not None:
+            self._update_entry(state)
         self._add("about", f"About {APP_NAME}", c.about)
         self._add("exit", "Exit", c.exit)
         tooltip = f"{APP_NAME}\n{state.status}"
         self.setToolTip(f"{tooltip}\n{state.next_sync}" if state.next_sync else tooltip)
+
+    def _update_entry(self, state: MenuState) -> None:
+        """Check, or install the release shown: a click does what its label says."""
+        c = self._commands
+        if state.update_busy:
+            self._add("update", "Checking for updates…", _nothing).setEnabled(False)
+        elif state.update_version and c.install_update is not None:
+            self._add(
+                "update", f"Install SkillSinc {state.update_version}", c.install_update
+            )
+        elif c.check_updates is not None:  # pragma: no branch - checked by caller
+            self._add("update", CHECK_UPDATES, c.check_updates)
 
     def _profiles_menu(self, catalog: Catalog) -> None:
         submenu = self._menu.addMenu("Sync profile")
@@ -197,3 +211,7 @@ class TrayIcon(QSystemTrayIcon):
         """Show recent syncs on a click."""
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self._commands.popup()
+
+
+def _nothing() -> None:
+    """A disabled entry's action."""

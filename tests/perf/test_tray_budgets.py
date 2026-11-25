@@ -59,7 +59,8 @@ def _commands() -> TrayCommands:
         open_state=_nothing,
         about=_nothing,
         exit=_nothing,
-        update=_nothing,
+        check_updates=_nothing,
+        install_update=_nothing,
     )
 
 

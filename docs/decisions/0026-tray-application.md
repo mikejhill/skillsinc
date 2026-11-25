@@ -17,7 +17,7 @@ Mike wants SkillSinc to be able to schedule itself: a tray icon with a menu (syn
 - **Start at sign-in** is a `Run` value (Windows) or an XDG autostart entry (Linux) that `startup.launch_at_login` reconciles on start and on every settings change.
 - **Settings are files the window edits.** The tray watches `settings.json` and applies edits at once, keeping the previous settings when an edit is invalid. The settings window edits `settings.json` and each element of `config.json` through forms; Save validates the configuration with `ConfigLoader` (which now also takes candidate text) and splices only changed values into both files, refusing if either changed on disk since it was opened. Forms cover each element's common keys and keep the rest, rather than a generic JSON editor, so the common edits need no knowledge of the schema.
 
-- **Updates come from PyPI and install after the tray exits.** The tray reads PyPI's JSON API on a worker thread (at start, daily, and on demand). It upgrades only installations it can identify: a `uv tool` or `pipx` environment (by their marker files) or a virtual environment's pip; a working copy or a system Python is left to the user. The upgrade runs from a detached script written to the state folder, after the tray exits, because a running interpreter's files cannot be replaced on Windows; the script then restarts the tray.
+- **Updates come from PyPI.** The tray reads PyPI's JSON API on a worker thread (a minute after start, daily, and on demand). Installing is [decision 0027](0027-automatic-update-installs.md).
 
 ## Alternatives considered
 

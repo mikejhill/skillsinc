@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, Protocol
 
-from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
@@ -117,8 +117,12 @@ class TrayController(QObject):
         )
         self.updater.notified.connect(self._notify)
         self.updater.changed.connect(self._refresh_labels)
-        self.updater.install_requested.connect(self.install_update)
-        self._install_after_sync = False
+        self.updater.install_requested.connect(
+            lambda: self.install_update(manual=False)
+        )
+        # "", "manual", or "automatic": an install waiting for a quiet moment
+        self._pending_install = ""
+        self._install_noticed = False
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(UPDATE_CHECK_MS)
         self._update_timer.timeout.connect(self._automatic_update_check)
@@ -183,6 +187,7 @@ class TrayController(QObject):
                 Notice("SkillSinc settings", self._settings_error, failure=True)
             )
         self._reschedule()
+        self.updater.report_last_attempt()
         self._update_timer.start()
         QTimer.singleShot(FIRST_UPDATE_CHECK_MS, self, self._automatic_update_check)
 
@@ -275,19 +280,46 @@ class TrayController(QObject):
             )
         self.settings_window.present()
 
-    def update_command(self) -> None:
-        """The menu's update entry: install a release found, else check."""
-        if self.updater.available:
-            self.install_update()
-        else:
-            self.updater.check(manual=True)
+    def check_updates(self) -> None:
+        """The menu's Check for updates."""
+        self.updater.check(manual=True)
 
-    def install_update(self) -> None:
-        """Upgrade SkillSinc and restart; after the running sync, if any."""
-        if self._runner.busy:
-            self._install_after_sync = True
-            self._notify(Notice("SkillSinc update", "Updating after this sync."))
+    def install_update(self, *, manual: bool = True) -> None:
+        """Upgrade SkillSinc and restart, once no sync or settings edit is open.
+
+        An automatic install is dropped if automatic installs were turned off
+        while it waited.
+        """
+        if manual or not self._pending_install:
+            self._pending_install = "manual" if manual else "automatic"
+        self._install_when_quiet()
+
+    def _install_when_quiet(self) -> None:
+        if not self._pending_install:
             return
+        updates = self._settings.updates
+        if self._pending_install == "automatic" and not (
+            updates.check and updates.install
+        ):
+            self._pending_install = ""
+            self._install_noticed = False
+            return
+        window = self.settings_window
+        waits = None
+        if self._runner.busy or self._runner.pending:
+            waits = "Updating after the running sync."
+        elif window is not None and window.isVisible():
+            waits = "Updating after you close Settings."
+            window.finished.connect(
+                self._install_when_quiet, Qt.ConnectionType.UniqueConnection
+            )
+        if waits is not None:
+            if not self._install_noticed:
+                self._install_noticed = True
+                self._notify(Notice("SkillSinc update", waits))
+            return
+        self._pending_install = ""
+        self._install_noticed = False
         if self.updater.install():
             self.exit()
 
@@ -363,7 +395,8 @@ class TrayController(QObject):
             open_state=self.open_state,
             about=self.show_about,
             exit=self.exit,
-            update=self.update_command,
+            check_updates=self.check_updates,
+            install_update=self.install_update,
         )
 
     def _read_settings(
@@ -475,9 +508,7 @@ class TrayController(QObject):
         if self.history_window.isVisible():
             self.history_window.refresh()
         self.synced.emit(record)
-        if self._install_after_sync:
-            self._install_after_sync = False
-            self.install_update()
+        self._install_when_quiet()
 
     def _covers(self, record: SyncRecord, outcome: SyncOutcome) -> bool:
         """Return True if ``record`` is the run ``outcome`` reports.
@@ -548,7 +579,7 @@ class TrayController(QObject):
                     and self._paused_until > self._clock()
                 ),
                 catalog=self._catalog,
-                update_label=self.updater.label(),
+                update_version=self.updater.available,
                 update_busy=self.updater.checking,
             )
         )

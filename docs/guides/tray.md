@@ -46,18 +46,25 @@ Include and exclude patterns are one per line, so a glob such as `skills/[a,b]*`
 
 ## Updates
 
-**Check for updates** asks PyPI for the newest SkillSinc release. When one is newer, the entry becomes **Install SkillSinc X.Y.Z**. With `updates.check` on (the default), the tray also checks a minute after it starts and then daily, and announces a new release; with `updates.install` on as well, it installs one without asking.
+**Check for updates** asks PyPI for the newest SkillSinc release. When one is newer, the entry becomes **Install SkillSinc X.Y.Z**, and choosing it installs exactly that version. With `updates.check` on (the default), the tray also checks a minute after it starts and then daily, and announces a new release. With `updates.install` on as well, it installs the release without asking.
 
 Installing depends on how SkillSinc was installed:
 
-| Installed with                         | Upgrade command                                       |
-| -------------------------------------- | ----------------------------------------------------- |
-| `uv tool install`                      | `uv tool upgrade skillsinc`                           |
-| `pipx install`                         | `pipx upgrade skillsinc`                              |
-| pip, in a virtual environment          | `python -m pip install --upgrade "skillsinc[tray]"`   |
-| a working copy, or a system Python     | none: the tray says how to upgrade it yourself        |
+| Installed with                                    | Upgrade command                                     |
+| ------------------------------------------------- | --------------------------------------------------- |
+| `uv tool install`                                 | `uv tool upgrade skillsinc`                         |
+| `pipx install`                                    | `pipx upgrade skillsinc`                            |
+| pip, in a virtual environment                     | `python -m pip install --upgrade "skillsinc[tray]"` |
+| a working copy, a venv without pip, system Python | none: the tray says how to upgrade it yourself      |
 
-The tray writes the command into `update.cmd` (Windows) or `update.sh` in the state directory, starts it, and exits, because Windows cannot replace a running program's files. A sync in progress finishes first. The script waits a few seconds, runs the upgrade with its output appended to `update.log`, and starts the tray again.
+An install waits until the running sync and any queued syncs finish, and until the Settings window closes. If you turn off automatic installs while one waits, it is dropped. The tray then starts a small helper and exits, because Windows cannot replace a running program's files. The helper:
+
+1. waits for the tray to exit;
+2. runs the upgrade, appending its output to `update.log` in the state directory;
+3. records the outcome in `update-result.json`;
+4. starts the tray again.
+
+On the next start the tray says whether the update worked. A failed update is reported once, with the reason and the log's path, and is not retried automatically for that release. **Install** in the menu still tries it again. See [decision 0027](../decisions/0027-automatic-update-installs.md).
 
 ## How syncs run
 

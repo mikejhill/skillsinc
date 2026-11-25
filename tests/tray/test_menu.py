@@ -42,7 +42,8 @@ class Calls:
             open_state=record("open_state"),
             about=record("about"),
             exit=record("exit"),
-            update=record("update") if update else None,
+            check_updates=record("check_updates") if update else None,
+            install_update=record("install_update") if update else None,
         )
 
 
@@ -134,6 +135,20 @@ class TestEntries:
 
         assert icon.action("update").text() == "Checking for updates…"
         assert not icon.action("update").isEnabled()
+        icon.action("update").trigger()
+        assert calls.log == []
+
+    def test_update_entry_does_what_it_says(self, qtbot: QtBot, calls: Calls) -> None:
+        """Check stays a check; only an entry naming a release installs it."""
+        icon = _icon(qtbot, calls, update=True)
+        icon.update_menu(MenuState())
+        assert icon.action("update").text() == "Check for updates"
+        icon.action("update").trigger()
+        icon.update_menu(MenuState(update_version="9.0.0"))
+        assert icon.action("update").text() == "Install SkillSinc 9.0.0"
+        icon.action("update").trigger()
+
+        assert [name for name, _ in calls.log] == ["check_updates", "install_update"]
 
 
 class TestCommands:
@@ -174,7 +189,7 @@ class TestCommands:
         for name in ("cancel", "resume", "update"):
             icon.action(name).trigger()
 
-        assert [name for name, _ in calls.log] == ["cancel", "resume", "update"]
+        assert [name for name, _ in calls.log] == ["cancel", "resume", "check_updates"]
 
     def test_click_opens_the_popup_and_other_activations_do_not(
         self, qtbot: QtBot, calls: Calls
