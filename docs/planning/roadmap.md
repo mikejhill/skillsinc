@@ -18,7 +18,7 @@ that every harness discovers or applies the generated content on each OS.
 
 ## Next
 
-1. **Remaining native checks.** Confirm that VS Code lists synced instructions, agents, and prompts, that a Claude rule with `paths` loads only for matching files, and that Codex reads the `AGENTS.md` block. Then test on macOS and Linux. Record the results under each profile's "Verified" note in [harness profiles](../guides/harness-profiles.md).
+1. **Remaining native checks.** Confirm that VS Code lists synced instructions, agents, and prompts, and that a Claude rule with `paths` loads only for matching files. Then test on macOS and Linux. Record the results under each profile's "Verified" note in [harness profiles](../guides/harness-profiles.md). Codex loading the `AGENTS.md` block was confirmed on Windows on 2026-11-25.
 2. **Content diff in `plan`.** `plan --diff` printing a unified diff per changed file (and for the managed block) so users can review updates, not just paths.
 
 ## Later

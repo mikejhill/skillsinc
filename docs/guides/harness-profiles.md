@@ -7,8 +7,8 @@ This guide lists exactly what each profile writes and which conversions lose inf
 SkillSinc is alpha software. CI exercises generated files and CLI behavior on
 Windows, macOS, and Linux; it does not launch those harnesses. The dated notes
 below distinguish native discovery checks from file inspection. Native
-verification on macOS and Linux remains outstanding, as do VS Code discovery,
-Claude path-scoped rules, and Codex loading of the managed `AGENTS.md` block.
+verification on macOS and Linux remains outstanding, as do VS Code discovery
+and Claude path-scoped rules.
 Treat those integrations as unverified until a dated native check records them.
 
 ## Conventions
@@ -126,7 +126,9 @@ MCP servers become `[mcp_servers.<name>]` tables in `config.toml`, edited in pla
 
 Agents become [custom agents](https://developers.openai.com/codex/subagents) at `agents/<name>.toml` with `name`, `description`, and the body as `developer_instructions`, the three keys Codex requires. The name is lowercased and every character other than a letter or digit becomes `_` (`Code-Review` becomes `code_review`), following Codex's examples and ai-feature-sync. Windows line endings in the body become plain newlines. An agent without a text description or with an empty body is refused. Codex's own `model`, `sandbox_mode`, and similar keys are not written; they inherit from the parent session. Losses: agent `tools`, `model`, `handoffs`, and other Copilot fields; VS Code `${...}` variables in the body.
 
-Verified 2026-10-21 on Windows with Codex 0.159.3 and the library above: `codex mcp list` showed the routed servers, and both custom agents were listed. The `AGENTS.md` block was written, but nobody checked whether Codex reads it.
+Verified 2026-10-21 on Windows with Codex 0.159.3 and the library above: `codex mcp list` showed the routed servers, and both custom agents were listed.
+
+Verified 2026-11-25 on Windows with Codex 0.170.0 and SkillSinc 0.10.0: Codex loads the managed block in `~/.codex/AGENTS.md`. A unique codeword was placed inside the block, and `codex exec --sandbox read-only`, run from an empty folder and told not to run commands or read files, replied with that codeword without any tool calls.
 
 ## agents
 
